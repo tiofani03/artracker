@@ -14,7 +14,8 @@ artracker/
 ├── frontend/           Vite + React + TS
 ├── docker-compose.yml       dev: postgres only
 ├── docker-compose.prod.yml  full stack (db + api + web behind nginx)
-└── .github/workflows/ci.yml
+├── docker-compose.build.yml local override that builds instead of pulling
+└── .github/workflows/       ci.yml (tests) + docker-publish.yml (Docker Hub)
 ```
 
 ## Local development
@@ -44,13 +45,42 @@ Open http://localhost:5173.
 Migrations live in `backend/internal/db/migrations` and are embedded into the
 binary; each file runs once, tracked in `schema_migrations`.
 
-## Docker (full stack)
+## Images & deploy
+
+Same flow as portalsafekamu: images are built in CI and published to Docker
+Hub, the VPS only pulls them.
 
 ```bash
-cp .env.example .env         # set POSTGRES_PASSWORD
-docker compose -f docker-compose.prod.yml up -d --build
+# on every push to main (.github/workflows/docker-publish.yml)
+tayooooo/artracker-api:latest   (and :<git-sha>)
+tayooooo/artracker-web:latest   (and :<git-sha>)
+```
+
+Repo secrets required: `DOCKER_USERNAME`, `DOCKER_PASSWORD` (a Docker Hub
+access token, not the account password).
+
+### Deploy on the VPS
+
+```bash
+git clone https://github.com/tiofani03/artracker.git ~/artracker
+cd ~/artracker
+cp .env.example .env          # set POSTGRES_PASSWORD
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
 curl localhost:8088/healthz
 ```
+
+Update after CI finishes:
+
+```bash
+cd ~/artracker
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+docker image prune -f
+```
+
+Pin a build with `TAG=<sha>` in `.env`. Migrations are embedded in the API
+binary and run at boot, so there is no separate migrate step.
 
 The stack publishes only the web container (`WEB_PORT`, default 8088); nginx
 serves the SPA and proxies `/api` and `/healthz` to the API. Put Caddy/nginx
@@ -60,6 +90,15 @@ in front for TLS:
 art.exlm.my.id {
     reverse_proxy localhost:8088
 }
+```
+
+CI can deploy by itself: set repo variable `DEPLOY_ENABLED=true` and secrets
+`VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`.
+
+### Build locally instead of pulling
+
+```bash
+docker compose -f docker-compose.prod.yml -f docker-compose.build.yml up -d --build
 ```
 
 ## Notes

@@ -1,4 +1,4 @@
-# full stack: docker compose -f docker-compose.prod.yml up -d --build
+# full stack from published images: docker compose -f docker-compose.prod.yml up -d
 name: artracker
 
 services:
@@ -18,7 +18,7 @@ services:
       retries: 10
 
   api:
-    build: ./backend
+    image: ${DOCKER_USER:-tayooooo}/artracker-api:${TAG:-latest}
     restart: unless-stopped
     depends_on:
       db:
@@ -33,7 +33,7 @@ services:
       - "8080"
 
   web:
-    build: ./frontend
+    image: ${DOCKER_USER:-tayooooo}/artracker-web:${TAG:-latest}
     restart: unless-stopped
     depends_on:
       - api
