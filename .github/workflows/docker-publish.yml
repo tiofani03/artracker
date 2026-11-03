@@ -50,14 +50,15 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 
-  # Flip this on later: set repo variable DEPLOY_ENABLED=true plus the
-  # VPS_HOST / VPS_USER / VPS_SSH_KEY secrets.
+  # Deploys on every push to main. Works in two modes:
+  #  - Docker Hub images available  -> pull + up
+  #  - not published yet            -> build on the VPS (BUILD_FALLBACK)
   deploy:
     needs: images
-    if: vars.DEPLOY_ENABLED == 'true'
+    if: always() && vars.DEPLOY_ENABLED == 'true' && needs.images.result != 'failure'
     runs-on: ubuntu-latest
     steps:
-      - name: Pull new images on the VPS
+      - name: Update the stack on the VPS
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -66,6 +67,14 @@ jobs:
           script: |
             set -e
             cd ~/artracker
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            git fetch --prune origin
+            git reset --hard origin/main
+            if docker compose -f docker-compose.prod.yml pull --quiet; then
+              echo "images pulled from registry"
+              docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            else
+              echo "registry images unavailable - building on host"
+              docker compose -f docker-compose.prod.yml -f docker-compose.build.yml up -d --build
+            fi
             docker image prune -f
+            docker compose -f docker-compose.prod.yml ps
