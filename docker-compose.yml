@@ -1,0 +1,22 @@
+# dev dependencies only: run Postgres, then `make api` and `make web` locally
+name: artracker-dev
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: artracker
+      POSTGRES_PASSWORD: artracker
+      POSTGRES_DB: artracker
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U artracker -d artracker"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
