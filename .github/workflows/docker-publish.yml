@@ -7,12 +7,12 @@ on:
 
 env:
   REGISTRY_USER: ${{ secrets.DOCKER_USERNAME }}
-  HAS_DOCKERHUB: ${{ secrets.DOCKER_USERNAME != '' && secrets.DOCKER_PASSWORD != '' }}
 
 jobs:
   images:
-    # stays green (skipped) until the Docker Hub secrets are added to the repo
-    if: env.HAS_DOCKERHUB == 'true'
+    # off until the Docker Hub secrets exist; enable with repo variable
+    # PUBLISH_IMAGES=true (Settings -> Variables)
+    if: vars.PUBLISH_IMAGES == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
