@@ -45,6 +45,41 @@ Open http://localhost:5173.
 Migrations live in `backend/internal/db/migrations` and are embedded into the
 binary; each file runs once, tracked in `schema_migrations`.
 
+## Auth & multi-tenancy
+
+Login is Google SSO only. Users belong to **organizations**, organizations own **projects**, projects own **API keys**.
+
+### Setup
+
+1. Create a Google OAuth client (Cloud Console > APIs & Services > Credentials > OAuth client ID, type Web)
+   and set the authorized redirect URI to `{PUBLIC_URL}/api/v1/auth/google/callback`
+   (dev: `http://localhost:5173/api/v1/auth/google/callback`).
+2. Put the credentials in `.env`: `GOOGLE_CLIENT_ID/SECRET`, plus `JWT_SECRET` (long random string, required in production) and `PUBLIC_URL`.
+   Without Google credentials the login route returns 404. `.env.example` ships dummy values.
+
+Sessions: a 15-minute access token (JWT, kept in memory by the SPA) and a 30-day refresh token (httpOnly cookie, rotated on every use; reusing a rotated token revokes the whole session).
+
+### Roles
+
+| Action | owner | admin | member | viewer |
+| --- | :-: | :-: | :-: | :-: |
+| View org, projects, key list (prefix only) | yes | yes | yes | yes |
+| Create project | yes | yes | no | no |
+| Create / revoke / rotate API key | yes | yes | no | no |
+
+Anyone can create an organization and becomes its `owner`. Non-members get `404` for an org's projects and keys.
+
+### API keys
+
+- `art_live_...` public client key (for SDKs), `art_sec_...` secret key (server-to-server).
+- The full key is shown once at creation; only a SHA-256 hash is stored.
+- Validate a key: `curl -H 'X-Artracker-Key: <key>' /api/v1/sdk/validate` (200 with project id, else 401).
+  `/api/v1/sdk/validate-admin` accepts secret keys only (public key gets 403).
+
+### Tests
+
+Handler and migration tests need Postgres: `TEST_DATABASE_URL=postgres://artracker:artracker@localhost:5433/artracker?sslmode=disable make test` (skipped when unset; CI provides it).
+
 ## Images & deploy
 
 Same flow as portalsafekamu: images are built in CI and published to Docker

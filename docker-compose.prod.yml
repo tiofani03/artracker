@@ -31,6 +31,10 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-artracker}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-artracker}?sslmode=disable
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL in .env}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     expose:
       - "8080"
 
