@@ -1,18 +1,27 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { keyApi, type ApiKey, type CreatedKey, type KeyType, type Project } from '../api'
+import Modal from './Modal'
+import { useToast } from './Toast'
 
-const LABEL: Record<KeyType, string> = { public_client: 'Public (SDK client)', secret_admin: 'Secret (server)' }
+const TYPES: { value: KeyType; title: string; desc: string; prefix: string }[] = [
+  { value: 'public_client', title: 'Public', desc: 'Safe to embed in SDK clients (web, Android, iOS).', prefix: 'art_live_…' },
+  { value: 'secret_admin', title: 'Secret', desc: 'Server-side only. Never ship it in a client app.', prefix: 'art_sec_…' },
+]
+const TYPE_LABEL: Record<KeyType, string> = { public_client: 'Public', secret_admin: 'Secret' }
 
 type Props = { project: Project; canManage: boolean }
 
 export default function ApiKeysPanel({ project, canManage }: Props) {
+  const toast = useToast()
   const [keys, setKeys] = useState<ApiKey[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [fresh, setFresh] = useState<CreatedKey | null>(null)
-  const [copied, setCopied] = useState(false)
-  const [confirmId, setConfirmId] = useState<number | null>(null)
+  const [generating, setGenerating] = useState(false)
   const [newType, setNewType] = useState<KeyType>('public_client')
+  const [busy, setBusy] = useState(false)
+  const [modalError, setModalError] = useState('')
+  const [confirmId, setConfirmId] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -30,18 +39,45 @@ export default function ApiKeysPanel({ project, canManage }: Props) {
     void load()
   }, [load])
 
-  const run = async (action: () => Promise<CreatedKey | ApiKey>) => {
-    setError('')
+  const closeModal = () => {
+    setGenerating(false)
+    setFresh(null)
+    setModalError('')
+  }
+
+  const generate = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setModalError('')
     try {
-      const result = await action()
-      if ('secret' in result) {
-        setFresh(result)
-        setCopied(false)
-      }
-      setConfirmId(null)
+      setFresh(await keyApi.create(project.id, newType))
       await load()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Request failed')
+      setModalError(err instanceof Error ? err.message : 'Failed to generate key')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const rotate = async (id: number) => {
+    setError('')
+    try {
+      setFresh(await keyApi.rotate(project.id, id))
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to rotate key')
+    }
+  }
+
+  const revoke = async (id: number) => {
+    setError('')
+    try {
+      await keyApi.revoke(project.id, id)
+      setConfirmId(null)
+      await load()
+      toast('Key revoked')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to revoke key')
     }
   }
 
@@ -49,97 +85,163 @@ export default function ApiKeysPanel({ project, canManage }: Props) {
     if (!fresh) return
     try {
       await navigator.clipboard.writeText(fresh.secret)
-      setCopied(true)
+      toast('Copied to clipboard')
     } catch {
-      setError('Copy failed: select the key and copy it manually')
+      toast('Copy failed. Select the key and copy it manually.', 'error')
     }
   }
 
+  const modalOpen = generating || fresh !== null
+
   return (
-    <section className="panel">
-      <div className="panel-head">
-        <h2>API keys</h2>
+    <section className="dash-card" aria-labelledby="keys-title">
+      <div className="dash-card__head">
+        <div>
+          <h2 id="keys-title" className="dash-card__title">
+            API keys
+          </h2>
+          <p className="dash-card__desc">Authenticate the ARTracker SDK for {project.name}.</p>
+        </div>
         {canManage && (
-          <div className="inline-form">
-            <select className="field" aria-label="Key type" value={newType} onChange={(e) => setNewType(e.target.value as KeyType)}>
-              <option value="public_client">Public (art_live_…)</option>
-              <option value="secret_admin">Secret (art_sec_…)</option>
-            </select>
-            <button className="btn btn-primary btn-sm" onClick={() => run(() => keyApi.create(project.id, newType))}>
-              Create key
-            </button>
-          </div>
+          <button
+            className="key key--primary"
+            onClick={() => {
+              setNewType('public_client')
+              setGenerating(true)
+            }}
+          >
+            Generate key
+          </button>
         )}
       </div>
 
-      {fresh && (
-        <div className="secret-banner" role="status">
-          <p>Copy this key now. It will not be shown again.</p>
-          <div className="inline-form">
-            <code className="secret-value">{fresh.secret}</code>
-            <button className="btn btn-secondary btn-sm" onClick={copy}>
-              {copied ? 'Copied' : 'Copy'}
-            </button>
-            <button className="btn btn-secondary btn-sm" onClick={() => setFresh(null)}>
-              Dismiss
-            </button>
-          </div>
+      {error && (
+        <p className="dash-error" role="alert">
+          {error}
+        </p>
+      )}
+
+      {loading ? (
+        <p className="dash-empty">Loading keys…</p>
+      ) : keys.length === 0 ? (
+        <p className="dash-empty">No API keys yet.{canManage ? ' Generate one to connect an SDK.' : ''}</p>
+      ) : (
+        <div className="dash-table-wrap">
+          <table className="dash-table">
+            <thead>
+              <tr>
+                <th scope="col">Key</th>
+                <th scope="col">Type</th>
+                <th scope="col">Status</th>
+                <th scope="col">Created</th>
+                {canManage && (
+                  <th scope="col">
+                    <span className="sr-only">Actions</span>
+                  </th>
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              {keys.map((k) => (
+                <tr key={k.id} className={k.is_active ? '' : 'is-revoked'}>
+                  <td data-label="Key">
+                    <code className="dash-code">{k.prefix}…</code>
+                  </td>
+                  <td data-label="Type">{TYPE_LABEL[k.key_type]}</td>
+                  <td data-label="Status">
+                    <span className={`badge ${k.is_active ? 'badge--active' : 'badge--revoked'}`}>{k.is_active ? 'Active' : 'Revoked'}</span>
+                  </td>
+                  <td data-label="Created">{new Date(k.created_at).toLocaleDateString()}</td>
+                  {canManage && (
+                    <td className="dash-table__cell-actions">
+                      <div className="dash-table__actions">
+                      {k.is_active &&
+                        (confirmId === k.id ? (
+                          <>
+                            <button className="dash-btn dash-btn--danger" onClick={() => revoke(k.id)}>
+                              Confirm revoke
+                            </button>
+                            <button className="dash-btn" onClick={() => setConfirmId(null)}>
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button className="dash-btn" onClick={() => rotate(k.id)}>
+                              Rotate
+                            </button>
+                            <button className="dash-btn" onClick={() => setConfirmId(k.id)}>
+                              Revoke
+                            </button>
+                          </>
+                        ))}
+                      </div>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
-      {error && <p className="form-error">{error}</p>}
-
-      {loading ? (
-        <p className="muted">Loading…</p>
-      ) : keys.length === 0 ? (
-        <p className="muted">No keys yet.</p>
-      ) : (
-        <table className="key-table">
-          <thead>
-            <tr>
-              <th>Key</th>
-              <th>Type</th>
-              <th>Status</th>
-              {canManage && <th />}
-            </tr>
-          </thead>
-          <tbody>
-            {keys.map((k) => (
-              <tr key={k.id} className={k.is_active ? '' : 'revoked'}>
-                <td>
-                  <code>{k.prefix}…</code>
-                </td>
-                <td>{LABEL[k.key_type]}</td>
-                <td>{k.is_active ? 'Active' : 'Revoked'}</td>
-                {canManage && (
-                  <td className="row-actions">
-                    {k.is_active &&
-                      (confirmId === k.id ? (
-                        <>
-                          <button className="btn btn-sm btn-danger" onClick={() => run(() => keyApi.revoke(project.id, k.id))}>
-                            Confirm revoke
-                          </button>
-                          <button className="btn btn-secondary btn-sm" onClick={() => setConfirmId(null)}>
-                            Cancel
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button className="btn btn-secondary btn-sm" onClick={() => run(() => keyApi.rotate(project.id, k.id))}>
-                            Rotate
-                          </button>
-                          <button className="btn btn-secondary btn-sm" onClick={() => setConfirmId(k.id)}>
-                            Revoke
-                          </button>
-                        </>
-                      ))}
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <Modal
+        open={modalOpen}
+        onClose={closeModal}
+        title={fresh ? 'Your new API key' : 'Generate API key'}
+        description={fresh ? undefined : `For project ${project.name}.`}
+      >
+        {fresh ? (
+          <div className="dash-form">
+            <p className="dash-warning" role="note">
+              Copy this key now. For security it will not be shown again.
+            </p>
+            <div className="dash-secret">
+              <code>{fresh.secret}</code>
+            </div>
+            <div className="dash-actions">
+              <button type="button" className="key" onClick={copy}>
+                Copy to clipboard
+              </button>
+              <button type="button" className="key key--primary" onClick={closeModal}>
+                Done
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form className="dash-form" onSubmit={generate}>
+            <span className="dash-label" id="key-type-label">
+              Key type
+            </span>
+            <div className="dash-choice-col" role="radiogroup" aria-labelledby="key-type-label">
+              {TYPES.map((t) => (
+                <label key={t.value} className={`dash-choice dash-choice--block${newType === t.value ? ' is-on' : ''}`}>
+                  <input type="radio" name="key-type" value={t.value} checked={newType === t.value} onChange={() => setNewType(t.value)} />
+                  <span>
+                    <strong>
+                      {t.title} <code className="dash-code">{t.prefix}</code>
+                    </strong>
+                    <span className="dash-choice__desc">{t.desc}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            {modalError && (
+              <p className="dash-error" role="alert">
+                {modalError}
+              </p>
+            )}
+            <div className="dash-actions">
+              <button type="button" className="key" onClick={closeModal}>
+                Cancel
+              </button>
+              <button className="key key--primary" disabled={busy}>
+                {busy ? 'Generating…' : 'Generate'}
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
     </section>
   )
 }

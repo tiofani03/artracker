@@ -1,6 +1,8 @@
 import { BASE } from '../api'
 import { useAuth } from '../auth/AuthContext'
+import GoogleIcon from '../components/GoogleIcon'
 import { Link, Redirect } from '../router'
+import '../dashboard.css'
 
 const ERRORS: Record<string, string> = {
   access_denied: 'Sign-in was cancelled. Try again when you are ready.',
@@ -15,27 +17,46 @@ export default function LoginPage() {
   if (!loading && user) return <Redirect to="/dashboard" />
 
   return (
-    <main className="auth-page">
-      <div className="auth-card">
-        <Link to="/" className="brand auth-brand">
-          <div className="brand-icon">A</div>
-          <span>ARTracker</span>
-        </Link>
-        <h1 className="auth-title">Sign in</h1>
-        <p className="auth-desc">Use your organization identity to access the dashboard.</p>
+    <main className="login">
+      <div className="login__card">
+        <div className="sso-brand login__brand">
+          <span className="sso-logo-badge" aria-hidden="true">
+            <svg className="sso-logo-badge__svg" viewBox="0 0 24 24" fill="none">
+              <path d="M4 19L12 4L20 19M7.5 14H16.5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="square" />
+            </svg>
+          </span>
+          <span className="sso-brand__meta">
+            <span className="sso-brand__name">ARTracker</span>
+            <span className="sso-brand__tag">Telemetry Console</span>
+          </span>
+        </div>
+
+        <h1 className="login__title">Sign in to ARTracker</h1>
+        <p className="login__sub">Use your Google account to access your organizations and projects.</p>
 
         {errorMessage && (
-          <p className="form-error" role="alert">
+          <p className="dash-error" role="alert">
             {errorMessage}
           </p>
         )}
 
-        <div className="sso-provider-list">
-          <a className="sso-btn" href={`${BASE}/auth/google/login`}>
-            <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.8 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.4 9 5 12 5z"/><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.8z"/><path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.3s.2-1.6.4-2.3L1.9 7.3C.7 9.7 0 12 0 14.8s.7 5.1 1.9 7.5l3.7-2.9z"/><path fill="#34A853" d="M12 23.5c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.4-6.4-5.2L1.9 16.5C3.7 20.2 7.5 23.5 12 23.5z"/></svg>
+        <a className="sso-provider-btn login__google" href={`${BASE}/auth/google/login`}>
+          <span className="sso-provider-btn__left">
+            <span className="sso-provider-btn__icon" aria-hidden="true">
+              <GoogleIcon size={16} />
+            </span>
             <span>Continue with Google</span>
-          </a>
-        </div>
+          </span>
+          <span className="sso-provider-btn__right">
+            <svg className="sso-provider-btn__arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M5 12h14m-5-5 5 5-5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </span>
+        </a>
+
+        <p className="login__foot">
+          <Link to="/">← Back to home</Link>
+        </p>
       </div>
     </main>
   )

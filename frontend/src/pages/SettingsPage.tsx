@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { orgApi, type Platform, type Project } from '../api'
 import { useAuth } from '../auth/AuthContext'
 import ApiKeysPanel from '../components/ApiKeysPanel'
 import OrgSwitcher from '../components/OrgSwitcher'
+import ProjectSelector from '../components/ProjectSelector'
+import { ToastProvider } from '../components/Toast'
 import { Link, Redirect } from '../router'
+import '../dashboard.css'
 
 const ORG_KEY = 'artracker.org'
 
@@ -30,8 +33,6 @@ export default function SettingsPage() {
   const [projects, setProjects] = useState<Project[]>([])
   const [projectId, setProjectId] = useState<number | null>(null)
   const [error, setError] = useState('')
-  const [newName, setNewName] = useState('')
-  const [newPlatform, setNewPlatform] = useState<Platform>('web')
 
   const orgs = user?.orgs ?? []
   const activeOrg = orgs.find((o) => o.id === storedOrg) ?? orgs[0] ?? null
@@ -69,84 +70,73 @@ export default function SettingsPage() {
     await reload()
   }
 
-  const createProject = async (e: FormEvent) => {
-    e.preventDefault()
+  const createProject = async (input: { name: string; platform: Platform }) => {
     if (!activeOrg) return
-    try {
-      const p = await orgApi.createProject(activeOrg.id, { name: newName, platform: newPlatform })
-      setNewName('')
-      setProjectId(p.id)
-      await loadProjects(activeOrg.id)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create project')
-    }
+    const p = await orgApi.createProject(activeOrg.id, input)
+    setProjectId(p.id)
+    await loadProjects(activeOrg.id)
   }
 
   return (
-    <main className="settings">
-      <header className="settings-head">
-        <Link to="/" className="brand">
-          <div className="brand-icon">A</div>
-          <span>ARTracker</span>
-        </Link>
-        <div className="settings-user">
-          <span className="muted">{user.email}</span>
-          <button
-            className="btn btn-secondary btn-sm"
-            onClick={async () => {
-              await logout()
-            }}
-          >
-            Log out
-          </button>
-        </div>
-      </header>
+    <ToastProvider>
+      <div className="dash">
+        <header className="dash-bar">
+          <div className="dash-bar__inner">
+            <Link to="/" className="dash-brand" aria-label="ARTracker home">
+              <span className="sso-logo-badge" aria-hidden="true">
+                <svg className="sso-logo-badge__svg" viewBox="0 0 24 24" fill="none">
+                  <path d="M4 19L12 4L20 19M7.5 14H16.5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="square" />
+                </svg>
+              </span>
+              <span className="dash-brand__name">ARTracker</span>
+            </Link>
+            <div className="dash-bar__pickers">
+              <OrgSwitcher orgs={orgs} activeId={activeOrgId} onChange={selectOrg} onCreate={createOrg} />
+              {activeOrg && (
+                <ProjectSelector projects={projects} activeId={projectId} onChange={setProjectId} canManage={canManage} onCreate={createProject} />
+              )}
+            </div>
+            <div className="dash-bar__user">
+              <span className="dash-bar__email">{user.email}</span>
+              <button className="key" onClick={() => void logout()}>
+                Log out
+              </button>
+            </div>
+          </div>
+        </header>
 
-      <h1>Settings</h1>
-
-      <section className="panel">
-        <div className="panel-head">
-          <h2>Organization</h2>
-        </div>
-        <OrgSwitcher orgs={orgs} activeId={activeOrgId} onChange={selectOrg} onCreate={createOrg} />
-      </section>
-
-      {error && <p className="form-error">{error}</p>}
-
-      {activeOrg && (
-        <section className="panel">
-          <div className="panel-head">
-            <h2>Project</h2>
-            {projects.length > 0 && (
-              <select className="field" aria-label="Project" value={projectId ?? ''} onChange={(e) => setProjectId(Number(e.target.value))}>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} · {p.platform}
-                  </option>
-                ))}
-              </select>
+        <main className="dash-main">
+          <div className="dash-title">
+            <h1>Settings</h1>
+            {activeOrg && (
+              <p>
+                {activeOrg.name} · <span className="badge badge--role">{activeOrg.role}</span>
+              </p>
             )}
           </div>
-          {projects.length === 0 && <p className="muted">No projects yet.</p>}
-          {canManage ? (
-            <form className="inline-form" onSubmit={createProject}>
-              <input className="field" placeholder="New project name" value={newName} onChange={(e) => setNewName(e.target.value)} required />
-              <select className="field" aria-label="Platform" value={newPlatform} onChange={(e) => setNewPlatform(e.target.value as Platform)}>
-                <option value="web">Web</option>
-                <option value="android">Android</option>
-                <option value="ios">iOS</option>
-              </select>
-              <button className="btn btn-primary btn-sm" disabled={!newName.trim()}>
-                New project
-              </button>
-            </form>
-          ) : (
-            <p className="muted">Your role ({activeOrg.role}) is read-only for projects and keys.</p>
-          )}
-        </section>
-      )}
 
-      {project && <ApiKeysPanel key={project.id} project={project} canManage={canManage} />}
-    </main>
+          {error && (
+            <p className="dash-error" role="alert">
+              {error}
+            </p>
+          )}
+
+          {!activeOrg && <p className="dash-empty dash-card">Create an organization from the switcher above to get started.</p>}
+
+          {activeOrg && !project && !error && (
+            <p className="dash-empty dash-card">
+              No projects yet.{' '}
+              {canManage ? 'Use the project menu above to create one.' : `Your role (${activeOrg.role}) cannot create projects.`}
+            </p>
+          )}
+
+          {activeOrg && !canManage && project && (
+            <p className="dash-note">Your role ({activeOrg.role}) is read-only for projects and keys.</p>
+          )}
+
+          {project && <ApiKeysPanel key={project.id} project={project} canManage={canManage} />}
+        </main>
+      </div>
+    </ToastProvider>
   )
 }

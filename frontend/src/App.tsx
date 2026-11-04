@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { BASE } from './api'
+import GoogleIcon from './components/GoogleIcon'
 
 declare global {
   interface Window {
@@ -396,8 +398,6 @@ export default function App() {
 
   const [activeSdk, setActiveSdk] = useState<SdkPlatform>('web')
   const [copiedSdk, setCopiedSdk] = useState(false)
-  const [loginEmail, setLoginEmail] = useState('')
-  const [ssoNotice, setSsoNotice] = useState<string | null>(null)
 
   // Mount untouched ScrollCraft engine for smooth entrance choreography
   useEffect(() => {
@@ -469,26 +469,11 @@ export default function App() {
   }
 
   const openSsoModal = () => {
-    setSsoNotice(null)
     dialogRef.current?.showModal()
   }
 
   const closeSsoModal = () => {
     dialogRef.current?.close()
-  }
-
-  const handleEmailLogin = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    const target = loginEmail.trim()
-    if (!target) return
-    try {
-      await fetch('/api/v1/health')
-    } catch {
-      // Static preview fallback when Go API is offline
-    }
-    setSsoNotice(
-      `Magic-link auth ready for ${target}. Configure SMTP_URL in backend/.env to dispatch login links.`,
-    )
   }
 
   const currentSdk = SDK_DATA[activeSdk]
@@ -786,134 +771,21 @@ export default function App() {
 
         <div className="sso-dialog__body">
           <div className="sso-providers">
-            <button
-              type="button"
-              className="sso-provider-btn"
-              onClick={() =>
-                setSsoNotice(
-                  'OIDC handshake ready. Configure GOOGLE_CLIENT_ID in backend/.env to enable redirect.',
-                )
-              }
-            >
+            <a className="sso-provider-btn" href={`${BASE}/auth/google/login`}>
               <span className="sso-provider-btn__left">
                 <span className="sso-provider-btn__icon" aria-hidden="true">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="M21 12.2c0-.7-.1-1.3-.2-1.9H12v3.7h5.1a4.4 4.4 0 0 1-1.9 2.9v2.4h3c1.8-1.6 2.8-4.1 2.8-7.1z"
-                      fill="currentColor"
-                    />
-                    <path
-                      d="M12 21.4c2.5 0 4.7-.8 6.2-2.3l-3-2.4c-.8.6-1.9.9-3.2.9-2.5 0-4.6-1.7-5.3-4H3.6v2.5A9.4 9.4 0 0 0 12 21.4z"
-                      fill="currentColor"
-                      opacity="0.78"
-                    />
-                    <path
-                      d="M6.7 13.6a5.6 5.6 0 0 1 0-3.6V7.5H3.6a9.4 9.4 0 0 0 0 8.6l3.1-2.5z"
-                      fill="currentColor"
-                      opacity="0.58"
-                    />
-                    <path
-                      d="M12 6.2c1.4 0 2.6.5 3.6 1.4l2.7-2.7A9.3 9.3 0 0 0 12 2.6 9.4 9.4 0 0 0 3.6 7.5l3.1 2.5c.7-2.3 2.8-3.8 5.3-3.8z"
-                      fill="currentColor"
-                      opacity="0.88"
-                    />
-                  </svg>
+                  <GoogleIcon size={16} />
                 </span>
-                <span>Google Workspace</span>
+                <span>Continue with Google</span>
               </span>
               <span className="sso-provider-btn__right">
-                <span>OIDC</span>
                 <svg className="sso-provider-btn__arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path d="M5 12h14m-5-5 5 5-5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </span>
-            </button>
-
-            <button
-              type="button"
-              className="sso-provider-btn"
-              onClick={() =>
-                setSsoNotice(
-                  'GitHub OAuth ready. Configure GITHUB_CLIENT_ID in backend/.env to enable redirect.',
-                )
-              }
-            >
-              <span className="sso-provider-btn__left">
-                <span className="sso-provider-btn__icon" aria-hidden="true">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.58 9.58 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.75c0 .26.18.58.69.48A10 10 0 0 0 12 2z" />
-                  </svg>
-                </span>
-                <span>GitHub</span>
-              </span>
-              <span className="sso-provider-btn__right">
-                <span>OAuth</span>
-                <svg className="sso-provider-btn__arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M5 12h14m-5-5 5 5-5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </span>
-            </button>
-
-            <button
-              type="button"
-              className="sso-provider-btn"
-              onClick={() =>
-                setSsoNotice(
-                  'SAML 2.0 assertion endpoint active at /api/v1/auth/saml/acs for Okta & Entra ID.',
-                )
-              }
-            >
-              <span className="sso-provider-btn__left">
-                <span className="sso-provider-btn__icon" aria-hidden="true">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="M12 3 4 7v5c0 5 3.4 9.4 8 10.8 4.6-1.4 8-5.8 8-10.8V7l-8-4zm0 6a2 2 0 1 1 0 4 2 2 0 0 1 0-4z"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </span>
-                <span>Enterprise SSO</span>
-              </span>
-              <span className="sso-provider-btn__right">
-                <span>SAML</span>
-                <svg className="sso-provider-btn__arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M5 12h14m-5-5 5 5-5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </span>
-            </button>
+            </a>
           </div>
-
-          <div className="sso-divider" aria-hidden="true">
-            <span>or continue with email</span>
-          </div>
-
-          <form className="sso-email-form" onSubmit={handleEmailLogin}>
-            <div className="sso-field">
-              <label htmlFor="login-email" className="sso-label">
-                Work email
-              </label>
-              <input
-                id="login-email"
-                type="email"
-                required
-                placeholder="you@company.com"
-                value={loginEmail}
-                onChange={(e) => setLoginEmail(e.target.value)}
-                className="sso-input"
-              />
-            </div>
-            <button type="submit" className="key key--primary sso-submit">
-              Continue with Email
-            </button>
-          </form>
-
-          {ssoNotice && (
-            <div className="sso-feedback" role="status">
-              {ssoNotice}
-            </div>
-          )}
+          <p className="sso-note">Google is the only supported sign-in method.</p>
         </div>
       </dialog>
     </>
