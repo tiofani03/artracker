@@ -154,3 +154,40 @@ export const keyApi = {
   revoke: (projectId: number, keyId: number) => post<ApiKey>(`/projects/${projectId}/keys/${keyId}/revoke`),
   rotate: (projectId: number, keyId: number) => post<CreatedKey>(`/projects/${projectId}/keys/${keyId}/rotate`),
 }
+
+export type BucketPoint = {
+  label: string
+  sessions: number
+  errors: number
+}
+
+export type ProjectStats = {
+  range: string
+  sessions_count: number
+  events_count: number
+  errors_count: number
+  error_free_pct: string
+  error_note: string
+  buckets: BucketPoint[]
+}
+
+export type TelemetryEvent = {
+  id: string
+  kind: 'event' | 'log' | 'session'
+  name: string
+  level: string
+  message: string
+  session_id: string
+  user_id: string
+  environment: string
+  release_version: string
+  event_timestamp: string
+  attributes: Record<string, unknown>
+}
+
+export const telemetryApi = {
+  getStats: (projectId: number, range = '24h') =>
+    request<ProjectStats>(`/projects/${projectId}/stats?range=${range}`),
+  listEvents: (projectId: number, kind = 'all', limit = 50) =>
+    request<{ items: TelemetryEvent[] }>(`/projects/${projectId}/events?kind=${kind}&limit=${limit}`),
+}
