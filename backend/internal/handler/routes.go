@@ -14,6 +14,8 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Patch("/artworks/:id", h.UpdateArtwork)
 	api.Delete("/artworks/:id", h.DeleteArtwork)
 
+	api.Post("/ingest", h.VerifyIngestKey, h.RateLimitIngest, h.Ingest)
+
 	if h.db == nil {
 		// SKIP_DB mode: only the in-memory artwork routes exist.
 		off := func(*fiber.Ctx) error {
