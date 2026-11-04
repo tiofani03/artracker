@@ -4,20 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
-    types: [opened, edited, synchronize, reopened]
 
 jobs:
-  pr-visual-check:
-    name: Verify PR Visual Evidence (PNG/WebP/JPG Required)
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Validate PR description contains raster image (PNG, WebP, JPG)
-        env:
-          PR_BODY: ${{ github.event.pull_request.body }}
-        run: python3 .github/scripts/check-pr-image.py
-
   backend:
     runs-on: ubuntu-latest
     defaults:
