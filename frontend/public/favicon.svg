@@ -1,35 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#FF7A00" />
-      <stop offset="50%" stop-color="#FF5500" />
-      <stop offset="100%" stop-color="#CC2900" />
-    </linearGradient>
-    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#FFF" stop-opacity="0.9" />
-      <stop offset="100%" stop-color="#FFD6A5" stop-opacity="0.7" />
-    </linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#FF5500" flood-opacity="0.45" />
-    </filter>
-  </defs>
-
-  <!-- Rounded Squircle Base -->
-  <rect x="4" y="4" width="56" height="56" rx="16" fill="#0C0E14" />
-  <rect x="4" y="4" width="56" height="56" rx="16" fill="url(#bg)" fill-opacity="0.12" stroke="url(#bg)" stroke-width="2" />
-
-  <!-- Stylized Telemetry / Radar Rings -->
-  <circle cx="32" cy="32" r="22" stroke="url(#bg)" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.4" />
-  <circle cx="32" cy="32" r="15" stroke="url(#bg)" stroke-width="2" opacity="0.6" />
-
-  <!-- Stylized "A" + Play/Tracker Target Node -->
-  <path d="M22 44 L32 18 L42 44 M25.5 35 L38.5 35" stroke="url(#bg)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" filter="url(#shadow)" />
-  <path d="M22 44 L32 18 L42 44 M25.5 35 L38.5 35" stroke="url(#glow)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
-
-  <!-- Core Pulse Center Indicator -->
-  <circle cx="32" cy="32" r="3.5" fill="#FFFFFF" />
-  <circle cx="32" cy="32" r="7" stroke="#FF5500" stroke-width="1.5" opacity="0.8">
-    <animate attributeName="r" values="3.5;9;12" dur="2s" repeatCount="indefinite" />
-    <animate attributeName="opacity" values="0.9;0.3;0" dur="2s" repeatCount="indefinite" />
-  </circle>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <style>
+    path {
+      stroke: #0853c9;
+      stroke: oklch(48% 0.185 258);
+    }
+    @media (prefers-color-scheme: dark) {
+      path {
+        stroke: #5c9dff;
+        stroke: oklch(72% 0.15 256);
+      }
+    }
+  </style>
+  <path
+    d="M4 19L12 4L20 19M7.5 14H16.5"
+    stroke-width="2.4"
+    stroke-linecap="square"
+    stroke-linejoin="miter"
+  />
 </svg>

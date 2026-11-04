@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -17,6 +18,11 @@ type Handler struct {
 	cfg       config.Config
 	issuer    *auth.Issuer
 	providers map[string]OAuthProvider
+
+	// in-memory artwork store, used only when the database is disabled (SKIP_DB)
+	mu     sync.RWMutex
+	nextID int64
+	mem    []Artwork
 }
 
 func New(pool *pgxpool.Pool, cfg config.Config, issuer *auth.Issuer, providers map[string]OAuthProvider) *Handler {
@@ -25,6 +31,13 @@ func New(pool *pgxpool.Pool, cfg config.Config, issuer *auth.Issuer, providers m
 
 // Health reports liveness plus database reachability.
 func (h *Handler) Health(c *fiber.Ctx) error {
+	if h.db == nil {
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{
+			"status": "ok",
+			"db":     "disabled",
+		})
+	}
+
 	ctx, cancel := context.WithTimeout(c.Context(), 2*time.Second)
 	defer cancel()
 
