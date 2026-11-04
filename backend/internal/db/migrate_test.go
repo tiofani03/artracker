@@ -21,7 +21,7 @@ func TestMigrateCreatesAuthTables(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	for _, table := range []string{"users", "organizations", "organization_members", "projects", "api_keys", "refresh_tokens"} {
+	for _, table := range []string{"users", "organizations", "organization_members", "projects", "api_keys", "refresh_tokens", "telemetry_events"} {
 		var ok bool
 		if err := pool.QueryRow(ctx, `SELECT to_regclass('public.`+table+`') IS NOT NULL`).Scan(&ok); err != nil || !ok {
 			t.Errorf("table %s missing (err=%v)", table, err)

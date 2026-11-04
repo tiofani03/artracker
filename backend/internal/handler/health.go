@@ -10,6 +10,7 @@ import (
 
 	"github.com/tiofani03/artracker/backend/internal/auth"
 	"github.com/tiofani03/artracker/backend/internal/config"
+	"github.com/tiofani03/artracker/backend/internal/ingest"
 )
 
 // Handler carries the dependencies every route needs.
@@ -18,6 +19,7 @@ type Handler struct {
 	cfg       config.Config
 	issuer    *auth.Issuer
 	providers map[string]OAuthProvider
+	ingestSvc *ingest.Service
 
 	// in-memory artwork store, used only when the database is disabled (SKIP_DB)
 	mu     sync.RWMutex
@@ -26,15 +28,46 @@ type Handler struct {
 }
 
 func New(pool *pgxpool.Pool, cfg config.Config, issuer *auth.Issuer, providers map[string]OAuthProvider) *Handler {
-	return &Handler{db: pool, cfg: cfg, issuer: issuer, providers: providers}
+	return &Handler{
+		db:        pool,
+		cfg:       cfg,
+		issuer:    issuer,
+		providers: providers,
+		ingestSvc: ingest.NewService(ingest.Config{
+			Workers:         cfg.IngestWorkers,
+			QueueSize:       cfg.IngestQueueSize,
+			BatchSize:       cfg.IngestBatchSize,
+			FlushIntervalMs: cfg.IngestFlushIntervalMs,
+			ProjectRPS:      cfg.IngestProjectRPS,
+			ProjectEventsPS: cfg.IngestProjectEventsPerSec,
+			KeyCacheTTLSec:  cfg.IngestKeyCacheTTLSec,
+		}, pool),
+	}
 }
 
-// Health reports liveness plus database reachability.
+// WithIngest replaces the ingest service (useful for custom sinks or test mocks).
+func (h *Handler) WithIngest(svc *ingest.Service) *Handler {
+	h.ingestSvc = svc
+	return h
+}
+
+// Health reports liveness plus database reachability and ingest buffer health.
 func (h *Handler) Health(c *fiber.Ctx) error {
+	var ingestStats any
+	isOverloaded := false
+	if h.ingestSvc != nil {
+		stats := h.ingestSvc.WorkerPool().Stats()
+		ingestStats = stats
+		if stats.Status == "overloaded" {
+			isOverloaded = true
+		}
+	}
+
 	if h.db == nil {
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{
 			"status": "ok",
 			"db":     "disabled",
+			"ingest": ingestStats,
 		})
 	}
 
@@ -46,10 +79,13 @@ func (h *Handler) Health(c *fiber.Ctx) error {
 	if err := h.db.Ping(ctx); err != nil {
 		dbStatus = "down"
 		status = fiber.StatusServiceUnavailable
+	} else if isOverloaded {
+		status = fiber.StatusServiceUnavailable
 	}
 
 	return c.Status(status).JSON(fiber.Map{
 		"status": map[bool]string{true: "ok", false: "degraded"}[status == fiber.StatusOK],
 		"db":     dbStatus,
+		"ingest": ingestStats,
 	})
 }

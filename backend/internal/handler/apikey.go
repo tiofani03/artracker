@@ -134,6 +134,9 @@ func (h *Handler) RevokeKey(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	if h.ingestSvc != nil {
+		h.ingestSvc.KeyCache().InvalidateAll()
+	}
 	return c.JSON(k)
 }
 
@@ -175,12 +178,22 @@ func (h *Handler) RotateKey(c *fiber.Ctx) error {
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
+	if h.ingestSvc != nil {
+		h.ingestSvc.KeyCache().InvalidateAll()
+	}
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"key": k, "secret": plain})
 }
 
 // ValidateKey resolves a plaintext key to its project; only active keys match.
 func (h *Handler) ValidateKey(ctx context.Context, plain string) (int64, auth.KeyType, bool) {
 	if plain == "" {
+		return 0, "", false
+	}
+	if h.ingestSvc != nil {
+		info, err := h.ingestSvc.KeyCache().Resolve(ctx, plain)
+		if err == nil {
+			return info.ProjectID, info.KeyType, true
+		}
 		return 0, "", false
 	}
 	var pid int64
