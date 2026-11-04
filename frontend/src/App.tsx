@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { BASE } from './api'
+import { useAuth } from './auth/AuthContext'
 import GoogleIcon from './components/GoogleIcon'
+import { navigate } from './router'
 
 declare global {
   interface Window {
@@ -388,6 +390,7 @@ function DaylightSessionStage() {
 }
 
 export default function App() {
+  const { user } = useAuth()
   const scrollBarRef = useRef<HTMLDivElement | null>(null)
   const dialogRef = useRef<HTMLDialogElement | null>(null)
   const tabRefs = useRef<Record<SdkPlatform, HTMLButtonElement | null>>({
@@ -469,6 +472,10 @@ export default function App() {
   }
 
   const openSsoModal = () => {
+    if (user) {
+      navigate('/dashboard')
+      return
+    }
     dialogRef.current?.showModal()
   }
 
@@ -523,7 +530,7 @@ export default function App() {
 
           <div className="header-tools">
             <button type="button" className="key key--primary" onClick={openSsoModal}>
-              Login
+              {user ? 'Dashboard' : 'Login'}
             </button>
           </div>
         </div>
@@ -544,7 +551,7 @@ export default function App() {
                   className="key key--primary"
                   onClick={openSsoModal}
                 >
-                  Login
+                  {user ? 'Open Dashboard' : 'Login'}
                 </button>
                 <a href="#sdks" className="key">
                   Explore SDKs
@@ -688,7 +695,7 @@ export default function App() {
                   className="key key--primary"
                   onClick={openSsoModal}
                 >
-                  Login
+                  {user ? 'Open Dashboard' : 'Login'}
                 </button>
                 <a href="#sdks" className="key">
                   Explore SDKs

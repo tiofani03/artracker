@@ -5,9 +5,10 @@ import './base.css'
 import './index.css'
 import App from './App.tsx'
 import { AuthProvider } from './auth/AuthContext'
+import DashboardPage from './pages/DashboardPage'
 import LoginPage from './pages/LoginPage'
 import SettingsPage from './pages/SettingsPage'
-import { Redirect, useLocation } from './router'
+import { useLocation } from './router'
 
 function Routes() {
   const path = useLocation()
@@ -15,7 +16,15 @@ function Routes() {
     case '/login':
       return <LoginPage />
     case '/dashboard':
-      return <Redirect to="/dashboard/settings" />
+      return <DashboardPage section="overview" />
+    case '/dashboard/replays':
+      return <DashboardPage section="replays" />
+    case '/dashboard/logs':
+      return <DashboardPage section="logs" />
+    case '/dashboard/campaigns':
+      return <DashboardPage section="campaigns" />
+    case '/dashboard/alerts':
+      return <DashboardPage section="alerts" />
     case '/dashboard/settings':
       return <SettingsPage />
     default:

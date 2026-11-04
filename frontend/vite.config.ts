@@ -13,6 +13,7 @@ export default defineConfig(({ mode }) => {
       port: Number(env.WEB_DEV_PORT) || 5173,
       proxy: {
         '/api': { target: apiTarget, changeOrigin: true },
+        '/auth': { target: apiTarget, changeOrigin: true },
         '/healthz': { target: apiTarget, changeOrigin: true },
       },
     },
