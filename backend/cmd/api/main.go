@@ -19,6 +19,7 @@ import (
 	"github.com/tiofani03/artracker/backend/internal/config"
 	"github.com/tiofani03/artracker/backend/internal/db"
 	"github.com/tiofani03/artracker/backend/internal/handler"
+	"github.com/tiofani03/artracker/backend/internal/ingest"
 )
 
 func main() {
@@ -35,7 +36,7 @@ func main() {
 		log.Warn("database disabled (SKIP_DB=true), using in-memory store")
 	} else {
 		var err error
-		pool, err = db.Connect(ctx, cfg.DatabaseURL)
+		pool, err = db.Connect(ctx, cfg.DatabaseURL, cfg.DBMaxConns)
 		if err != nil {
 			log.Error("database connect failed", "err", err)
 			os.Exit(1)
@@ -47,6 +48,16 @@ func main() {
 			os.Exit(1)
 		}
 	}
+
+	ingestSvc := ingest.NewService(ingest.Config{
+		Workers:         cfg.IngestWorkers,
+		QueueSize:       cfg.IngestQueueSize,
+		BatchSize:       cfg.IngestBatchSize,
+		FlushIntervalMs: cfg.IngestFlushIntervalMs,
+		ProjectRPS:      cfg.IngestProjectRPS,
+		ProjectEventsPS: cfg.IngestProjectEventsPerSec,
+		KeyCacheTTLSec:  cfg.IngestKeyCacheTTLSec,
+	}, pool)
 
 	app := fiber.New(fiber.Config{
 		AppName:               "artracker-api",
@@ -61,6 +72,19 @@ func main() {
 	app.Use(fiberlogger.New(fiberlogger.Config{
 		Format: "${time} ${status} ${latency} ${method} ${path}\n",
 	}))
+
+	// SDK-specific CORS (allows client SDKs from any origin)
+	app.Use("/api/v1/ingest", cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowHeaders: "Origin, Content-Type, Content-Encoding, Accept, X-Artracker-Key",
+		AllowMethods: "POST, OPTIONS",
+	}))
+	app.Use("/api/v1/sdk", cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowHeaders: "Origin, Content-Type, Accept, X-Artracker-Key",
+		AllowMethods: "GET, OPTIONS",
+	}))
+
 	if cfg.CORSOrigins != "" {
 		app.Use(cors.New(cors.Config{
 			AllowOrigins:     cfg.CORSOrigins,
@@ -75,7 +99,7 @@ func main() {
 		providers["google"] = handler.NewGoogleProvider(cfg.GoogleClientID, cfg.GoogleClientSecret)
 	}
 
-	h := handler.New(pool, cfg, auth.NewIssuer(cfg.JWTSecret, 15*time.Minute), providers)
+	h := handler.New(pool, cfg, auth.NewIssuer(cfg.JWTSecret, 15*time.Minute), providers).WithIngest(ingestSvc)
 	app.Get("/healthz", h.Health)
 	app.Get("/auth/callback/:provider", h.OAuthCallback)
 	h.Routes(app.Group("/api/v1"))
@@ -95,6 +119,9 @@ func main() {
 	defer cancel()
 	if err := app.ShutdownWithContext(shutdownCtx); err != nil {
 		log.Error("graceful shutdown failed", "err", err)
+	}
+	if err := ingestSvc.Shutdown(shutdownCtx); err != nil {
+		log.Error("ingest drain failed", "err", err)
 	}
 	log.Info("bye")
 }

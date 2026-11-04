@@ -3,6 +3,7 @@ package config
 import (
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -15,6 +16,16 @@ type Config struct {
 	SkipDB      bool
 	CORSOrigins string
 	LogLevel    slog.Level
+	DBMaxConns  int
+
+	// Ingest Pipeline configuration
+	IngestWorkers          int
+	IngestQueueSize        int
+	IngestBatchSize        int
+	IngestFlushIntervalMs  int
+	IngestProjectRPS       float64
+	IngestProjectEventsPerSec float64
+	IngestKeyCacheTTLSec   int
 
 	// Auth. JWTSecret has a development-only default; production must set it.
 	JWTSecret          string
@@ -38,6 +49,15 @@ func Load() Config {
 		SkipDB:      parseBool(env("SKIP_DB", "false")) || strings.EqualFold(rawDSN, "none") || strings.EqualFold(rawDSN, "memory"),
 		CORSOrigins: env("CORS_ORIGINS", "http://localhost:5173"),
 		LogLevel:    parseLevel(env("LOG_LEVEL", "info")),
+		DBMaxConns:  envInt("DB_MAX_CONNS", 25),
+
+		IngestWorkers:             envInt("INGEST_WORKERS", 4),
+		IngestQueueSize:           envInt("INGEST_QUEUE_SIZE", 2048),
+		IngestBatchSize:           envInt("INGEST_BATCH_SIZE", 500),
+		IngestFlushIntervalMs:     envInt("INGEST_FLUSH_INTERVAL_MS", 250),
+		IngestProjectRPS:          envFloat("INGEST_PROJECT_RPS", 50.0),
+		IngestProjectEventsPerSec: envFloat("INGEST_PROJECT_EVENTS_PER_SEC", 1000.0),
+		IngestKeyCacheTTLSec:      envInt("INGEST_KEY_CACHE_TTL_SEC", 60),
 
 		JWTSecret:          env("JWT_SECRET", ""),
 		PublicURL:          strings.TrimRight(env("PUBLIC_URL", "http://localhost:5173"), "/"),
@@ -70,6 +90,24 @@ func parseBool(s string) bool {
 func env(key, fallback string) string {
 	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+func envFloat(key string, fallback float64) float64 {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if n, err := strconv.ParseFloat(v, 64); err == nil {
+			return n
+		}
 	}
 	return fallback
 }
