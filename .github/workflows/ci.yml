@@ -4,8 +4,37 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, edited, synchronize, reopened]
 
 jobs:
+  pr-visual-check:
+    name: Verify PR Visual Evidence (Screenshot Required)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR description contains image/screenshot
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          echo "=== Checking PR description for image attachment ==="
+          python3 -c "
+          import os, re, sys
+          body = os.environ.get('PR_BODY', '')
+          pattern = re.compile(
+              r'(!\[.*?\]\(.*?\)|<img\s+[^>]*src=.*|https://github\.com/user-attachments/assets/[a-f0-9\-]+|https://user-images\.githubusercontent\.com/\S+)',
+              re.IGNORECASE | re.DOTALL
+          )
+          # Exclude the placeholder template text if unchanged
+          has_real_image = bool(pattern.search(body)) and 'url_gambar_kamu_disini' not in body
+          if has_real_image:
+              print('✅ Visual evidence (image/screenshot) detected in PR description.')
+              sys.exit(0)
+          else:
+              print('❌ ERROR: PR wajib melampirkan foto/gambar/screenshot bukti perubahan!')
+              print('Silakan upload screenshot ke deskripsi PR (drag-and-drop foto atau Markdown image), lalu rerun.')
+              sys.exit(1)
+          "
+
   backend:
     runs-on: ubuntu-latest
     defaults:
