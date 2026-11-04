@@ -1,0 +1,137 @@
+:root {
+  color-scheme: light;
+
+  /* 4px-aligned spacing scale */
+  --space-2xs: 4px;
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 40px;
+  --space-2xl: 64px;
+  --space-3xl: 96px;
+  --space-4xl: 144px;
+
+  /* Typography scale */
+  --text-xs: 0.8125rem;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.5625rem;
+  --text-2xl: 1.953rem;
+  --text-3xl: 2.441rem;
+  --text-display-s: clamp(2.125rem, 3.6vw + 0.5rem, 3.375rem);
+  --text-display: clamp(2.5rem, 4vw + 0.75rem, 4.25rem);
+  --text-section: clamp(2rem, 2.5vw + 0.875rem, 3.125rem);
+  --text-title: clamp(1.2rem, 0.65vw + 0.875rem, 1.5rem);
+  --text-lead: clamp(1.0625rem, 0.3vw + 0.95rem, 1.2rem);
+
+  /* Motion curves & durations */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 120ms;
+  --dur-short: 200ms;
+  --dur-long: 440ms;
+
+  /* Layout geometry */
+  --container: 1360px;
+  --gutter: 64px;
+  --gap-columns: 32px;
+  --section-gap-s: 80px;
+  --section-gap: 96px;
+  --section-gap-l: 112px;
+  --banner-height: 72px;
+
+  /* Z-index stack */
+  --z-base: 1;
+  --z-raised: 10;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-sticky-nav: 300;
+  --z-modal: 400;
+  --z-toast: 500;
+
+  /* Clean Daylight Palette (Hallmark Cobalt — crisp paper, slate ink, zero neon) */
+  --color-paper: oklch(98.8% 0.004 250);
+  --color-paper-2: oklch(96.4% 0.006 252);
+  --color-paper-3: oklch(93.4% 0.009 252);
+  --color-paper-hi: oklch(99.7% 0.002 250);
+  --color-backdrop: oklch(18% 0.02 260 / 0.42);
+
+  --color-ink: oklch(20% 0.024 260);
+  --color-ink-2: oklch(35% 0.02 258);
+  --color-muted: oklch(47% 0.016 256);
+
+  --color-rule: oklch(90% 0.008 252);
+  --color-rule-2: oklch(82% 0.012 252);
+
+  /* Single restrained cobalt signal (<5% of viewport) */
+  --color-accent: oklch(48% 0.185 258);
+  --color-accent-deep: oklch(41% 0.19 260);
+  --color-accent-edge: oklch(36% 0.16 260);
+  --color-accent-wash: oklch(95.2% 0.024 256);
+  --color-accent-ink: oklch(99.2% 0.003 250);
+  --color-focus: oklch(48% 0.185 258);
+
+  /* Keycap control surfaces */
+  --color-key-face: oklch(99.6% 0.002 250);
+  --color-key-edge: oklch(81% 0.014 254);
+
+  /* Graphite pane (strictly for SDK code viewer) */
+  --color-graphite: oklch(21% 0.022 262);
+  --color-graphite-2: oklch(26.5% 0.024 262);
+  --color-graphite-ink: oklch(94% 0.008 250);
+  --color-graphite-muted: oklch(72% 0.018 256);
+  --color-graphite-accent: oklch(78% 0.12 254);
+
+  /* Subtle background glyph field tints on light paper */
+  --color-glyph-1: oklch(91% 0.016 254);
+  --color-glyph-2: oklch(84% 0.032 255);
+  --color-glyph-3: oklch(74% 0.068 256);
+
+  /* Functional semantic indicators (clean understated tones) */
+  --color-error: oklch(50% 0.17 26);
+  --color-warn: oklch(54% 0.14 68);
+  --color-success: oklch(48% 0.13 156);
+
+  /* Typography */
+  --font-display: "Familjen Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-outlier: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Geometry & shadows */
+  --radius-card: 8px;
+  --radius-input: 6px;
+  --radius-pill: 999px;
+  --cut: 8px;
+  --cut-l: 12px;
+  --rule-hair: 1px;
+  --rule-grid: oklch(20% 0.024 260 / 0.045);
+  --shadow-card: 0 1px 2px oklch(20% 0.024 260 / 0.05), 0 12px 32px -16px oklch(20% 0.024 260 / 0.08);
+  --shadow-modal: 0 24px 64px -16px oklch(18% 0.028 260 / 0.26), 0 4px 16px -4px oklch(18% 0.028 260 / 0.12);
+  --shadow-logo: 0 8px 20px -6px oklch(41% 0.19 260 / 0.45);
+  --shadow-key: 0 2px 0 0 var(--color-key-edge), 0 4px 8px -4px oklch(20% 0.024 260 / 0.14);
+  --shadow-key-accent: 0 2px 0 0 var(--color-accent-edge), 0 6px 12px -4px oklch(36% 0.14 260 / 0.28);
+  --shadow-key-press: inset 0 1px 2px oklch(20% 0.024 260 / 0.12);
+  --tracking-display: -0.028em;
+  --display-weight: 600;
+}
+
+@media (max-width: 60rem) {
+  :root {
+    --gutter: 24px;
+    --section-gap-s: 80px;
+    --section-gap: 96px;
+    --section-gap-l: 120px;
+  }
+}
+
+@media (max-width: 40rem) {
+  :root {
+    --gutter: 16px;
+    --gap-columns: 16px;
+    --section-gap-s: 64px;
+    --section-gap: 80px;
+    --section-gap-l: 96px;
+  }
+}
