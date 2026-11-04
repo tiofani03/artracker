@@ -271,11 +271,15 @@ function SdkStatusBanner({
   project,
   isDemo,
   eventsCount,
+  onSeed,
+  seeding,
 }: {
   activeOrg: OrgMembership | null
   project: Project | null
   isDemo: boolean
   eventsCount?: number
+  onSeed?: () => void
+  seeding?: boolean
 }) {
   const [keys, setKeys] = useState<ApiKey[]>([])
 
@@ -314,6 +318,17 @@ function SdkStatusBanner({
               ? 'Sample telemetry displayed in demo mode'
               : 'Waiting for SDK client events at /api/v1/ingest'}
         </span>
+        {project && !isDemo && onSeed && (
+          <button
+            type="button"
+            className="dash-btn"
+            onClick={onSeed}
+            disabled={seeding}
+            style={{ marginLeft: 'auto', padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
+          >
+            {seeding ? 'Seeding...' : '⚡ Seed Project Mock Data'}
+          </button>
+        )}
       </div>
     )
   }
@@ -497,6 +512,18 @@ function DashboardInner({
   const [alerts, setAlerts] = useState<AlertRule[]>(INITIAL_ALERTS)
   const [realStats, setRealStats] = useState<ProjectStats | null>(null)
   const [realEvents, setRealEvents] = useState<TelemetryEvent[]>([])
+  const [seeding, setSeeding] = useState(false)
+
+  const reloadTelemetry = () => {
+    if (!project || isDemo) return
+    Promise.all([
+      telemetryApi.getStats(project.id, range).catch(() => null),
+      telemetryApi.listEvents(project.id, 'all', 50).catch(() => ({ items: [] })),
+    ]).then(([statsData, eventsData]) => {
+      setRealStats(statsData)
+      setRealEvents(eventsData?.items ?? [])
+    })
+  }
 
   useEffect(() => {
     if (!project || isDemo) {
@@ -520,8 +547,21 @@ function DashboardInner({
     }
   }, [project?.id, range, isDemo])
 
+  const handleSeed = async () => {
+    if (!project || isDemo) return
+    try {
+      setSeeding(true)
+      await telemetryApi.seedMock(project.id)
+      reloadTelemetry()
+    } catch (err) {
+      console.error('Seed mock failed', err)
+    } finally {
+      setSeeding(false)
+    }
+  }
+
   const stats: RangeStats =
-    !isDemo && project && realStats
+    !isDemo && project && realStats && realStats.events_count > 0
       ? {
           sessions: realStats.sessions_count.toLocaleString(),
           sessionsDelta: `${realStats.events_count.toLocaleString()} events`,
@@ -590,6 +630,8 @@ function DashboardInner({
         project={project}
         isDemo={isDemo}
         eventsCount={realStats?.events_count}
+        onSeed={handleSeed}
+        seeding={seeding}
       />
 
             {/* ==================== OVERVIEW ==================== */}
