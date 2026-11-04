@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react'
-import { keyApi, type ApiKey, type OrgMembership, type Project } from '../api'
+import {
+  keyApi,
+  telemetryApi,
+  type ApiKey,
+  type OrgMembership,
+  type Project,
+  type ProjectStats,
+  type TelemetryEvent,
+} from '../api'
 import DashboardShell from '../components/DashboardShell'
 import { Link, navigate } from '../router'
 import '../dashboard.css'
@@ -262,10 +270,12 @@ function SdkStatusBanner({
   activeOrg,
   project,
   isDemo,
+  eventsCount,
 }: {
   activeOrg: OrgMembership | null
   project: Project | null
   isDemo: boolean
+  eventsCount?: number
 }) {
   const [keys, setKeys] = useState<ApiKey[]>([])
 
@@ -297,7 +307,13 @@ function SdkStatusBanner({
             active on <strong>{project?.slug ?? 'checkout-web'}</strong>
           </span>
         </div>
-        <span className="sdk-strip__hint">Sample telemetry displayed until SDK ingestion routes go live</span>
+        <span className="sdk-strip__hint">
+          {eventsCount !== undefined && eventsCount > 0
+            ? `🟢 Live telemetry active (${eventsCount.toLocaleString()} real events captured)`
+            : isDemo
+              ? 'Sample telemetry displayed in demo mode'
+              : 'Waiting for SDK client events at /api/v1/ingest'}
+        </span>
       </div>
     )
   }
@@ -448,16 +464,105 @@ function TelemetryAreaChart({
   )
 }
 
-export default function DashboardPage({ section }: { section: ConsoleSection }) {
-  const [range, setRange] = useState<RangeKey>('24h')
+function formatAgo(timestamp: string): string {
+  const diffMs = Date.now() - new Date(timestamp).getTime()
+  if (Number.isNaN(diffMs)) return 'just now'
+  const diffSec = Math.floor(diffMs / 1000)
+  if (diffSec < 60) return `${Math.max(1, diffSec)}s ago`
+  const diffMin = Math.floor(diffSec / 60)
+  if (diffMin < 60) return `${diffMin}m ago`
+  const diffHr = Math.floor(diffMin / 60)
+  if (diffHr < 24) return `${diffHr}h ago`
+  return `${Math.floor(diffHr / 24)}d ago`
+}
+
+function DashboardInner({
+  section,
+  range,
+  activeOrg,
+  project,
+  isDemo,
+  error,
+}: {
+  section: ConsoleSection
+  range: RangeKey
+  activeOrg: OrgMembership | null
+  project: Project | null
+  isDemo: boolean
+  error: string | null
+}) {
   const [selectedSessionId, setSelectedSessionId] = useState<string>(REPLAY_SESSIONS[0].id)
   const [scrubPct, setScrubPct] = useState<number>(54)
   const [logFilter, setLogFilter] = useState<LogKind>('all')
   const [alerts, setAlerts] = useState<AlertRule[]>(INITIAL_ALERTS)
+  const [realStats, setRealStats] = useState<ProjectStats | null>(null)
+  const [realEvents, setRealEvents] = useState<TelemetryEvent[]>([])
 
-  const stats = RANGE_DATA[range]
+  useEffect(() => {
+    if (!project || isDemo) {
+      setRealStats(null)
+      setRealEvents([])
+      return
+    }
+
+    let active = true
+    Promise.all([
+      telemetryApi.getStats(project.id, range).catch(() => null),
+      telemetryApi.listEvents(project.id, 'all', 50).catch(() => ({ items: [] })),
+    ]).then(([statsData, eventsData]) => {
+      if (!active) return
+      setRealStats(statsData)
+      setRealEvents(eventsData?.items ?? [])
+    })
+
+    return () => {
+      active = false
+    }
+  }, [project?.id, range, isDemo])
+
+  const stats: RangeStats =
+    !isDemo && project && realStats
+      ? {
+          sessions: realStats.sessions_count.toLocaleString(),
+          sessionsDelta: `${realStats.events_count.toLocaleString()} events`,
+          errorFree: realStats.error_free_pct,
+          errorNote: realStats.error_note,
+          conversions: `${realStats.sessions_count}`,
+          convRate: realStats.sessions_count > 0 ? '100% active' : '0%',
+          buckets: realStats.buckets.length > 0 ? realStats.buckets : RANGE_DATA[range].buckets,
+        }
+      : RANGE_DATA[range]
+
   const activeSession = REPLAY_SESSIONS.find((s) => s.id === selectedSessionId) ?? REPLAY_SESSIONS[0]
-  const filteredLogs = logFilter === 'all' ? DEV_LOGS : DEV_LOGS.filter((l) => l.kind === logFilter)
+
+  const displayLogs: DevLogEntry[] =
+    !isDemo && project && realEvents.length > 0
+      ? realEvents.map((e) => {
+          let kind: Exclude<LogKind, 'all'> = 'console'
+          if (e.kind === 'log' && (e.level === 'error' || e.level === 'fatal')) {
+            kind = 'exception'
+          } else if (
+            e.name.toLowerCase().includes('http') ||
+            e.name.toLowerCase().includes('fetch') ||
+            e.name.toLowerCase().includes('network')
+          ) {
+            kind = 'network'
+          }
+          return {
+            id: e.id,
+            time: formatAgo(e.event_timestamp),
+            kind,
+            title: e.name || e.message || `${e.kind} event`,
+            detail:
+              e.message ||
+              (e.environment ? `env: ${e.environment} · ${e.release_version || 'v1.0'}` : 'telemetry payload'),
+            occurrences: 1,
+            sessionId: e.session_id || 'n/a',
+          }
+        })
+      : DEV_LOGS
+
+  const filteredLogs = logFilter === 'all' ? displayLogs : displayLogs.filter((l) => l.kind === logFilter)
 
   const toggleAlert = (id: string) => {
     setAlerts((prev) =>
@@ -465,45 +570,27 @@ export default function DashboardPage({ section }: { section: ConsoleSection }) 
     )
   }
 
-  const toolbar = (
-    <div className="dash-seg" role="group" aria-label="Time range">
-      {(['24h', '7d', '30d'] as RangeKey[]).map((r) => (
-        <button
-          key={r}
-          type="button"
-          className={`dash-seg__btn${range === r ? ' is-active' : ''}`}
-          aria-pressed={range === r}
-          onClick={() => setRange(r)}
-        >
-          {r}
-        </button>
-      ))}
-    </div>
-  )
+  const goSection = (path: string) => navigate(isDemo ? `${path}?demo=1` : path)
+  const openReplay = (sessionId: string) => {
+    setSelectedSessionId(sessionId)
+    goSection('/dashboard/replays')
+  }
 
   return (
-    <DashboardShell sectionTitle={SECTION_TITLES[section]} toolbar={toolbar} allowDemo>
-      {({ activeOrg, project, isDemo, error }) => {
-        const goSection = (path: string) => navigate(isDemo ? `${path}?demo=1` : path)
-        const openReplay = (sessionId: string) => {
-          setSelectedSessionId(sessionId)
-          goSection('/dashboard/replays')
-        }
+    <>
+      {error && (
+        <p className="dash-error" role="alert">
+          {error}
+        </p>
+      )}
 
-        return (
-          <>
-            {error && (
-              <p className="dash-error" role="alert">
-                {error}
-              </p>
-            )}
-
-            <SdkStatusBanner
-              key={project?.id ?? 'none'}
-              activeOrg={activeOrg}
-              project={project}
-              isDemo={isDemo}
-            />
+      <SdkStatusBanner
+        key={project?.id ?? 'none'}
+        activeOrg={activeOrg}
+        project={project}
+        isDemo={isDemo}
+        eventsCount={realStats?.events_count}
+      />
 
             {/* ==================== OVERVIEW ==================== */}
             {section === 'overview' && (
@@ -586,7 +673,7 @@ export default function DashboardPage({ section }: { section: ConsoleSection }) 
                     </div>
 
                     <div className="dash-list">
-                      {DEV_LOGS.slice(0, 3).map((item) => (
+                      {displayLogs.slice(0, 3).map((item) => (
                         <div key={item.id} className="dash-list__row">
                           <div className="dash-list__main">
                             <div className="dash-list__top">
@@ -967,9 +1054,41 @@ export default function DashboardPage({ section }: { section: ConsoleSection }) 
                 </div>
               </section>
             )}
-          </>
-        )
-      }}
+    </>
+  )
+}
+
+export default function DashboardPage({ section }: { section: ConsoleSection }) {
+  const [range, setRange] = useState<RangeKey>('24h')
+
+  const toolbar = (
+    <div className="dash-seg" role="group" aria-label="Time range">
+      {(['24h', '7d', '30d'] as RangeKey[]).map((r) => (
+        <button
+          key={r}
+          type="button"
+          className={`dash-seg__btn${range === r ? ' is-active' : ''}`}
+          aria-pressed={range === r}
+          onClick={() => setRange(r)}
+        >
+          {r}
+        </button>
+      ))}
+    </div>
+  )
+
+  return (
+    <DashboardShell sectionTitle={SECTION_TITLES[section]} toolbar={toolbar} allowDemo>
+      {({ activeOrg, project, isDemo, error }) => (
+        <DashboardInner
+          section={section}
+          range={range}
+          activeOrg={activeOrg}
+          project={project}
+          isDemo={isDemo}
+          error={error}
+        />
+      )}
     </DashboardShell>
   )
 }

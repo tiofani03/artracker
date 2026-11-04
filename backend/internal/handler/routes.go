@@ -46,6 +46,9 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Post("/projects/:projectID/keys/:keyID/revoke", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.RevokeKey)
 	api.Post("/projects/:projectID/keys/:keyID/rotate", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.RotateKey)
 
+	api.Get("/projects/:projectID/stats", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetProjectStats)
+	api.Get("/projects/:projectID/events", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListProjectEvents)
+
 	api.Get("/sdk/validate", h.sdkValidate(false))
 	api.Get("/sdk/validate-admin", h.sdkValidate(true))
 }
