@@ -31,12 +31,12 @@ func (h *Handler) loginError(c *fiber.Ctx, code string) error {
 }
 
 func (h *Handler) redirectURL(provider string) string {
-	return h.cfg.PublicURL + authPath + "/" + provider + "/callback"
+	return h.cfg.PublicURL + "/auth/callback/" + provider
 }
 
 func (h *Handler) setCookie(c *fiber.Ctx, name, value string, ttl time.Duration) {
 	c.Cookie(&fiber.Cookie{
-		Name: name, Value: value, Path: authPath,
+		Name: name, Value: value, Path: "/",
 		HTTPOnly: true, SameSite: "Lax", Secure: h.cfg.Env == "production",
 		Expires: time.Now().Add(ttl),
 	})

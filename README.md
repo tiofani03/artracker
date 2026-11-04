@@ -52,8 +52,8 @@ Login is Google SSO only. Users belong to **organizations**, organizations own *
 ### Setup
 
 1. Create a Google OAuth client (Cloud Console > APIs & Services > Credentials > OAuth client ID, type Web)
-   and set the authorized redirect URI to `{PUBLIC_URL}/api/v1/auth/google/callback`
-   (dev: `http://localhost:5173/api/v1/auth/google/callback`).
+   and set the authorized redirect URI to `{PUBLIC_URL}/auth/callback/google`
+   (dev: `http://localhost:5173/auth/callback/google`).
 2. Put the credentials in `.env`: `GOOGLE_CLIENT_ID/SECRET`, plus `JWT_SECRET` (long random string, required in production) and `PUBLIC_URL`.
    Without Google credentials the login route returns 404. `.env.example` ships dummy values.
 
