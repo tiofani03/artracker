@@ -1207,6 +1207,16 @@ p {
   width: 100%;
 }
 
+a.sso-provider-btn {
+  text-decoration: none;
+}
+
+.sso-note {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+}
+
 .sso-feedback {
   padding: var(--space-sm) var(--space-md);
   border-left: 2px solid var(--color-accent);

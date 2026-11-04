@@ -7,18 +7,26 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/tiofani03/artracker/backend/internal/auth"
+	"github.com/tiofani03/artracker/backend/internal/config"
 )
 
 // Handler carries the dependencies every route needs.
 type Handler struct {
-	db     *pgxpool.Pool
+	db        *pgxpool.Pool
+	cfg       config.Config
+	issuer    *auth.Issuer
+	providers map[string]OAuthProvider
+
+	// in-memory artwork store, used only when the database is disabled (SKIP_DB)
 	mu     sync.RWMutex
 	nextID int64
 	mem    []Artwork
 }
 
-func New(pool *pgxpool.Pool) *Handler {
-	return &Handler{db: pool}
+func New(pool *pgxpool.Pool, cfg config.Config, issuer *auth.Issuer, providers map[string]OAuthProvider) *Handler {
+	return &Handler{db: pool, cfg: cfg, issuer: issuer, providers: providers}
 }
 
 // Health reports liveness plus database reachability.
