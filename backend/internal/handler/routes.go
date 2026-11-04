@@ -14,6 +14,8 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Patch("/artworks/:id", h.UpdateArtwork)
 	api.Delete("/artworks/:id", h.DeleteArtwork)
 
+	api.Post("/ingest", h.VerifyIngestKey, h.RateLimitIngest, h.Ingest)
+
 	if h.db == nil {
 		// SKIP_DB mode: only the in-memory artwork routes exist.
 		off := func(*fiber.Ctx) error {
@@ -43,6 +45,10 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Post("/projects/:projectID/keys", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.CreateKey)
 	api.Post("/projects/:projectID/keys/:keyID/revoke", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.RevokeKey)
 	api.Post("/projects/:projectID/keys/:keyID/rotate", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.RotateKey)
+
+	api.Get("/projects/:projectID/stats", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetProjectStats)
+	api.Get("/projects/:projectID/events", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListProjectEvents)
+	api.Post("/projects/:projectID/seed-mock", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.SeedProjectMockData)
 
 	api.Get("/sdk/validate", h.sdkValidate(false))
 	api.Get("/sdk/validate-admin", h.sdkValidate(true))
