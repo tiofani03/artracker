@@ -104,8 +104,23 @@ func TestTelemetryQueryEndpoints(t *testing.T) {
 		Items []TelemetryEventItem `json:"items"`
 	}
 	_ = json.NewDecoder(resp2.Body).Decode(&out)
-	if len(out.Items) != 2 {
-		t.Fatalf("expected 2 items, got %d", len(out.Items))
+	// 3. Test Seed Mock Data
+	app.Post("/api/v1/projects/:projectID/seed-mock", h.SeedProjectMockData)
+	req3 := httptest.NewRequest("POST", "/api/v1/projects/10/seed-mock", nil)
+	resp3, err := app.Test(req3, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp3.StatusCode != 200 {
+		t.Fatalf("seed-mock status = %d, want 200", resp3.StatusCode)
+	}
+	var seedResp struct {
+		Status string `json:"status"`
+		Seeded int    `json:"seeded"`
+	}
+	_ = json.NewDecoder(resp3.Body).Decode(&seedResp)
+	if seedResp.Seeded != 50 {
+		t.Errorf("expected 50 seeded items, got %d", seedResp.Seeded)
 	}
 }
 

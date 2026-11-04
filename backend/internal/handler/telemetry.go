@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 
 	"github.com/tiofani03/artracker/backend/internal/ingest"
 )
@@ -324,4 +325,82 @@ func (h *Handler) eventsFromMemory(projectID int64, kindFilter string, limit int
 		}
 	}
 	return items
+}
+
+// SeedProjectMockData creates 50 realistic telemetry records for the project spanning the last 24h.
+func (h *Handler) SeedProjectMockData(c *fiber.Ctx) error {
+	projectID := c.Locals("projectID").(int64)
+	if h.ingestSvc == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "ingest service unavailable")
+	}
+
+	ctx, cancel := context.WithTimeout(c.Context(), 10*time.Second)
+	defer cancel()
+
+	now := time.Now()
+	sampleEvents := []struct {
+		kind    string
+		name    string
+		level   string
+		message string
+	}{
+		{"event", "page_view", "", ""},
+		{"event", "view_product", "", ""},
+		{"event", "add_to_cart", "", ""},
+		{"event", "checkout_step_1", "", ""},
+		{"event", "checkout_step_2", "", ""},
+		{"event", "purchase_completed", "", ""},
+		{"log", "", "info", "User authentication token refreshed"},
+		{"log", "", "warn", "Slow query execution: latency 1,420ms"},
+		{"log", "", "error", "TypeError: Cannot read properties of undefined (reading 'charge_id')"},
+		{"log", "", "error", "POST /api/v1/charge → 502 Bad Gateway (upstream timeout)"},
+	}
+
+	rows := make([]ingest.TelemetryRow, 0, 50)
+	for i := 0; i < 50; i++ {
+		sample := sampleEvents[i%len(sampleEvents)]
+		eventTime := now.Add(-time.Duration(i*28) * time.Minute)
+		sessionID := fmt.Sprintf("ses_mock_%d", (i%7)+1)
+		userID := fmt.Sprintf("usr_%d", (i%5)+1)
+
+		rowID, err := uuid.NewV7()
+		if err != nil {
+			rowID = uuid.New()
+		}
+
+		attrMap := map[string]any{
+			"page":       "/checkout",
+			"index":      i + 1,
+			"browser":    "Chrome 131",
+			"cart_total": 250000 + (i * 15000),
+		}
+		attrBytes, _ := json.Marshal(attrMap)
+
+		rows = append(rows, ingest.TelemetryRow{
+			ID:              rowID,
+			ProjectID:       projectID,
+			Kind:            sample.kind,
+			Name:            sample.name,
+			Level:           sample.level,
+			Message:         sample.message,
+			SessionID:       sessionID,
+			UserID:          userID,
+			Environment:     "production",
+			ReleaseVersion:  "2.4.1",
+			ClientTimestamp: &eventTime,
+			EventTimestamp:  eventTime,
+			ReceivedAt:      eventTime,
+			Attributes:      attrBytes,
+			SDKMeta:         []byte(`{"name":"artracker-web","version":"1.2.0"}`),
+		})
+	}
+
+	if err := h.ingestSvc.Sink().WriteBatch(ctx, rows); err != nil {
+		return err
+	}
+
+	return c.JSON(fiber.Map{
+		"status": "ok",
+		"seeded": len(rows),
+	})
 }
