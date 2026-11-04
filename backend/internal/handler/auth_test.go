@@ -46,6 +46,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	fp := &fakeProvider{profile: Profile{Provider: "google", SSOID: "1001", Email: "ada@example.com", Name: "Ada", AvatarURL: "http://a/b.png"}}
 	h := New(pool, cfg, auth.NewIssuer(testSecret, 15*time.Minute), map[string]OAuthProvider{"google": fp})
 	app := fiber.New(fiber.Config{ErrorHandler: ErrorHandler})
+	app.Get("/auth/callback/:provider", h.OAuthCallback)
 	h.Routes(app.Group("/api/v1"))
 	return &testEnv{app: app, h: h, pool: pool}
 }
