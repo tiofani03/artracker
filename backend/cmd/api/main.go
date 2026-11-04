@@ -14,6 +14,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/joho/godotenv"
 
+	"github.com/tiofani03/artracker/backend/internal/auth"
 	"github.com/tiofani03/artracker/backend/internal/config"
 	"github.com/tiofani03/artracker/backend/internal/db"
 	"github.com/tiofani03/artracker/backend/internal/handler"
@@ -55,21 +56,21 @@ func main() {
 	}))
 	if cfg.CORSOrigins != "" {
 		app.Use(cors.New(cors.Config{
-			AllowOrigins: cfg.CORSOrigins,
-			AllowHeaders: "Origin, Content-Type, Accept, Authorization",
-			AllowMethods: "GET, POST, PATCH, DELETE, OPTIONS",
+			AllowOrigins:     cfg.CORSOrigins,
+			AllowCredentials: cfg.CORSOrigins != "*",
+			AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
+			AllowMethods:     "GET, POST, PATCH, DELETE, OPTIONS",
 		}))
 	}
 
-	h := handler.New(pool)
-	app.Get("/healthz", h.Health)
+	providers := map[string]handler.OAuthProvider{}
+	if cfg.GoogleClientID != "" && cfg.GoogleClientSecret != "" {
+		providers["google"] = handler.NewGoogleProvider(cfg.GoogleClientID, cfg.GoogleClientSecret)
+	}
 
-	api := app.Group("/api/v1")
-	api.Get("/artworks", h.ListArtworks)
-	api.Post("/artworks", h.CreateArtwork)
-	api.Get("/artworks/:id", h.GetArtwork)
-	api.Patch("/artworks/:id", h.UpdateArtwork)
-	api.Delete("/artworks/:id", h.DeleteArtwork)
+	h := handler.New(pool, cfg, auth.NewIssuer(cfg.JWTSecret, 15*time.Minute), providers)
+	app.Get("/healthz", h.Health)
+	h.Routes(app.Group("/api/v1"))
 
 	go func() {
 		if err := app.Listen(":" + cfg.Port); err != nil {
