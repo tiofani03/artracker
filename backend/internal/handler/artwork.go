@@ -47,6 +47,17 @@ func (h *Handler) ListArtworks(c *fiber.Ctx) error {
 		offset = 0
 	}
 
+	if h.db == nil {
+		h.mu.RLock()
+		defer h.mu.RUnlock()
+		total := len(h.mem)
+		items := make([]Artwork, 0, limit)
+		for i := total - 1 - offset; i >= 0 && len(items) < limit; i-- {
+			items = append(items, h.mem[i])
+		}
+		return c.JSON(fiber.Map{"items": items, "limit": limit, "offset": offset})
+	}
+
 	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
 	defer cancel()
 
@@ -77,6 +88,17 @@ func (h *Handler) GetArtwork(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid id")
 	}
 
+	if h.db == nil {
+		h.mu.RLock()
+		defer h.mu.RUnlock()
+		for _, item := range h.mem {
+			if item.ID == id {
+				return c.JSON(item)
+			}
+		}
+		return fiber.NewError(fiber.StatusNotFound, "artwork not found")
+	}
+
 	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
 	defer cancel()
 
@@ -102,6 +124,25 @@ func (h *Handler) CreateArtwork(c *fiber.Ctx) error {
 	}
 	if in.Year != nil && (*in.Year < 0 || *in.Year > 3000) {
 		return fiber.NewError(fiber.StatusBadRequest, "year out of range")
+	}
+
+	if h.db == nil {
+		now := time.Now().UTC()
+		h.mu.Lock()
+		h.nextID++
+		a := Artwork{
+			ID:        h.nextID,
+			Title:     title,
+			Artist:    strings.TrimSpace(deref(in.Artist)),
+			Year:      in.Year,
+			Medium:    strings.TrimSpace(deref(in.Medium)),
+			Notes:     strings.TrimSpace(deref(in.Notes)),
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		h.mem = append(h.mem, a)
+		h.mu.Unlock()
+		return c.Status(fiber.StatusCreated).JSON(a)
 	}
 
 	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
@@ -137,6 +178,33 @@ func (h *Handler) UpdateArtwork(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "year out of range")
 	}
 
+	if h.db == nil {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		for i := range h.mem {
+			if h.mem[i].ID == id {
+				if in.Title != nil {
+					h.mem[i].Title = strings.TrimSpace(*in.Title)
+				}
+				if in.Artist != nil {
+					h.mem[i].Artist = *in.Artist
+				}
+				if in.Year != nil {
+					h.mem[i].Year = in.Year
+				}
+				if in.Medium != nil {
+					h.mem[i].Medium = *in.Medium
+				}
+				if in.Notes != nil {
+					h.mem[i].Notes = *in.Notes
+				}
+				h.mem[i].UpdatedAt = time.Now().UTC()
+				return c.JSON(h.mem[i])
+			}
+		}
+		return fiber.NewError(fiber.StatusNotFound, "artwork not found")
+	}
+
 	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
 	defer cancel()
 
@@ -166,6 +234,18 @@ func (h *Handler) DeleteArtwork(c *fiber.Ctx) error {
 	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid id")
+	}
+
+	if h.db == nil {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		for i := range h.mem {
+			if h.mem[i].ID == id {
+				h.mem = append(h.mem[:i], h.mem[i+1:]...)
+				return c.SendStatus(fiber.StatusNoContent)
+			}
+		}
+		return fiber.NewError(fiber.StatusNotFound, "artwork not found")
 	}
 
 	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)

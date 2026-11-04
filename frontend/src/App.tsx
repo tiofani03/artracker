@@ -1,607 +1,921 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from 'react'
 
-const CURRENT_YEAR = new Date().getFullYear()
-
-// SDK Integration Snippets
-const SDK_DATA = {
-  android: {
-    name: 'Android (Kotlin)',
-    desc: 'Lightweight Android SDK with automated Jetpack Compose UI state capture, OkHttp network interceptor, and ANR/crash telemetry.',
-    code: `// build.gradle.kts
-dependencies {
-    implementation("io.artracker:artracker-android:0.2.0")
+declare global {
+  interface Window {
+    ScrollCraft?: {
+      mount: (root?: Document | HTMLElement) => {
+        layout: () => void
+        read: () => void
+        destroy: () => void
+      }
+    }
+  }
 }
 
-// Application.kt
-class App : Application() {
-    override fun onCreate() {
-        super.onCreate()
-        ARTracker.init(this) {
-            endpoint = "https://artracker.exlm.my.id"
-            appKey = "art_live_a892b109"
-            maskAllInputFields = true
-            captureNetworkPayloads = true
-        }
-    }
-}`
+type SdkPlatform = 'web' | 'android' | 'ios'
+
+const SDK_ORDER: SdkPlatform[] = ['web', 'android', 'ios']
+
+const SDK_DATA: Record<
+  SdkPlatform,
+  {
+    label: string
+    file: string
+    heading: string
+    summary: string
+    guarantees: string[]
+    code: string
+  }
+> = {
+  web: {
+    label: 'Web (TypeScript)',
+    file: 'instrumentation.ts',
+    heading: 'Browser & SPA capture',
+    summary:
+      'Records DOM mutations, fetch timings, and unhandled rejections off the main thread.',
+    guarantees: [
+      'Automatic client masking on password and card inputs',
+      'Batched background transport via sendBeacon',
+      'Source-map symbolication tied to session timestamps',
+    ],
+    code: `import { initARTracker } from '@artracker/browser'
+
+initARTracker({
+  endpoint: 'https://art.exlm.my.id',
+  appKey: 'art_live_a892b109',
+  sessionReplay: {
+    sampleRate: 1.0,
+    maskInputs: { password: true, payment: true },
+  },
+  network: { captureHeaders: false },
+})`,
+  },
+  android: {
+    label: 'Android (Kotlin)',
+    file: 'MainApplication.kt',
+    heading: 'Jetpack Compose & View capture',
+    summary:
+      'Captures Compose semantics, OkHttp spans, ANR traces, and crash tombstones.',
+    guarantees: [
+      'Quantized wireframe diffs under 45 KB per session minute',
+      'Offline ring buffer persisted until Wi-Fi resumes',
+      'Automatic ProGuard / R8 mapping correlation',
+    ],
+    code: `import id.exlm.artracker.ARTracker
+import id.exlm.artracker.ReplayConfig
+
+class MainApplication : Application() {
+  override fun onCreate() {
+    super.onCreate()
+    ARTracker.start(
+      context = this,
+      endpoint = "https://art.exlm.my.id",
+      appKey = "art_live_a892b109",
+      replay = ReplayConfig(redactTextInputs = true)
+    )
+  }
+}`,
   },
   ios: {
-    name: 'iOS (Swift & SwiftUI)',
-    desc: 'Swift package providing automated SwiftUI view tree snapshots, URLSession instrumentation, and memory pressure diagnostics.',
-    code: `// Package.swift
-dependencies: [
-    .package(url: "https://github.com/tiofani03/artracker-ios.git", from: "0.2.0")
-]
-
-// AppDelegate.swift or App.swift
-import ARTracker
+    label: 'iOS (Swift)',
+    file: 'AppDelegate.swift',
+    heading: 'SwiftUI & UIKit instrumentation',
+    summary:
+      'Delivers SwiftUI hierarchy snapshots, URLSession metrics, and MetricKit crash diagnostics.',
+    guarantees: [
+      'Masks SecureField and tagged views before encoding',
+      'Low-overhead delta diffs under 40 KB per minute',
+      'Symbolicated crash reports linked to user gestures',
+    ],
+    code: `import ARTracker
+import SwiftUI
 
 @main
 struct MyApp: App {
     init() {
         ARTracker.configure(
-            endpoint: "https://artracker.exlm.my.id",
+            endpoint: "https://art.exlm.my.id",
             appKey: "art_live_a892b109",
             maskSensitiveViews: true
         )
     }
     var body: some Scene { WindowGroup { ContentView() } }
-}`
+}`,
   },
-  web: {
-    name: 'Web (TypeScript / React)',
-    desc: 'Zero-config Web SDK for React, Next.js, and modern SPAs. Captures rrweb DOM mutations, fetch/XHR, and unhandled errors.',
-    code: `// npm install @artracker/browser
-import { init as initARTracker } from '@artracker/browser'
+}
 
-initARTracker({
-  endpoint: 'https://artracker.exlm.my.id',
-  appKey: 'art_live_a892b109',
-  sessionReplay: {
-    sampleRate: 1.0,
-    maskInputOptions: { password: true, creditCard: true }
+const ENGINES = [
+  {
+    index: '01',
+    title: 'Session replay',
+    span: '7' as const,
+    body: 'Reconstructs DOM mutations, pointer velocity, and rage clicks to the millisecond.',
+    spec: 'rrweb stream · mobile trees · client PII redaction',
+    icon: 'M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm-2 14.5v-9l6 4.5z',
   },
-  networkTracking: { captureHeaders: false }
-})`
-  }
+  {
+    index: '02',
+    title: 'Crash & trace log',
+    span: '5' as const,
+    body: 'Unfolds minified stack traces beside the exact network call before the crash.',
+    spec: 'Source maps · OkHttp & URLSession spans',
+    icon: 'M4 6h16M4 12h16M4 18h10',
+  },
+  {
+    index: '03',
+    title: 'Conversion funnels',
+    span: '5' as const,
+    body: 'Links drop-off steps directly to the recorded sessions where users stalled.',
+    spec: 'UTM attribution · session-linked cohorts',
+    icon: 'M3 4h18l-7 8v6l-4 2v-8z',
+  },
+  {
+    index: '04',
+    title: 'Latency boards',
+    span: '7' as const,
+    body: 'Charts crash-free ratios and p50/p95/p99 endpoint latency on live SQL boards.',
+    spec: 'p95 & p99 histograms · release health',
+    icon: 'M3 3v18h18M7 15l4-4 3 3 5-6',
+  },
+  {
+    index: '05',
+    title: 'Enterprise SSO',
+    span: '6' as const,
+    body: 'Authenticates teams via Google, GitHub, Okta, and SAML 2.0 with scoped RBAC.',
+    spec: 'OIDC · SAML 2.0 · role permissions',
+    icon: 'M12 11a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm-7 9a7 7 0 0 1 14 0',
+  },
+  {
+    index: '06',
+    title: 'Direct alerts',
+    span: '6' as const,
+    body: 'Routes incident payloads to Telegram, Slack, and PagerDuty when errors spike.',
+    spec: 'Telegram bot · Slack webhooks · thresholds',
+    icon: 'M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0',
+  },
+]
+
+function DaylightSessionStage() {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const wrapRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const wrap = wrapRef.current
+    if (!canvas || !wrap) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const glyphs = ['·', ':', '+', '=', '#']
+
+    let c1 = ''
+    let c2 = ''
+    let c3 = ''
+    let cAccent = ''
+
+    const syncColors = () => {
+      const s = getComputedStyle(document.documentElement)
+      c1 = s.getPropertyValue('--color-glyph-1').trim() || c1
+      c2 = s.getPropertyValue('--color-glyph-2').trim() || c2
+      c3 = s.getPropertyValue('--color-glyph-3').trim() || c3
+      cAccent = s.getPropertyValue('--color-accent').trim() || cAccent
+    }
+    syncColors()
+
+    let width = 0
+    let height = 0
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    let pointerX = -999
+    let pointerY = -999
+    let phase = 0
+    let inView = true
+    let rafId = 0
+    let lastPaint = 0
+
+    const draw = () => {
+      if (!c1) syncColors()
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.clearRect(0, 0, width, height)
+      ctx.font = '11px "JetBrains Mono", ui-monospace, monospace'
+      ctx.textBaseline = 'middle'
+      ctx.textAlign = 'center'
+
+      const cellW = 16
+      const cellH = 20
+      const cols = Math.ceil(width / cellW)
+      const rows = Math.ceil(height / cellH)
+
+      for (let r = 0; r < rows; r++) {
+        const y = r * cellH + 10
+        for (let c = 0; c < cols; c++) {
+          const x = c * cellW + 8
+          const wave =
+            Math.sin(c * 0.22 - phase) * 0.5 +
+            Math.cos(r * 0.28 + phase * 0.6) * 0.5
+          const dx = x - pointerX
+          const dy = y - pointerY
+          const dist = Math.hypot(dx, dy)
+          const lens = dist < 96 ? (96 - dist) / 96 : 0
+          const val = (wave + 1) * 0.5 + lens * 0.45
+
+          let idx = 0
+          if (val > 1.05) {
+            idx = 4
+            ctx.fillStyle = cAccent
+          } else if (val > 0.78) {
+            idx = 3
+            ctx.fillStyle = c3
+          } else if (val > 0.55) {
+            idx = 2
+            ctx.fillStyle = c2
+          } else {
+            idx = val > 0.3 ? 1 : 0
+            ctx.fillStyle = c1
+          }
+
+          ctx.fillText(glyphs[idx], x, y)
+        }
+      }
+    }
+
+    const resize = () => {
+      const rect = wrap.getBoundingClientRect()
+      width = Math.max(rect.width, 260)
+      height = Math.max(rect.height, 260)
+      canvas.width = Math.round(width * dpr)
+      canvas.height = Math.round(height * dpr)
+      draw()
+    }
+    resize()
+
+    const tick = (now: number) => {
+      if (inView && !reducedMotion && now - lastPaint > 33) {
+        phase += 0.045
+        lastPaint = now
+        draw()
+      }
+      if (!reducedMotion) {
+        rafId = window.requestAnimationFrame(tick)
+      }
+    }
+
+    if (!reducedMotion) {
+      rafId = window.requestAnimationFrame(tick)
+    }
+
+    const ro = new ResizeObserver(() => resize())
+    ro.observe(wrap)
+
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        inView = entry.isIntersecting
+      },
+      { threshold: 0.05 },
+    )
+    io.observe(wrap)
+
+    const onMove = (e: PointerEvent) => {
+      const r = wrap.getBoundingClientRect()
+      pointerX = e.clientX - r.left
+      pointerY = e.clientY - r.top
+    }
+    const onLeave = () => {
+      pointerX = -999
+      pointerY = -999
+    }
+
+    wrap.addEventListener('pointermove', onMove, { passive: true })
+    wrap.addEventListener('pointerleave', onLeave)
+
+    return () => {
+      window.cancelAnimationFrame(rafId)
+      ro.disconnect()
+      io.disconnect()
+      wrap.removeEventListener('pointermove', onMove)
+      wrap.removeEventListener('pointerleave', onLeave)
+    }
+  }, [])
+
+  return (
+    <div ref={wrapRef} className="stage-visual">
+      <div className="glyph-backdrop" aria-hidden="true">
+        <canvas ref={canvasRef} className="glyph-canvas" />
+      </div>
+
+      <figure className="inspector-sheet cut" data-kind="product" data-sc-parallax="-0.12">
+        <div className="inspector-sheet__top">
+          <div className="inspector-sheet__id">
+            <span className="state-dot state-dot--accent" aria-hidden="true" />
+            <span>session rec_9082fd11</span>
+          </div>
+          <span className="inspector-sheet__meta">Singapore · Chrome 131</span>
+        </div>
+
+        <div className="inspector-sheet__body">
+          <div className="inspector-summary">
+            <div className="inspector-stat">
+              <span className="inspector-stat__val">99.94%</span>
+              <span className="inspector-stat__unit">Crash-free sessions</span>
+            </div>
+            <div className="inspector-stat">
+              <span className="inspector-stat__val">18 ms</span>
+              <span className="inspector-stat__unit">Ingest p95</span>
+            </div>
+            <div className="inspector-stat">
+              <span className="inspector-stat__val">0 B</span>
+              <span className="inspector-stat__unit">Unmasked PII</span>
+            </div>
+          </div>
+
+          <div className="inspector-rows">
+            <div className="inspector-row">
+              <span className="inspector-row__time">00:08</span>
+              <span className="inspector-row__state">
+                <span className="state-dot state-dot--ok" aria-hidden="true" />
+                Redacted
+              </span>
+              <span className="inspector-row__detail">
+                input#card-number masked on client
+              </span>
+            </div>
+
+            <div className="inspector-row">
+              <span className="inspector-row__time">00:30</span>
+              <span className="inspector-row__state">
+                <span className="state-dot state-dot--warn" aria-hidden="true" />
+                Rage click
+              </span>
+              <span className="inspector-row__detail">
+                4 taps on button#pay within 400 ms
+              </span>
+            </div>
+
+            <div className="inspector-row inspector-row--active">
+              <span className="inspector-row__time">00:46</span>
+              <span className="inspector-row__state">
+                <span className="state-dot state-dot--err" aria-hidden="true" />
+                HTTP 502
+              </span>
+              <span className="inspector-row__detail">
+                POST /api/v1/charge · PaymentForm.tsx:142
+              </span>
+            </div>
+
+            <div className="inspector-row">
+              <span className="inspector-row__time">00:47</span>
+              <span className="inspector-row__state">
+                <span className="state-dot state-dot--accent" aria-hidden="true" />
+                Alert sent
+              </span>
+              <span className="inspector-row__detail">
+                Dispatched to #ops-payments webhook
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="inspector-sheet__foot">
+          <span>Correlated across DOM, network, and source maps</span>
+          <span>MIT self-hosted</span>
+        </div>
+      </figure>
+    </div>
+  )
 }
 
 export default function App() {
-  const [activeSdk, setActiveSdk] = useState<'android' | 'ios' | 'web'>('web')
-  const [ssoModalOpen, setSsoModalOpen] = useState(false)
-  const [playbackTime, setPlaybackTime] = useState(14)
-  const [isPlaying, setIsPlaying] = useState(true)
-  const [activeInspectorTab, setActiveInspectorTab] = useState<'events' | 'network' | 'errors'>('events')
-  
-  // Interactive Simulator Log
-  const [simLogs, setSimLogs] = useState<Array<{ id: number; ts: string; type: string; msg: string; tag: string }>>([
-    { id: 1, ts: '10:14:02.102', type: 'info', msg: 'SDK initialized: session_token=sess_8f2910b', tag: 'INIT' },
-    { id: 2, ts: '10:14:03.441', type: 'info', msg: 'User routed: /checkout/payment', tag: 'ROUTE' },
-    { id: 3, ts: '10:14:05.120', type: 'warn', msg: 'Rage click detected on button#submit-order (4 clicks in 400ms)', tag: 'RAGE' },
-  ])
+  const scrollBarRef = useRef<HTMLDivElement | null>(null)
+  const dialogRef = useRef<HTMLDialogElement | null>(null)
+  const tabRefs = useRef<Record<SdkPlatform, HTMLButtonElement | null>>({
+    web: null,
+    android: null,
+    ios: null,
+  })
 
-  // Simulated player scrubber timer
+  const [activeSdk, setActiveSdk] = useState<SdkPlatform>('web')
+  const [copiedSdk, setCopiedSdk] = useState(false)
+  const [loginEmail, setLoginEmail] = useState('')
+  const [ssoNotice, setSsoNotice] = useState<string | null>(null)
+
+  // Mount untouched ScrollCraft engine for smooth entrance choreography
   useEffect(() => {
-    if (!isPlaying) return
-    const interval = setInterval(() => {
-      setPlaybackTime((prev) => (prev >= 60 ? 0 : prev + 1))
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [isPlaying])
+    let instance: { layout: () => void; read: () => void; destroy: () => void } | null = null
+    let attempts = 0
+    let timer = 0
 
-  const triggerSimEvent = (type: string, tag: string, msg: string) => {
-    const now = new Date()
-    const ts = `${now.toTimeString().split(' ')[0]}.${String(now.getMilliseconds()).padStart(3, '0')}`
-    setSimLogs((prev) => [
-      { id: Date.now(), ts, type, msg, tag },
-      ...prev.slice(0, 24)
-    ])
+    const tryMount = () => {
+      if (window.ScrollCraft) {
+        instance = window.ScrollCraft.mount(document)
+        return
+      }
+      attempts += 1
+      if (attempts < 25) {
+        timer = window.setTimeout(tryMount, 60)
+      }
+    }
+    tryMount()
+
+    return () => {
+      if (timer) window.clearTimeout(timer)
+      instance?.destroy()
+    }
+  }, [])
+
+  // Fallback scroll progress bar for browsers without CSS scroll-timeline
+  useEffect(() => {
+    const supportsScrollTimeline =
+      typeof CSS !== 'undefined' && CSS.supports('animation-timeline', 'scroll(root)')
+    if (supportsScrollTimeline) return
+
+    const onScroll = () => {
+      const scrollable = Math.max(document.documentElement.scrollHeight - window.innerHeight, 1)
+      const ratio = Math.min(1, Math.max(0, window.scrollY / scrollable))
+      if (scrollBarRef.current) {
+        scrollBarRef.current.style.transform = `scaleX(${ratio.toFixed(4)})`
+      }
+    }
+
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
+
+  const handleSdkKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>, current: SdkPlatform) => {
+    const idx = SDK_ORDER.indexOf(current)
+    let nextIdx = idx
+    if (e.key === 'ArrowRight') nextIdx = (idx + 1) % SDK_ORDER.length
+    else if (e.key === 'ArrowLeft') nextIdx = (idx - 1 + SDK_ORDER.length) % SDK_ORDER.length
+    else if (e.key === 'Home') nextIdx = 0
+    else if (e.key === 'End') nextIdx = SDK_ORDER.length - 1
+    else return
+
+    e.preventDefault()
+    const next = SDK_ORDER[nextIdx]
+    setActiveSdk(next)
+    setCopiedSdk(false)
+    tabRefs.current[next]?.focus()
   }
 
+  const copySdkCode = async () => {
+    try {
+      await navigator.clipboard.writeText(SDK_DATA[activeSdk].code)
+      setCopiedSdk(true)
+      window.setTimeout(() => setCopiedSdk(false), 1800)
+    } catch {
+      setCopiedSdk(false)
+    }
+  }
+
+  const openSsoModal = () => {
+    setSsoNotice(null)
+    dialogRef.current?.showModal()
+  }
+
+  const closeSsoModal = () => {
+    dialogRef.current?.close()
+  }
+
+  const handleEmailLogin = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    const target = loginEmail.trim()
+    if (!target) return
+    try {
+      await fetch('/api/v1/health')
+    } catch {
+      // Static preview fallback when Go API is offline
+    }
+    setSsoNotice(
+      `Magic-link auth ready for ${target}. Configure SMTP_URL in backend/.env to dispatch login links.`,
+    )
+  }
+
+  const currentSdk = SDK_DATA[activeSdk]
+
   return (
-    <div>
-      {/* Navbar */}
-      <nav className="navbar">
-        <div className="navbar-inner">
-          <div className="brand">
-            <div className="brand-icon">A</div>
+    <>
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
+
+      {/* Subtle top scroll progress hairline */}
+      <div className="scroll-hairline" aria-hidden="true">
+        <div ref={scrollBarRef} className="scroll-hairline__bar" />
+      </div>
+
+      {/* Clean Daylight Header */}
+      <header className="site-header">
+        <div className="container site-header__inner">
+          <a href="#top" className="wordmark">
+            <svg className="wordmark__glyph" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M4 19L12 4L20 19M7.5 14H16.5"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="square"
+              />
+            </svg>
             <span>ARTracker</span>
-          </div>
+          </a>
 
-          <div className="nav-links">
-            <a href="#features" className="nav-link">Features</a>
-            <a href="#player" className="nav-link">Session Replay</a>
-            <a href="#sdks" className="nav-link">SDKs</a>
-            <a href="#simulator" className="nav-link">Simulator</a>
-            <a href="https://github.com/tiofani03/artracker" target="_blank" rel="noreferrer" className="nav-link">GitHub</a>
-          </div>
-
-          <div className="nav-actions">
-            <button className="btn btn-secondary btn-sm" onClick={() => setSsoModalOpen(true)}>
-              Login with SSO
-            </button>
-            <a href="#simulator" className="btn btn-primary btn-sm">
-              Live Console
+          <nav className="site-nav" aria-label="Primary">
+            <a href="#features" className="site-nav__link">
+              Features
             </a>
-          </div>
-        </div>
-      </nav>
-
-      {/* Hero */}
-      <header className="hero">
-        <div className="container">
-          <div className="hero-badge">
-            <span className="hero-badge-tag">ENGINE v0.2.0</span>
-            <span>Self-hosted behavioral & dev telemetry</span>
-          </div>
-
-          <h1 className="hero-title">
-            Open-Source Session Replay, Developer Diagnostics & Event Analytics
-          </h1>
-
-          <p className="hero-subtitle">
-            A single, high-performance stack combining pixel-perfect DOM replay, Sentry-grade error diagnostics, and product analytics. No vendor lock-in, privacy-first by default.
-          </p>
-
-          <div className="hero-actions">
-            <button className="btn btn-primary" onClick={() => setSsoModalOpen(true)}>
-              Start with Enterprise SSO
-            </button>
-            <a href="https://github.com/tiofani03/artracker" target="_blank" rel="noreferrer" className="btn btn-secondary">
-              Inspect on GitHub
+            <a href="#sdks" className="site-nav__link">
+              Native SDKs
             </a>
-          </div>
+            <a
+              href="https://github.com/tiofani03/artracker"
+              target="_blank"
+              rel="noreferrer"
+              className="site-nav__link"
+            >
+              GitHub
+            </a>
+          </nav>
 
-          {/* Devtool Session Player Mockup */}
-          <div id="player" className="preview-shell">
-            <div className="preview-header">
-              <div className="preview-dots">
-                <div className="preview-dot" />
-                <div className="preview-dot" />
-                <div className="preview-dot" />
-              </div>
-              <div className="time-readout">
-                session_id: rec_9082fd11 &bull; user: usr_lead_901 (Singapore)
-              </div>
-              <div className="preview-tabs">
-                <button
-                  className={`preview-tab-btn ${activeInspectorTab === 'events' ? 'active' : ''}`}
-                  onClick={() => setActiveInspectorTab('events')}
-                >
-                  DOM Events
-                </button>
-                <button
-                  className={`preview-tab-btn ${activeInspectorTab === 'network' ? 'active' : ''}`}
-                  onClick={() => setActiveInspectorTab('network')}
-                >
-                  Network
-                </button>
-                <button
-                  className={`preview-tab-btn ${activeInspectorTab === 'errors' ? 'active' : ''}`}
-                  onClick={() => setActiveInspectorTab('errors')}
-                >
-                  Errors (1)
-                </button>
-              </div>
-            </div>
-
-            <div className="preview-body">
-              {/* Left Screen Player */}
-              <div className="player-pane">
-                <div className="screen-viewport">
-                  {/* Mock Replay Screen */}
-                  <div className="simulated-card">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                      <span style={{ fontSize: 13, fontWeight: 700 }}>Checkout Overview</span>
-                      <span className="pill pill-orange">Step 3 of 3</span>
-                    </div>
-
-                    <div style={{ background: '#090B0F', border: '1px solid #1F2432', borderRadius: 4, padding: 12, marginBottom: 12 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
-                        <span style={{ color: 'var(--text-secondary)' }}>Enterprise License (Annual)</span>
-                        <span style={{ fontFamily: 'var(--font-mono)' }}>$1,200.00</span>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)' }}>
-                        <span>VAT (0% Reverse Charge)</span>
-                        <span>$0.00</span>
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <input
-                        type="text"
-                        readOnly
-                        value="•••• •••• •••• 4242"
-                        style={{ flex: 1, background: '#090B0F', border: '1px solid #1F2432', borderRadius: 4, padding: '8px 10px', fontSize: 11, color: '#9BA3AF', fontFamily: 'var(--font-mono)' }}
-                      />
-                      <button className="btn btn-primary btn-sm" style={{ pointerEvents: 'none' }}>
-                        Pay Now
-                      </button>
-                    </div>
-
-                    {/* Cursor element */}
-                    <div
-                      className="sim-cursor"
-                      style={{
-                        top: `${35 + (playbackTime % 20) * 2}%`,
-                        left: `${50 + ((playbackTime * 4) % 35)}%`
-                      }}
-                    />
-                  </div>
-                </div>
-
-                {/* Scrubber Controls */}
-                <div className="player-controls">
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    style={{ padding: '4px 8px' }}
-                    onClick={() => setIsPlaying(!isPlaying)}
-                  >
-                    {isPlaying ? 'Pause' : 'Play'}
-                  </button>
-
-                  <div className="scrubber-track" onClick={(e) => {
-                    const rect = e.currentTarget.getBoundingClientRect()
-                    const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
-                    setPlaybackTime(Math.round(pos * 60))
-                  }}>
-                    <div className="scrubber-fill" style={{ width: `${(playbackTime / 60) * 100}%` }} />
-                    <div className="scrubber-marker marker-rage" style={{ left: '25%' }} title="Rage Click" />
-                    <div className="scrubber-marker marker-error" style={{ left: '78%' }} title="500 Internal Error" />
-                  </div>
-
-                  <span className="time-readout">
-                    00:{String(playbackTime).padStart(2, '0')} / 01:00
-                  </span>
-                </div>
-              </div>
-
-              {/* Right Telemetry Pane */}
-              <div className="inspector-pane">
-                <div className="inspector-header">
-                  <span>Inspector Stream</span>
-                  <span>Filtered ({activeInspectorTab})</span>
-                </div>
-
-                <div className="inspector-list">
-                  {activeInspectorTab === 'events' && (
-                    <>
-                      <div className="inspector-row">
-                        <span className="pill pill-orange">CLICK</span>
-                        <span style={{ color: 'var(--text-secondary)' }}>button#submit-order</span>
-                        <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>00:15</span>
-                      </div>
-                      <div className="inspector-row">
-                        <span className="pill pill-warn">RAGE</span>
-                        <span style={{ color: 'var(--text-secondary)' }}>4 clicks within 400ms</span>
-                        <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>00:15</span>
-                      </div>
-                      <div className="inspector-row">
-                        <span className="pill pill-info">NAV</span>
-                        <span style={{ color: 'var(--text-secondary)' }}>popstate /billing</span>
-                        <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>00:10</span>
-                      </div>
-                      <div className="inspector-row">
-                        <span className="pill pill-success">MUT</span>
-                        <span style={{ color: 'var(--text-secondary)' }}>DOM Node Insert: modal-backdrop</span>
-                        <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>00:08</span>
-                      </div>
-                    </>
-                  )}
-
-                  {activeInspectorTab === 'network' && (
-                    <>
-                      <div className="inspector-row">
-                        <span className="pill pill-error">500</span>
-                        <span style={{ color: 'var(--text-secondary)' }}>POST /api/v1/charge (218ms)</span>
-                        <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>00:46</span>
-                      </div>
-                      <div className="inspector-row">
-                        <span className="pill pill-success">200</span>
-                        <span style={{ color: 'var(--text-secondary)' }}>GET /api/v1/cart (42ms)</span>
-                        <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>00:12</span>
-                      </div>
-                      <div className="inspector-row">
-                        <span className="pill pill-success">200</span>
-                        <span style={{ color: 'var(--text-secondary)' }}>POST /api/v1/telemetry (18ms)</span>
-                        <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>00:04</span>
-                      </div>
-                    </>
-                  )}
-
-                  {activeInspectorTab === 'errors' && (
-                    <>
-                      <div className="inspector-row" style={{ background: 'rgba(239, 68, 68, 0.05)' }}>
-                        <span className="pill pill-error">CRASH</span>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                          <span style={{ color: 'var(--red)', fontWeight: 600 }}>PaymentGatewayTimeout: Stripe upstream unreachable</span>
-                          <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>at PaymentForm.tsx:142:18</span>
-                        </div>
-                        <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>00:46</span>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
+          <div className="header-tools">
+            <button type="button" className="key key--primary" onClick={openSsoModal}>
+              Login
+            </button>
           </div>
         </div>
       </header>
 
-      {/* 6 Core Pillars */}
-      <section id="features" className="section">
-        <div className="container">
-          <div className="section-label">Architecture &amp; Features</div>
-          <h2 className="section-title">Six Pillars of Observability in One Engine</h2>
-          <p className="section-desc">
-            Designed for engineering and growth teams. No siloed SaaS tools — correlate user sessions directly with crash dumps and marketing funnels.
-          </p>
-
-          <div className="pillars-grid">
-            {/* 1. SSO */}
-            <div className="pillar-card">
-              <div className="pillar-icon">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-              </div>
-              <h3 className="pillar-title">1. Enterprise SSO</h3>
-              <p className="pillar-text">
-                Centralized team authentication supporting Google Workspace, SAML 2.0, GitHub, Okta, and OIDC. Enforce granular Role-Based Access Control (RBAC).
+      <main id="main-content">
+        {/* Section 1: Clean Daylight Stage Hero */}
+        <section id="top" className="hero-stage" data-sc-act="flow">
+          <div className="container stage-split">
+            <div className="stage-copy">
+              <h1>Every broken session, replayed to the frame.</h1>
+              <p className="stage-lead">
+                Self-hosted session replay, crash traces, and funnels in one Go binary.
               </p>
-              <div className="pillar-meta">Auth / Identity / RBAC</div>
+              <div className="stage-actions">
+                <button
+                  type="button"
+                  className="key key--primary"
+                  onClick={openSsoModal}
+                >
+                  Login
+                </button>
+                <a href="#sdks" className="key">
+                  Explore SDKs
+                </a>
+              </div>
             </div>
 
-            {/* 2. Session Replay */}
-            <div className="pillar-card">
-              <div className="pillar-icon">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
-              </div>
-              <h3 className="pillar-title">2. Session Replay</h3>
-              <p className="pillar-text">
-                OpenReplay-grade visual reproduction. Reconstruct exact DOM mutations, rage clicks, mouse speed, mobile touch interactions, and client latency.
-              </p>
-              <div className="pillar-meta">DOM Mutations / Rage Clicks</div>
-            </div>
-
-            {/* 3. Dev Event Log */}
-            <div className="pillar-card">
-              <div className="pillar-icon">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-              </div>
-              <h3 className="pillar-title">3. Developer Event Log</h3>
-              <p className="pillar-text">
-                Combines OpenReplay telemetry with Sentry-style error capture. Demangle stack traces via Source Maps, inspect network requests, and trace exceptions.
-              </p>
-              <div className="pillar-meta">Sentry-Grade / Source Maps</div>
-            </div>
-
-            {/* 4. Event Tracker */}
-            <div className="pillar-card">
-              <div className="pillar-icon">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-              </div>
-              <h3 className="pillar-title">4. Marketing Event Tracker</h3>
-              <p className="pillar-text">
-                Mixpanel &amp; MoEngage-style event ingestion. Map user conversion funnels, track cohort retention, inspect UTM parameters, and calculate feature drop-off.
-              </p>
-              <div className="pillar-meta">Funnels / Cohorts / Retention</div>
-            </div>
-
-            {/* 5. Custom Dashboards */}
-            <div className="pillar-card">
-              <div className="pillar-icon">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
-              </div>
-              <h3 className="pillar-title">5. Custom Dashboards</h3>
-              <p className="pillar-text">
-                Build flexible monitoring dashboards. Track crash-free session rates, p50/p95/p99 network percentiles, and regional distribution with live metrics.
-              </p>
-              <div className="pillar-meta">Live Metrics / Custom Widgets</div>
-            </div>
-
-            {/* 6. Custom Alerting */}
-            <div className="pillar-card">
-              <div className="pillar-icon">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-              </div>
-              <h3 className="pillar-title">6. Intelligent Alerts</h3>
-              <p className="pillar-text">
-                Direct dispatch to Telegram bots, Slack webhooks, and PagerDuty when unhandled crash spikes occur or when conversion rates drop below threshold.
-              </p>
-              <div className="pillar-meta">Telegram / Slack / Webhook</div>
-            </div>
+            <DaylightSessionStage />
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* Multi-Platform SDKs */}
-      <section id="sdks" className="section">
-        <div className="container">
-          <div className="section-label">SDK Ecosystem</div>
-          <h2 className="section-title">Drop-In SDKs for Native &amp; Web</h2>
-          <p className="section-desc">
-            Instrument your applications with minimal lines of code. Privacy filters automatically mask sensitive fields before data leaves the device.
-          </p>
-
-          <div className="sdk-box">
-            <div className="sdk-nav">
-              <button
-                className={`sdk-tab ${activeSdk === 'android' ? 'active' : ''}`}
-                onClick={() => setActiveSdk('android')}
-              >
-                <span>Android (Kotlin)</span>
-              </button>
-              <button
-                className={`sdk-tab ${activeSdk === 'ios' ? 'active' : ''}`}
-                onClick={() => setActiveSdk('ios')}
-              >
-                <span>iOS (Swift)</span>
-              </button>
-              <button
-                className={`sdk-tab ${activeSdk === 'web' ? 'active' : ''}`}
-                onClick={() => setActiveSdk('web')}
-              >
-                <span>Web (TypeScript)</span>
-              </button>
+        {/* Section 2: Core Capabilities (6 Engines) */}
+        <section id="features" className="engines-section">
+          <div className="container">
+            <div className="engines-head" data-sc-in>
+              <h2>Everything needed to debug production.</h2>
+              <p className="engines-head__desc">
+                Replay, crash diagnostics, funnels, and alerting ship together in one open-source
+                stack.
+              </p>
             </div>
 
-            <div className="sdk-content">
-              <div>
-                <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>{SDK_DATA[activeSdk].name}</h3>
-                <p style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 20 }}>
-                  {SDK_DATA[activeSdk].desc}
-                </p>
-
-                <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, fontSize: 13, color: 'var(--text-secondary)' }}>
-                  <li style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ color: 'var(--orange)', fontWeight: 700 }}>&bull;</span>
-                    Automatic PII masking on password &amp; payment inputs
-                  </li>
-                  <li style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ color: 'var(--orange)', fontWeight: 700 }}>&bull;</span>
-                    Adaptive batching with zero UI-thread stutter
-                  </li>
-                  <li style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ color: 'var(--orange)', fontWeight: 700 }}>&bull;</span>
-                    Offline buffering with automatic retry backoff
-                  </li>
-                </ul>
-              </div>
-
-              <div className="code-block">
-                <pre>{SDK_DATA[activeSdk].code}</pre>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Simulator Section */}
-      <section id="simulator" className="section">
-        <div className="container">
-          <div className="section-label">Interactive Sandbox</div>
-          <h2 className="section-title">Test Event Ingestion in Real-Time</h2>
-          <p className="section-desc">
-            Simulate client-side interactions below. See how events, exceptions, and marketing funnels stream directly into the ARTracker pipeline.
-          </p>
-
-          <div className="sim-grid">
-            <div className="sim-actions">
-              <button
-                className="sim-btn"
-                onClick={() => triggerSimEvent('warn', 'RAGE', 'User triggered 5 rapid clicks on button.cta-checkout')}
-              >
-                <span>Trigger Rage Click</span>
-                <span className="pill pill-warn">WARN</span>
-              </button>
-
-              <button
-                className="sim-btn"
-                onClick={() => triggerSimEvent('error', '500 FATAL', 'Unhandled rejection: PGConnectionPoolExhausted at /api/v1/ingest')}
-              >
-                <span>Simulate 500 Backend Crash</span>
-                <span className="pill pill-error">ERROR</span>
-              </button>
-
-              <button
-                className="sim-btn"
-                onClick={() => triggerSimEvent('success', 'TRACK', 'Event fired: checkout_completed (revenue: $120.00, plan: pro)')}
-              >
-                <span>Fire Marketing Conversion</span>
-                <span className="pill pill-success">EVENT</span>
-              </button>
-
-              <button
-                className="sim-btn"
-                onClick={() => triggerSimEvent('info', 'ALERT', 'Trigger dispatched to Telegram group -5381106692')}
-              >
-                <span>Dispatch Custom Alert</span>
-                <span className="pill pill-orange">ALERT</span>
-              </button>
-            </div>
-
-            <div className="sim-terminal">
-              <div style={{ color: 'var(--text-muted)', marginBottom: 12, borderBottom: '1px solid #1C202C', paddingBottom: 6 }}>
-                // Live Telemetry Event Stream &bull; Ready
-              </div>
-              {simLogs.map((log) => (
-                <div key={log.id} className="sim-line">
-                  <span className="sim-ts">[{log.ts}]</span>
-                  <span className={`pill ${
-                    log.type === 'error' ? 'pill-error' :
-                    log.type === 'warn' ? 'pill-warn' :
-                    log.type === 'success' ? 'pill-success' : 'pill-orange'
-                  }`}>
-                    {log.tag}
-                  </span>
-                  <span style={{ color: log.type === 'error' ? 'var(--red)' : '#D1D5DB' }}>
-                    {log.msg}
-                  </span>
-                </div>
+            <div className="engines-bento" data-sc-in data-sc-stagger="50">
+              {ENGINES.map((engine) => (
+                <article
+                  key={engine.index}
+                  className={`engine-card engine-card--${engine.span} cut`}
+                >
+                  <div className="engine-card__top">
+                    <div className="engine-card__header">
+                      <span className="engine-card__index">{engine.index}</span>
+                      <svg
+                        className="engine-card__icon"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.75"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d={engine.icon} />
+                      </svg>
+                    </div>
+                    <h3>{engine.title}</h3>
+                    <p className="engine-card__body">{engine.body}</p>
+                  </div>
+                  <div className="engine-card__spec">{engine.spec}</div>
+                </article>
               ))}
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* Footer */}
-      <footer className="footer">
-        <div className="container">
-          <div className="footer-inner">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div className="brand-icon" style={{ width: 20, height: 20, fontSize: 11 }}>A</div>
-              <span style={{ fontWeight: 700 }}>ARTracker</span>
-              <span style={{ color: 'var(--text-muted)' }}>&bull; Open-source telemetry platform</span>
+        {/* Section 3: Drop-in Native SDK Switcher */}
+        <section id="sdks" className="sdk-section">
+          <div className="container">
+            <div className="sdk-header" data-sc-in>
+              <h2>Drop-in SDKs for Web, Kotlin, and Swift.</h2>
+              <p className="sdk-header__desc">
+                Initialize capture in under fifteen lines. Sensitive fields are masked locally
+                before payloads touch the network.
+              </p>
             </div>
 
-            <div style={{ display: 'flex', gap: 20 }}>
-              <a href="#features" className="nav-link">Features</a>
-              <a href="#sdks" className="nav-link">SDKs</a>
-              <a href="https://github.com/tiofani03/artracker" target="_blank" rel="noreferrer" className="nav-link">GitHub</a>
-            </div>
+            <div className="sdk-frame cut" data-sc-in>
+              <div className="sdk-tablist" role="tablist" aria-label="Target SDK platform">
+                {SDK_ORDER.map((platform) => (
+                  <button
+                    key={platform}
+                    ref={(el) => {
+                      tabRefs.current[platform] = el
+                    }}
+                    id={`sdk-tab-${platform}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeSdk === platform}
+                    aria-controls={`sdk-panel-${platform}`}
+                    tabIndex={activeSdk === platform ? 0 : -1}
+                    className="sdk-tab"
+                    onClick={() => {
+                      setActiveSdk(platform)
+                      setCopiedSdk(false)
+                    }}
+                    onKeyDown={(e) => handleSdkKeyDown(e, platform)}
+                  >
+                    {SDK_DATA[platform].label}
+                  </button>
+                ))}
+              </div>
 
-            <div>
-              &copy; {CURRENT_YEAR} ARTracker. MIT Licensed.
+              <div
+                id={`sdk-panel-${activeSdk}`}
+                role="tabpanel"
+                aria-labelledby={`sdk-tab-${activeSdk}`}
+                className="sdk-panel"
+              >
+                <div className="sdk-details">
+                  <h3>{currentSdk.heading}</h3>
+                  <p className="sdk-details__desc">{currentSdk.summary}</p>
+                  <ul className="sdk-list">
+                    {currentSdk.guarantees.map((item) => (
+                      <li key={item} className="sdk-list__item">
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div key={activeSdk} className="graphite-pane">
+                  <div className="graphite-pane__bar">
+                    <span>{currentSdk.file}</span>
+                    <button type="button" className="copy-btn" onClick={copySdkCode}>
+                      {copiedSdk ? 'Copied' : 'Copy snippet'}
+                    </button>
+                  </div>
+                  <pre className="code-pre">
+                    <code>{currentSdk.code}</code>
+                  </pre>
+                </div>
+              </div>
             </div>
           </div>
+        </section>
+
+        {/* Section 4: Clean Closing CTA */}
+        <section id="start" className="close-section">
+          <div className="container">
+            <div className="close-card cut" data-sc-in>
+              <div className="close-copy">
+                <h2>Start capturing sessions in minutes.</h2>
+                <p className="close-copy__desc">
+                  Connect your Web, Android, or iOS app and trace every issue back to the exact
+                  user action.
+                </p>
+              </div>
+
+              <div className="close-actions">
+                <button
+                  type="button"
+                  className="key key--primary"
+                  onClick={openSsoModal}
+                >
+                  Login
+                </button>
+                <a href="#sdks" className="key">
+                  Explore SDKs
+                </a>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      {/* Footer */}
+      <footer className="site-footer">
+        <div className="container site-footer__inner">
+          <span>ARTracker v0.2.0</span>
+          <div className="footer-links">
+            <a href="#features">Features</a>
+            <a href="#sdks">Native SDKs</a>
+            <a href="https://github.com/tiofani03/artracker" target="_blank" rel="noreferrer">
+              GitHub
+            </a>
+          </div>
+          <span>© {new Date().getFullYear()} ARTracker</span>
         </div>
       </footer>
 
-      {/* SSO Modal */}
-      {ssoModalOpen && (
-        <div className="modal-overlay" onClick={() => setSsoModalOpen(false)}>
-          <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
-            <h3 className="modal-title">Sign In with Single Sign-On</h3>
-            <p className="modal-desc">
-              Choose your organization identity provider to access the ARTracker dashboard.
-            </p>
-
-            <div className="sso-provider-list">
-              <button className="sso-btn" onClick={() => setSsoModalOpen(false)}>
-                <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.8 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.4 9 5 12 5z"/><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.8z"/><path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.3s.2-1.6.4-2.3L1.9 7.3C.7 9.7 0 12 0 14.8s.7 5.1 1.9 7.5l3.7-2.9z"/><path fill="#34A853" d="M12 23.5c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.4-6.4-5.2L1.9 16.5C3.7 20.2 7.5 23.5 12 23.5z"/></svg>
-                <span>Continue with Google Workspace</span>
-              </button>
-
-              <button className="sso-btn" onClick={() => setSsoModalOpen(false)}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="#FFFFFF"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
-                <span>Continue with GitHub</span>
-              </button>
-
-              <button className="sso-btn" onClick={() => setSsoModalOpen(false)}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="#007DC1"><circle cx="12" cy="12" r="10"/></svg>
-                <span>Continue with Okta / SAML 2.0</span>
-              </button>
+      {/* Native <dialog> Login Modal */}
+      <dialog
+        ref={dialogRef}
+        className="sso-dialog"
+        aria-labelledby="sso-dialog-title"
+        onClick={(e) => {
+          if (e.target === dialogRef.current) closeSsoModal()
+        }}
+      >
+        <div className="sso-dialog__hero">
+          <div className="sso-dialog__bar">
+            <div className="sso-brand">
+              <span className="sso-logo-badge" aria-hidden="true">
+                <svg className="sso-logo-badge__svg" viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M4 19L12 4L20 19M7.5 14H16.5"
+                    stroke="currentColor"
+                    strokeWidth="2.4"
+                    strokeLinecap="square"
+                  />
+                </svg>
+              </span>
+              <span className="sso-brand__meta">
+                <span className="sso-brand__name">ARTracker</span>
+                <span className="sso-brand__tag">Telemetry Console</span>
+              </span>
             </div>
 
             <button
-              className="btn btn-secondary btn-sm"
-              style={{ width: '100%' }}
-              onClick={() => setSsoModalOpen(false)}
+              type="button"
+              className="sso-dialog__close"
+              aria-label="Close login modal"
+              onClick={closeSsoModal}
             >
-              Cancel
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M6 6l12 12M18 6L6 18"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                />
+              </svg>
             </button>
           </div>
+
+          <div className="sso-dialog__intro">
+            <h3 id="sso-dialog-title" className="sso-dialog__title">
+              Login to ARTracker
+            </h3>
+            <p className="sso-dialog__sub">
+              Continue to your workspace to inspect sessions, crashes, and funnels.
+            </p>
+          </div>
         </div>
-      )}
-    </div>
+
+        <div className="sso-dialog__body">
+          <div className="sso-providers">
+            <button
+              type="button"
+              className="sso-provider-btn"
+              onClick={() =>
+                setSsoNotice(
+                  'OIDC handshake ready. Configure GOOGLE_CLIENT_ID in backend/.env to enable redirect.',
+                )
+              }
+            >
+              <span className="sso-provider-btn__left">
+                <span className="sso-provider-btn__icon" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M21 12.2c0-.7-.1-1.3-.2-1.9H12v3.7h5.1a4.4 4.4 0 0 1-1.9 2.9v2.4h3c1.8-1.6 2.8-4.1 2.8-7.1z"
+                      fill="currentColor"
+                    />
+                    <path
+                      d="M12 21.4c2.5 0 4.7-.8 6.2-2.3l-3-2.4c-.8.6-1.9.9-3.2.9-2.5 0-4.6-1.7-5.3-4H3.6v2.5A9.4 9.4 0 0 0 12 21.4z"
+                      fill="currentColor"
+                      opacity="0.78"
+                    />
+                    <path
+                      d="M6.7 13.6a5.6 5.6 0 0 1 0-3.6V7.5H3.6a9.4 9.4 0 0 0 0 8.6l3.1-2.5z"
+                      fill="currentColor"
+                      opacity="0.58"
+                    />
+                    <path
+                      d="M12 6.2c1.4 0 2.6.5 3.6 1.4l2.7-2.7A9.3 9.3 0 0 0 12 2.6 9.4 9.4 0 0 0 3.6 7.5l3.1 2.5c.7-2.3 2.8-3.8 5.3-3.8z"
+                      fill="currentColor"
+                      opacity="0.88"
+                    />
+                  </svg>
+                </span>
+                <span>Google Workspace</span>
+              </span>
+              <span className="sso-provider-btn__right">
+                <span>OIDC</span>
+                <svg className="sso-provider-btn__arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M5 12h14m-5-5 5 5-5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </span>
+            </button>
+
+            <button
+              type="button"
+              className="sso-provider-btn"
+              onClick={() =>
+                setSsoNotice(
+                  'GitHub OAuth ready. Configure GITHUB_CLIENT_ID in backend/.env to enable redirect.',
+                )
+              }
+            >
+              <span className="sso-provider-btn__left">
+                <span className="sso-provider-btn__icon" aria-hidden="true">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.58 9.58 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.75c0 .26.18.58.69.48A10 10 0 0 0 12 2z" />
+                  </svg>
+                </span>
+                <span>GitHub</span>
+              </span>
+              <span className="sso-provider-btn__right">
+                <span>OAuth</span>
+                <svg className="sso-provider-btn__arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M5 12h14m-5-5 5 5-5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </span>
+            </button>
+
+            <button
+              type="button"
+              className="sso-provider-btn"
+              onClick={() =>
+                setSsoNotice(
+                  'SAML 2.0 assertion endpoint active at /api/v1/auth/saml/acs for Okta & Entra ID.',
+                )
+              }
+            >
+              <span className="sso-provider-btn__left">
+                <span className="sso-provider-btn__icon" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M12 3 4 7v5c0 5 3.4 9.4 8 10.8 4.6-1.4 8-5.8 8-10.8V7l-8-4zm0 6a2 2 0 1 1 0 4 2 2 0 0 1 0-4z"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </span>
+                <span>Enterprise SSO</span>
+              </span>
+              <span className="sso-provider-btn__right">
+                <span>SAML</span>
+                <svg className="sso-provider-btn__arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M5 12h14m-5-5 5 5-5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </span>
+            </button>
+          </div>
+
+          <div className="sso-divider" aria-hidden="true">
+            <span>or continue with email</span>
+          </div>
+
+          <form className="sso-email-form" onSubmit={handleEmailLogin}>
+            <div className="sso-field">
+              <label htmlFor="login-email" className="sso-label">
+                Work email
+              </label>
+              <input
+                id="login-email"
+                type="email"
+                required
+                placeholder="you@company.com"
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                className="sso-input"
+              />
+            </div>
+            <button type="submit" className="key key--primary sso-submit">
+              Continue with Email
+            </button>
+          </form>
+
+          {ssoNotice && (
+            <div className="sso-feedback" role="status">
+              {ssoNotice}
+            </div>
+          )}
+        </div>
+      </dialog>
+    </>
   )
 }
