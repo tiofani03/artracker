@@ -12,6 +12,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	fiberlogger "github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 
 	"github.com/tiofani03/artracker/backend/internal/auth"
@@ -21,7 +22,7 @@ import (
 )
 
 func main() {
-	_ = godotenv.Load()
+	_ = godotenv.Load("../.env", ".env")
 
 	cfg := config.Load()
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
@@ -29,16 +30,22 @@ func main() {
 
 	ctx := context.Background()
 
-	pool, err := db.Connect(ctx, cfg.DatabaseURL)
-	if err != nil {
-		log.Error("database connect failed", "err", err)
-		os.Exit(1)
-	}
-	defer pool.Close()
+	var pool *pgxpool.Pool
+	if cfg.SkipDB {
+		log.Warn("database disabled (SKIP_DB=true), using in-memory store")
+	} else {
+		var err error
+		pool, err = db.Connect(ctx, cfg.DatabaseURL)
+		if err != nil {
+			log.Error("database connect failed", "err", err)
+			os.Exit(1)
+		}
+		defer pool.Close()
 
-	if err := db.Migrate(ctx, pool); err != nil {
-		log.Error("migration failed", "err", err)
-		os.Exit(1)
+		if err := db.Migrate(ctx, pool); err != nil {
+			log.Error("migration failed", "err", err)
+			os.Exit(1)
+		}
 	}
 
 	app := fiber.New(fiber.Config{

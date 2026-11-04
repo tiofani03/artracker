@@ -14,6 +14,18 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Patch("/artworks/:id", h.UpdateArtwork)
 	api.Delete("/artworks/:id", h.DeleteArtwork)
 
+	if h.db == nil {
+		// SKIP_DB mode: only the in-memory artwork routes exist.
+		off := func(*fiber.Ctx) error {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "this feature needs the database (SKIP_DB is enabled)")
+		}
+		for _, prefix := range []string{"/auth", "/orgs", "/projects", "/sdk"} {
+			api.All(prefix, off)
+			api.All(prefix+"/*", off)
+		}
+		return
+	}
+
 	a := api.Group("/auth")
 	a.Get("/:provider/login", h.OAuthLogin)
 	a.Get("/:provider/callback", h.OAuthCallback)
