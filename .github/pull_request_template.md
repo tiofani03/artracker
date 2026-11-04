@@ -3,9 +3,10 @@
 
 ## Visual Evidence / Screenshots (WAJIB 📸)
 <!-- 
-ATURAN REPO: Setiap PR wajib melampirkan minimal 1 gambar/screenshot/foto bukti perubahan atau hasil test visual.
-Drag-and-drop foto/screenshot kamu langsung ke box ini!
-CI check akan FAIL jika tidak ada gambar yang terdeteksi di deskripsi PR ini.
+ATURAN REPO: Setiap PR wajib melampirkan minimal 1 screenshot gambar (.png, .webp, atau .jpg/.jpeg).
+CATATAN: Format .svg TIDAK DIPERBOLEHKAN untuk screenshot bukti visual.
+Drag-and-drop file gambar kamu langsung ke box ini!
+CI check akan FAIL jika tidak ada gambar .png / .webp / .jpg yang terdeteksi.
 -->
 
 ![Screenshot Bukti Perubahan](url_gambar_kamu_disini)
@@ -13,6 +14,6 @@ CI check akan FAIL jika tidak ada gambar yang terdeteksi di deskripsi PR ini.
 ---
 
 ## Checklist
-- [ ] Sudah melampirkan foto / screenshot bukti perubahan di atas
+- [ ] Sudah melampirkan screenshot riil (.png, .webp, atau .jpg) di atas (bukan .svg)
 - [ ] Kode lulus build & linting lokal (`npm run build`, `go vet`, `go test`)
 - [ ] Tidak ada console error yang tertinggal
