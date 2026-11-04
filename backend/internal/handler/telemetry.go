@@ -404,3 +404,48 @@ func (h *Handler) SeedProjectMockData(c *fiber.Ctx) error {
 		"seeded": len(rows),
 	})
 }
+
+// SendProjectTestEvent ingests 1 real telemetry event into the pipeline and database.
+func (h *Handler) SendProjectTestEvent(c *fiber.Ctx) error {
+	projectID := c.Locals("projectID").(int64)
+	if h.ingestSvc == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "ingest service unavailable")
+	}
+
+	now := time.Now()
+	rowID, err := uuid.NewV7()
+	if err != nil {
+		rowID = uuid.New()
+	}
+
+	job := ingest.BatchJob{
+		ProjectID:  projectID,
+		ReceivedAt: now,
+		Envelope: ingest.IngestEnvelope{
+			SentAt: &now,
+			SDK:    ingest.SDKMeta{Name: "artracker-console", Version: "1.0.0"},
+			Context: map[string]any{
+				"environment": "production",
+				"app_version": "1.0.0",
+			},
+			Items: []ingest.RawItem{
+				{
+					ID:         rowID.String(),
+					Type:       "event",
+					Name:       "manual_test_event",
+					Timestamp:  &now,
+					SessionID:  fmt.Sprintf("sess_%d", now.Unix()),
+					Attributes: json.RawMessage(`{"triggered_from":"dashboard","source":"console_ping"}`),
+				},
+			},
+		},
+	}
+
+	if !h.ingestSvc.WorkerPool().Enqueue(job) {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "ingest buffer full")
+	}
+	h.ingestSvc.Metrics().IncAcceptedRequests()
+	h.ingestSvc.Metrics().AddEventsReceived(1)
+
+	return c.JSON(fiber.Map{"status": "accepted", "event_id": rowID.String()})
+}
