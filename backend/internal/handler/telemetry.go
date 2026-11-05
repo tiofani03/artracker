@@ -467,12 +467,29 @@ func (h *Handler) SeedProjectMockData(c *fiber.Ctx) error {
 						})
 					}
 				}
+
+				// Returning events in subsequent weeks for realistic Cohort Retention
+				for rWeek := 1; rWeek <= w; rWeek++ {
+					if (u+rWeek)%2 == 0 {
+						retTime := userStart.Add(time.Duration(rWeek*7*24)*time.Hour + time.Duration((u%24))*time.Hour)
+						if retTime.Before(now) {
+							retEvID, _ := uuid.NewV7()
+							retSession := fmt.Sprintf("ses_ret_%s_%d", uID, rWeek)
+							analyticsRows = append(analyticsRows, analytics.EventRow{
+								ID: retEvID, ProjectID: projectID, SessionID: retSession,
+								UserID: uID, DeviceID: dID, ActorID: "u:" + uID, EventName: "view_product",
+								Properties: []byte(`{"source":"retention"}`), UTMSource: utm, Browser: browser, OS: "Web",
+								Timestamp: retTime,
+							})
+						}
+					}
+				}
 			}
 		}
 
 		_ = h.analyticsSvc.Sink().WriteBatch(ctx, analyticsRows, nil)
 
-		// Seed a default saved funnel if none exists
+		// Seed default saved funnels if none exist
 		existingFunnels, _ := h.analyticsSvc.ListSavedFunnels(ctx, projectID)
 		if len(existingFunnels) == 0 {
 			_, _ = h.analyticsSvc.CreateSavedFunnel(ctx, projectID, nil, analytics.SaveFunnelInput{
@@ -482,6 +499,53 @@ func (h *Handler) SeedProjectMockData(c *fiber.Ctx) error {
 				CountingMode:  "users",
 				BreakdownBy:   "utm_source",
 			})
+			_, _ = h.analyticsSvc.CreateSavedFunnel(ctx, projectID, nil, analytics.SaveFunnelInput{
+				Name:          "SaaS Product Activation",
+				Steps:         []string{"landing_view", "view_product", "checkout_start", "purchase_completed"},
+				WindowSeconds: 43200,
+				CountingMode:  "users",
+				BreakdownBy:   "browser",
+			})
+		}
+	}
+
+	// Also seed diagnostic issues and replay captures if database is connected
+	if h.db != nil {
+		var issueCount int64
+		_ = h.db.QueryRow(ctx, `SELECT count(*) FROM issues WHERE project_id = $1`, projectID).Scan(&issueCount)
+		if issueCount == 0 {
+			var issueID int64
+			_ = h.db.QueryRow(ctx, `
+				INSERT INTO issues (project_id, fingerprint, title, type, status, first_seen, last_seen, count)
+				VALUES ($1, 'fp_type_error_charge_id', 'TypeError: Cannot read properties of undefined (reading ''charge_id'')', 'TypeError', 'open', now() - interval '2 days', now() - interval '4 minutes', 28)
+				ON CONFLICT DO NOTHING RETURNING id
+			`, projectID).Scan(&issueID)
+			if issueID > 0 {
+				_, _ = h.db.Exec(ctx, `
+					INSERT INTO issue_events (issue_id, session_id, user_id, stack_trace, message, breadcrumbs, device_info, release_version, created_at)
+					VALUES ($1, 'ses_94k2p8', 'usr_1', 'TypeError: Cannot read properties of undefined (reading ''charge_id'')\n    at PaymentForm.tsx:142:19', 'Cannot read properties of undefined (reading ''charge_id'')', '[]'::jsonb, '{"browser":"Chrome 131"}'::jsonb, '2.4.1', now() - interval '4 minutes')
+				`, issueID)
+			}
+			_, _ = h.db.Exec(ctx, `
+				INSERT INTO issues (project_id, fingerprint, title, type, status, first_seen, last_seen, count)
+				VALUES 
+				($1, 'fp_net_502_charge', 'POST /api/v1/charge → 502 Bad Gateway (upstream timeout)', 'NetworkError', 'open', now() - interval '1 day', now() - interval '18 minutes', 19),
+				($1, 'fp_unhandled_rejection_fetch', 'UnhandledRejection: NetworkError when attempting to fetch resource', 'UnhandledRejection', 'open', now() - interval '3 days', now() - interval '42 minutes', 14)
+				ON CONFLICT DO NOTHING
+			`, projectID)
+		}
+
+		var replayCount int64
+		_ = h.db.QueryRow(ctx, `SELECT count(*) FROM replay_sessions WHERE project_id = $1`, projectID).Scan(&replayCount)
+		if replayCount == 0 {
+			_, _ = h.db.Exec(ctx, `
+				INSERT INTO replay_sessions (id, project_id, user_id, environment, start_time, duration_ms, chunk_count, event_count, total_size_bytes, has_error, has_rage_click, storage_prefix, created_at, updated_at)
+				VALUES 
+				('ses_94k2p8', $1, 'nadia.putri@fintech.id', 'production', now() - interval '42 minutes', 102000, 3, 480, 48200, true, true, 'projects/1/sessions/ses_94k2p8/', now(), now()),
+				('ses_71m9x3', $1, 'rian.wijaya@commerce.co', 'production', now() - interval '2 hours', 138000, 4, 620, 52100, false, false, 'projects/1/sessions/ses_71m9x3/', now(), now()),
+				('ses_58c4v1', $1, 'kevin.tan@saas.sg', 'production', now() - interval '5 hours', 185000, 5, 890, 68900, false, false, 'projects/1/sessions/ses_58c4v1/', now(), now())
+				ON CONFLICT DO NOTHING
+			`, projectID)
 		}
 	}
 
