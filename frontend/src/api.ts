@@ -198,3 +198,82 @@ export const telemetryApi = {
   sendTestEvent: (projectId: number) =>
     post<{ status: string; event_id: string }>(`/projects/${projectId}/test-event`),
 }
+
+export type IssueStatus = 'open' | 'resolved' | 'ignored'
+
+export type AssignedUser = {
+  id: number
+  name: string
+  email: string
+}
+
+export type Issue = {
+  id: number
+  project_id: number
+  fingerprint: string
+  title: string
+  type: string
+  status: IssueStatus
+  first_seen: string
+  last_seen: string
+  count: number
+  assigned_to: AssignedUser | null
+  latest_message: string
+}
+
+export type Breadcrumb = {
+  type?: string
+  category?: string
+  message?: string
+  timestamp?: string
+  [key: string]: unknown
+}
+
+export type DeviceInfo = {
+  os?: string
+  browser?: string
+  screen?: string
+  ip?: string
+  location?: string
+  user_agent?: string
+  [key: string]: unknown
+}
+
+export type IssueEvent = {
+  id: number
+  session_id: string
+  user_id: string
+  message: string
+  stack_trace: string
+  stack_trace_resolved: string
+  breadcrumbs: Breadcrumb[]
+  device_info: DeviceInfo
+  release_version: string
+  created_at: string
+}
+
+export type IssueDetail = Issue & { events: IssueEvent[] }
+
+export const issueApi = {
+  list: (projectId: number, opts: { status?: string; q?: string; sort?: string } = {}) => {
+    const params = new URLSearchParams()
+    if (opts.status) params.set('status', opts.status)
+    if (opts.q) params.set('q', opts.q)
+    if (opts.sort) params.set('sort', opts.sort)
+    return request<{ items: Issue[] }>(`/projects/${projectId}/issues?${params.toString()}`)
+  },
+  get: (projectId: number, issueId: number) =>
+    request<IssueDetail>(`/projects/${projectId}/issues/${issueId}`),
+  updateStatus: (projectId: number, issueId: number, status: IssueStatus) =>
+    request<Issue>(`/projects/${projectId}/issues/${issueId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }),
+  assign: (projectId: number, issueId: number) =>
+    post<Issue>(`/projects/${projectId}/issues/${issueId}/assign`),
+  uploadSourceMap: (projectId: number, version: string, content: unknown) =>
+    post<{ status: string; file_name: string; sources: number }>(
+      `/projects/${projectId}/releases/${version}/sourcemaps`,
+      content,
+    ),
+}

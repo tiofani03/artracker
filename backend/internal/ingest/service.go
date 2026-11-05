@@ -9,24 +9,25 @@ import (
 
 // Config holds configuration parameters for the Ingest subsystem.
 type Config struct {
-	Workers          int
-	QueueSize        int
-	BatchSize        int
-	FlushIntervalMs  int
-	ProjectRPS       float64
-	ProjectEventsPS  float64
-	KeyCacheTTLSec   int
+	Workers         int
+	QueueSize       int
+	BatchSize       int
+	FlushIntervalMs int
+	ProjectRPS      float64
+	ProjectEventsPS float64
+	KeyCacheTTLSec  int
 }
 
 // Service is the unified manager for authentication caching, rate limiting,
 // decompression, async queueing, and metrics.
 type Service struct {
-	keyCache    KeyResolver
-	rateLimiter *ProjectRateLimiter
-	decompress  *Decompressor
-	workerPool  *WorkerPool
-	metrics     *Metrics
-	sink        StorageSink
+	keyCache       KeyResolver
+	rateLimiter    *ProjectRateLimiter
+	decompress     *Decompressor
+	workerPool     *WorkerPool
+	metrics        *Metrics
+	sink           StorageSink
+	issueProcessor IssueProcessor
 }
 
 // NewService creates and initializes the complete Ingest pipeline.
@@ -86,6 +87,16 @@ func (s *Service) Metrics() *Metrics {
 
 func (s *Service) Sink() StorageSink {
 	return s.sink
+}
+
+// WithIssueProcessor attaches the error-tracking processor to the worker pool
+// so flushed batches are grouped into issues. Returns the service for chaining.
+func (s *Service) WithIssueProcessor(p IssueProcessor) *Service {
+	s.issueProcessor = p
+	if s.workerPool != nil {
+		s.workerPool.issueProcessor = p
+	}
+	return s
 }
 
 // Shutdown gracefully flushes all queued items to storage.
