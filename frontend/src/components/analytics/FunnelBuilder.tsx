@@ -1,5 +1,7 @@
-import { useState, type DragEvent, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import type { EventCatalog, SavedFunnel } from '../../api'
+import CustomSelect, { type CustomSelectOption } from '../CustomSelect'
+import { POPULAR_TEMPLATES, formatEventName } from './friendlyNames'
 
 type Props = {
   steps: string[]
@@ -34,10 +36,10 @@ export default function FunnelBuilder({
   onRunQuery,
   loading,
 }: Props) {
+  const [isEditingSteps, setIsEditingSteps] = useState(false)
   const [saveModalOpen, setSaveModalOpen] = useState(false)
   const [newFunnelName, setNewFunnelName] = useState('')
   const [saving, setSaving] = useState(false)
-  const [draggedIdx, setDraggedIdx] = useState<number | null>(null)
 
   const handleStepChange = (idx: number, val: string) => {
     const updated = [...steps]
@@ -48,10 +50,11 @@ export default function FunnelBuilder({
   const handleAddStep = () => {
     if (steps.length >= 5) return
     onStepsChange([...steps, ''])
+    setIsEditingSteps(true)
   }
 
   const handleRemoveStep = (idx: number) => {
-    if (steps.length <= 2) return
+    if (steps.length <= 1) return
     const updated = steps.filter((_, i) => i !== idx)
     onStepsChange(updated)
   }
@@ -62,25 +65,6 @@ export default function FunnelBuilder({
     const [moved] = updated.splice(fromIdx, 1)
     updated.splice(toIdx, 0, moved)
     onStepsChange(updated)
-  }
-
-  // HTML5 Drag and Drop handlers
-  const onDragStart = (e: DragEvent<HTMLDivElement>, idx: number) => {
-    setDraggedIdx(idx)
-    e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData('text/plain', String(idx))
-  }
-
-  const onDragOver = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-  }
-
-  const onDrop = (e: DragEvent<HTMLDivElement>, targetIdx: number) => {
-    e.preventDefault()
-    if (draggedIdx === null || draggedIdx === targetIdx) return
-    handleMoveStep(draggedIdx, targetIdx)
-    setDraggedIdx(null)
   }
 
   const handleSaveSubmit = async (e: FormEvent) => {
@@ -96,207 +80,330 @@ export default function FunnelBuilder({
     }
   }
 
+  // Window options
+  const windowOptions: CustomSelectOption<number>[] = [
+    { value: 3600, label: 'Window: 1 Hour' },
+    { value: 86400, label: 'Window: 24 Hours' },
+    { value: 604800, label: 'Window: 7 Days' },
+    { value: 2592000, label: 'Window: 30 Days' },
+  ]
+
+  // Counting Mode options
+  const countingModeOptions: CustomSelectOption<'users' | 'sessions'>[] = [
+    { value: 'users', label: 'Count: Unique Users' },
+    { value: 'sessions', label: 'Count: Sessions' },
+  ]
+
+  // Breakdown options
+  const breakdownOptions: CustomSelectOption<string>[] = [
+    { value: '', label: 'Breakdown: None' },
+    { value: 'utm_source', label: 'Breakdown: UTM Source' },
+    { value: 'utm_medium', label: 'Breakdown: UTM Medium' },
+    { value: 'utm_campaign', label: 'Breakdown: UTM Campaign' },
+    { value: 'browser', label: 'Breakdown: Browser' },
+    { value: 'os', label: 'Breakdown: OS' },
+    ...(catalog?.property_keys?.map((key) => ({
+      value: `prop:${key}`,
+      label: `Property: ${key}`,
+    })) || []),
+  ]
+
+  // Combined Preset & Template Options
+  const presetOptions: CustomSelectOption<string>[] = [
+    { value: '', label: 'Load Preset or Template...' },
+    ...POPULAR_TEMPLATES.map((tpl) => ({
+      value: `template:${tpl.id}`,
+      label: `Template: ${tpl.name}`,
+      badge: `${tpl.steps.length} steps`,
+    })),
+    ...savedFunnels.map((sf) => ({
+      value: `saved:${sf.id}`,
+      label: `Saved: ${sf.name}`,
+      badge: `${sf.steps.length} steps`,
+    })),
+  ]
+
+  // Catalog Event Options for Dropdown Selection
+  const catalogEventOptions: CustomSelectOption<string>[] = useMemo(() => {
+    const list: CustomSelectOption<string>[] = [
+      { value: '', label: 'Choose event from catalog...' },
+    ]
+    if (catalog?.event_names && catalog.event_names.length > 0) {
+      for (const en of catalog.event_names) {
+        list.push({
+          value: en.name,
+          label: formatEventName(en.name),
+          meta: en.name,
+          badge: `${en.count.toLocaleString()} occurrences`,
+        })
+      }
+    } else {
+      // Standard recommended events
+      const defaults = ['landing_view', 'view_product', 'add_to_cart', 'checkout_start', 'purchase_completed']
+      for (const d of defaults) {
+        list.push({
+          value: d,
+          label: formatEventName(d),
+          meta: d,
+        })
+      }
+    }
+    return list
+  }, [catalog])
+
+  const handlePresetSelect = (val: string) => {
+    if (!val) return
+    if (val.startsWith('template:')) {
+      const tid = val.replace('template:', '')
+      const tpl = POPULAR_TEMPLATES.find((t) => t.id === tid)
+      if (tpl) onStepsChange(tpl.steps)
+    } else if (val.startsWith('saved:')) {
+      const sid = Number(val.replace('saved:', ''))
+      const sf = savedFunnels.find((item) => item.id === sid)
+      if (sf) onSelectSavedFunnel(sf)
+    }
+  }
+
+  const isFunnelIncomplete = steps.filter((s) => s.trim() !== '').length < 2
+
   return (
-    <div className="funnel-builder-panel">
-      {/* Top Action Row: Saved Presets & Options */}
-      <div className="funnel-builder-top">
-        <div className="funnel-builder-presets">
-          {savedFunnels.length > 0 && (
-            <div className="dash-select-wrap">
-              <label htmlFor="saved-funnel-select" className="funnel-ctrl-label">
-                Saved Preset:
-              </label>
-              <select
-                id="saved-funnel-select"
-                className="dash-select"
-                onChange={(e) => {
-                  const f = savedFunnels.find((item) => item.id === Number(e.target.value))
-                  if (f) onSelectSavedFunnel(f)
-                }}
-                defaultValue=""
+    <div className="calm-funnel-toolbar">
+      {/* Tier 1: Horizontal Funnel Steps Sequence */}
+      <div className="calm-step-flow">
+        <div className="calm-step-flow__header">
+          <span className="calm-step-flow__label">Funnel Steps ({steps.length} of 5)</span>
+          <div className="calm-step-flow__actions">
+            <button
+              type="button"
+              className="dash-btn dash-btn--sm"
+              onClick={() => setIsEditingSteps((prev) => !prev)}
+            >
+              {isEditingSteps ? 'Done Editing' : 'Edit Steps'}
+            </button>
+            {steps.length < 5 && (
+              <button
+                type="button"
+                className="dash-btn dash-btn--sm"
+                onClick={handleAddStep}
               >
-                <option value="" disabled>
-                  Load a saved funnel...
-                </option>
-                {savedFunnels.map((sf) => (
-                  <option key={sf.id} value={sf.id}>
-                    {sf.name} ({sf.steps.length} steps)
-                  </option>
-                ))}
-              </select>
+                Add Step
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Notice banner if fewer than 2 steps */}
+        {isFunnelIncomplete && (
+          <div className="calm-step-notice">
+            <span>
+              A conversion funnel requires at least 2 steps (e.g. Step 1 to Step 2) to calculate drop-offs and conversion rates.
+            </span>
+            {steps.length < 5 && (
+              <button
+                type="button"
+                className="dash-btn dash-btn--primary dash-btn--sm"
+                onClick={handleAddStep}
+              >
+                Add Step {steps.length + 1}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Pipeline Sequence with Inline Add Step Pill */}
+        <div className="calm-step-flow__track">
+          {steps.map((st, idx) => (
+            <div key={'step-pill-' + idx} className="calm-step-pill-wrapper">
+              <button
+                type="button"
+                className="calm-step-pill"
+                onClick={() => setIsEditingSteps(true)}
+                title="Click to edit or reorder step"
+              >
+                <span className="calm-step-pill__num">{idx + 1}</span>
+                <span className="calm-step-pill__name">
+                  {st ? formatEventName(st) : 'Select Event'}
+                </span>
+              </button>
+              {idx < steps.length - 1 && (
+                <span className="calm-step-pill__connector">then</span>
+              )}
+            </div>
+          ))}
+
+          {/* Direct Inline Add Step Button */}
+          {steps.length < 5 && (
+            <div className="calm-step-pill-wrapper">
+              <span className="calm-step-pill__connector">then</span>
+              <button
+                type="button"
+                className="calm-step-add-btn"
+                onClick={handleAddStep}
+                title="Add next funnel step"
+              >
+                Add Step {steps.length + 1}
+              </button>
             </div>
           )}
+        </div>
+      </div>
 
+      {/* Tier 2: Step Editor Drawer (When Open) */}
+      {isEditingSteps && (
+        <div className="calm-step-editor">
+          <div className="calm-step-editor__head">
+            <strong>Configure Step Sequence ({steps.length} of 5 steps)</strong>
+            <span className="calm-step-editor__sub">
+              Pick an event from your project catalog using the dropdown, or type a custom event name.
+            </span>
+          </div>
+
+          <div className="calm-step-editor__list">
+            {steps.map((st, idx) => (
+              <div key={'editor-row-' + idx} className="calm-step-editor__row">
+                <span className="calm-step-editor__badge">Step {idx + 1}</span>
+
+                <div className="calm-step-editor__input-wrap">
+                  {/* Dropdown Event Picker */}
+                  <div className="calm-step-editor__select-picker">
+                    <CustomSelect
+                      size="sm"
+                      searchable
+                      options={catalogEventOptions}
+                      value={catalogEventOptions.some((o) => o.value === st) ? st : ''}
+                      onChange={(val) => {
+                        if (val) handleStepChange(idx, val)
+                      }}
+                      placeholder="Pick catalog event..."
+                      ariaLabel={`Pick catalog event for step ${idx + 1}`}
+                    />
+                  </div>
+
+                  {/* Direct Text Input for Custom Event */}
+                  <input
+                    type="text"
+                    className="dash-input calm-step-editor__input"
+                    placeholder="or type event code (e.g. purchase_completed)"
+                    value={st}
+                    onChange={(e) => handleStepChange(idx, e.target.value)}
+                  />
+                </div>
+
+                <div className="calm-step-editor__buttons">
+                  <button
+                    type="button"
+                    className="calm-text-btn"
+                    onClick={() => handleMoveStep(idx, idx - 1)}
+                    disabled={idx === 0}
+                  >
+                    Up
+                  </button>
+                  <button
+                    type="button"
+                    className="calm-text-btn"
+                    onClick={() => handleMoveStep(idx, idx + 1)}
+                    disabled={idx === steps.length - 1}
+                  >
+                    Down
+                  </button>
+                  <button
+                    type="button"
+                    className="calm-text-btn calm-text-btn--danger"
+                    onClick={() => handleRemoveStep(idx)}
+                    disabled={steps.length <= 1}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="calm-step-editor__footer">
+            {steps.length < 5 && (
+              <button
+                type="button"
+                className="dash-btn dash-btn--sm"
+                onClick={handleAddStep}
+              >
+                Add Step {steps.length + 1}
+              </button>
+            )}
+            <button
+              type="button"
+              className="dash-btn dash-btn--primary dash-btn--sm"
+              onClick={() => setIsEditingSteps(false)}
+            >
+              Done Editing
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Tier 3: Query Controls Bar */}
+      <div className="calm-query-bar">
+        <div className="calm-query-bar__group">
+          <div className="calm-query-bar__select">
+            <CustomSelect
+              size="sm"
+              options={presetOptions}
+              value=""
+              onChange={handlePresetSelect}
+              placeholder="Preset or Template..."
+              ariaLabel="Select funnel preset or template"
+            />
+          </div>
+
+          <div className="calm-query-bar__select">
+            <CustomSelect
+              size="sm"
+              options={windowOptions}
+              value={windowSeconds}
+              onChange={onWindowChange}
+              ariaLabel="Conversion window"
+            />
+          </div>
+
+          <div className="calm-query-bar__select">
+            <CustomSelect
+              size="sm"
+              options={countingModeOptions}
+              value={countingMode}
+              onChange={onCountingModeChange}
+              ariaLabel="Counting mode"
+            />
+          </div>
+
+          <div className="calm-query-bar__select">
+            <CustomSelect
+              size="sm"
+              searchable
+              options={breakdownOptions}
+              value={breakdownBy}
+              onChange={onBreakdownChange}
+              ariaLabel="Breakdown dimension"
+            />
+          </div>
+        </div>
+
+        <div className="calm-query-bar__actions">
           <button
             type="button"
             className="dash-btn dash-btn--sm"
             onClick={() => setSaveModalOpen(true)}
-            title="Save current steps as team preset"
           >
-            💾 Save Preset
+            Save Preset
           </button>
-        </div>
 
-        <div className="funnel-builder-quick-controls">
-          {/* Conversion Window Duration */}
-          <div className="funnel-ctrl-group">
-            <label htmlFor="funnel-window-select" className="funnel-ctrl-label">
-              Window:
-            </label>
-            <select
-              id="funnel-window-select"
-              className="dash-select"
-              value={windowSeconds}
-              onChange={(e) => onWindowChange(Number(e.target.value))}
-            >
-              <option value={3600}>1 Hour</option>
-              <option value={86400}>24 Hours (1 Day)</option>
-              <option value={604800}>7 Days</option>
-              <option value={2592000}>30 Days</option>
-            </select>
-          </div>
-
-          {/* Counting Mode */}
-          <div className="funnel-ctrl-group">
-            <label htmlFor="funnel-mode-select" className="funnel-ctrl-label">
-              Count by:
-            </label>
-            <select
-              id="funnel-mode-select"
-              className="dash-select"
-              value={countingMode}
-              onChange={(e) => onCountingModeChange(e.target.value as 'users' | 'sessions')}
-            >
-              <option value="users">Unique Users</option>
-              <option value="sessions">Unique Sessions</option>
-            </select>
-          </div>
-
-          {/* Breakdown By Dimension */}
-          <div className="funnel-ctrl-group">
-            <label htmlFor="funnel-breakdown-select" className="funnel-ctrl-label">
-              Breakdown:
-            </label>
-            <select
-              id="funnel-breakdown-select"
-              className="dash-select"
-              value={breakdownBy}
-              onChange={(e) => onBreakdownChange(e.target.value)}
-            >
-              <option value="">None</option>
-              <option value="utm_source">UTM Source</option>
-              <option value="utm_medium">UTM Medium</option>
-              <option value="utm_campaign">UTM Campaign</option>
-              <option value="browser">Browser</option>
-              <option value="os">Operating System</option>
-              {catalog?.property_keys?.map((key) => (
-                <option key={'pk-' + key} value={`prop:${key}`}>
-                  Property: {key}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* Step Reorder Cards (Drag-and-Drop + Keyboard Accessibility) */}
-      <div className="funnel-step-cards">
-        {steps.map((st, idx) => (
-          <div
-            key={'step-card-' + idx}
-            className={`funnel-step-input-card${draggedIdx === idx ? ' is-dragging' : ''}`}
-            draggable
-            onDragStart={(e) => onDragStart(e, idx)}
-            onDragOver={onDragOver}
-            onDrop={(e) => onDrop(e, idx)}
-          >
-            <div className="funnel-step-input-card__drag-handle" title="Drag to reorder">
-              ⋮⋮
-            </div>
-
-            <div className="funnel-step-input-card__badge">Step {idx + 1}</div>
-
-            <div className="funnel-step-input-card__input-wrap">
-              <input
-                type="text"
-                className="dash-input funnel-step-input"
-                placeholder={`e.g. ${idx === 0 ? 'page_view' : idx === 1 ? 'add_to_cart' : 'purchase'}`}
-                value={st}
-                onChange={(e) => handleStepChange(idx, e.target.value)}
-                list={`catalog-events-${idx}`}
-              />
-              <datalist id={`catalog-events-${idx}`}>
-                {catalog?.event_names?.map((en) => (
-                  <option key={en.name} value={en.name}>
-                    {en.name} ({en.count.toLocaleString()} events)
-                  </option>
-                ))}
-              </datalist>
-            </div>
-
-            {/* Reorder Buttons for Accessibility */}
-            <div className="funnel-step-input-card__actions">
-              <button
-                type="button"
-                className="dash-icon-btn"
-                onClick={() => handleMoveStep(idx, idx - 1)}
-                disabled={idx === 0}
-                title="Move up"
-                aria-label={`Move step ${idx + 1} up`}
-              >
-                ↑
-              </button>
-              <button
-                type="button"
-                className="dash-icon-btn"
-                onClick={() => handleMoveStep(idx, idx + 1)}
-                disabled={idx === steps.length - 1}
-                title="Move down"
-                aria-label={`Move step ${idx + 1} down`}
-              >
-                ↓
-              </button>
-              <button
-                type="button"
-                className="dash-icon-btn dash-icon-btn--danger"
-                onClick={() => handleRemoveStep(idx)}
-                disabled={steps.length <= 2}
-                title="Remove step (minimum 2 steps required)"
-                aria-label={`Remove step ${idx + 1}`}
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-        ))}
-
-        {/* Add Step Button */}
-        {steps.length < 5 && (
           <button
             type="button"
-            className="funnel-add-step-btn"
-            onClick={handleAddStep}
-            title="Add another funnel step (max 5)"
+            className="dash-btn dash-btn--primary dash-btn--sm"
+            onClick={onRunQuery}
+            disabled={loading || steps.filter((s) => s.trim() !== '').length < 2}
           >
-            + Add Step {steps.length + 1}
+            {loading ? 'Running...' : 'Run Query'}
           </button>
-        )}
-      </div>
-
-      {/* Query Execution Trigger Bar */}
-      <div className="funnel-builder-bottom">
-        <span className="funnel-step-count-hint">
-          {steps.length} of 5 steps configured · Loose sequential order evaluation
-        </span>
-
-        <button
-          type="button"
-          className="dash-btn dash-btn--primary"
-          onClick={onRunQuery}
-          disabled={loading || steps.some((s) => !s.trim())}
-        >
-          {loading ? 'Evaluating Funnel...' : '⚡ Calculate Funnel'}
-        </button>
+        </div>
       </div>
 
       {/* Save Funnel Preset Modal */}
@@ -307,26 +414,21 @@ export default function FunnelBuilder({
               <h3 className="modal-title">Save Funnel Preset</h3>
               <button
                 type="button"
-                className="dash-icon-btn"
+                className="dash-btn dash-btn--sm"
                 onClick={() => setSaveModalOpen(false)}
               >
-                ✕
+                Close
               </button>
             </div>
             <form onSubmit={handleSaveSubmit}>
               <div className="modal-body">
                 <p style={{ margin: '0 0 1rem 0', fontSize: '0.875rem', color: 'var(--color-muted)' }}>
-                  Save this {steps.length}-step funnel so your entire team can monitor conversion
-                  drop-offs.
+                  Save this {steps.length}-step funnel sequence for fast reuse across your workspace.
                 </p>
-                <label htmlFor="funnel-preset-name" className="funnel-ctrl-label">
-                  Preset Name:
-                </label>
                 <input
-                  id="funnel-preset-name"
                   type="text"
                   className="dash-input"
-                  placeholder="e.g. Mobile Signup to Activation"
+                  placeholder="e.g. Checkout Activation Funnel"
                   value={newFunnelName}
                   onChange={(e) => setNewFunnelName(e.target.value)}
                   autoFocus
@@ -346,7 +448,7 @@ export default function FunnelBuilder({
                   className="dash-btn dash-btn--primary"
                   disabled={saving || !newFunnelName.trim()}
                 >
-                  {saving ? 'Saving...' : 'Save Funnel'}
+                  {saving ? 'Saving...' : 'Save Preset'}
                 </button>
               </div>
             </form>

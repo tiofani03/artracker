@@ -108,8 +108,14 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
     items: [
       {
         to: '/dashboard/campaigns',
-        label: 'Growth Analytics',
+        label: 'Marketing Campaigns',
         icon: 'M4 19 9 9l4 5 3-4 4 9H4Z',
+        demoAllowed: true,
+      },
+      {
+        to: '/dashboard/funnels',
+        label: 'Funnel & Retention',
+        icon: 'M3 3v18h18M7 16l4-4 4 4 5-6',
         demoAllowed: true,
       },
       {
