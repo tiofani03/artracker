@@ -565,6 +565,218 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
     },
   },
   {
+    id: 'replay-chunk-url',
+    title: 'Request Chunk Upload URL',
+    category: 'SESSION REPLAY API',
+    method: 'POST',
+    path: '/replay/chunk-url',
+    description:
+      'Generates a 5-minute presigned PUT URL directly to Cloudflare R2 / S3 storage for uploading an rrweb DOM snapshot chunk in gzip format.',
+    callouts: [
+      {
+        type: 'tip',
+        title: 'Direct-to-R2 Architecture',
+        content:
+          'Browser SDKs upload compressed DOM snapshot chunks directly to Cloudflare R2 via presigned PUT URLs, offloading high-bandwidth replay video streaming from the Go API server.',
+      },
+      {
+        type: 'warning',
+        title: 'Chunk Size Limit',
+        content:
+          'The maximum allowed chunk size is 5 MB (5,242,880 bytes). Chunks exceeding this limit are rejected with HTTP 413 Payload Too Large.',
+      },
+    ],
+    headers: [
+      { name: 'X-Artracker-Key', type: 'string', required: true, desc: 'Project client API key starting with art_live_.' },
+      { name: 'Content-Type', type: 'string', required: true, desc: 'application/json' },
+    ],
+    params: [
+      { name: 'session_id', type: 'string', required: true, desc: 'Unique session identifier (8-128 chars: alphanumeric, _, -).' },
+      { name: 'chunk_seq', type: 'integer', required: true, desc: '0-based sequential chunk index (0, 1, 2...).' },
+      { name: 'size_bytes', type: 'integer', required: true, desc: 'Byte size of the compressed chunk (max 5 MB).' },
+      { name: 'user_id', type: 'string', required: false, desc: 'Optional user identifier.' },
+      { name: 'environment', type: 'string', required: false, desc: 'Environment name (default: production).' },
+      { name: 'start_time', type: 'string (ISO-8601)', required: false, desc: 'Session initiation timestamp.' },
+    ],
+    defaultHeaders: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    defaultBody: JSON.stringify(
+      {
+        session_id: 'sess_01j8xyz9abc123',
+        chunk_seq: 0,
+        size_bytes: 45000,
+        user_id: 'usr_42',
+        environment: 'production',
+      },
+      null,
+      2,
+    ),
+    responseSample: JSON.stringify(
+      {
+        upload_url: 'https://artracker-storage.r2.cloudflarestorage.com/projects/1/sessions/sess_01j8xyz9abc123/chunk_0.gz?X-Amz-Signature=...',
+        object_key: 'projects/1/sessions/sess_01j8xyz9abc123/chunk_0.gz',
+        expires_in: 300,
+      },
+      null,
+      2,
+    ),
+  },
+  {
+    id: 'replay-chunk-ack',
+    title: 'Acknowledge Chunk Upload',
+    category: 'SESSION REPLAY API',
+    method: 'POST',
+    path: '/replay/chunk-ack',
+    description:
+      'Notifies ARTracker that a chunk has been uploaded to R2. Idempotently tracks chunk metadata and aggregates session duration and error flags.',
+    callouts: [
+      {
+        type: 'info',
+        title: 'Idempotent Acknowledgment',
+        content:
+          'Chunk acknowledgments are idempotent. Retrying an acknowledgment for the same chunk_seq will not inflate the session chunk count.',
+      },
+    ],
+    headers: [
+      { name: 'X-Artracker-Key', type: 'string', required: true, desc: 'Project client API key starting with art_live_.' },
+      { name: 'Content-Type', type: 'string', required: true, desc: 'application/json' },
+    ],
+    params: [
+      { name: 'session_id', type: 'string', required: true, desc: 'Unique session identifier.' },
+      { name: 'chunk_seq', type: 'integer', required: true, desc: '0-based sequential chunk index.' },
+      { name: 'size_bytes', type: 'integer', required: true, desc: 'Byte size of the uploaded chunk.' },
+      { name: 'duration_ms', type: 'integer', required: false, desc: 'Cumulative session duration in milliseconds.' },
+      { name: 'event_count', type: 'integer', required: false, desc: 'DOM mutation events contained in this chunk.' },
+      { name: 'has_error', type: 'boolean', required: false, desc: 'Flag indicating if an error occurred during this chunk.' },
+      { name: 'has_rage_click', type: 'boolean', required: false, desc: 'Flag indicating if a rage click was detected.' },
+    ],
+    defaultHeaders: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    defaultBody: JSON.stringify(
+      {
+        session_id: 'sess_01j8xyz9abc123',
+        chunk_seq: 0,
+        size_bytes: 45000,
+        duration_ms: 15000,
+        event_count: 128,
+        has_error: true,
+        has_rage_click: false,
+      },
+      null,
+      2,
+    ),
+    responseSample: JSON.stringify(
+      {
+        status: 'acknowledged',
+        session_id: 'sess_01j8xyz9abc123',
+        chunk_seq: 0,
+        chunk_count: 1,
+      },
+      null,
+      2,
+    ),
+  },
+  {
+    id: 'get-replay-sessions',
+    title: 'List Replay Sessions',
+    category: 'SESSION REPLAY API',
+    method: 'GET',
+    path: '/projects/:projectId/sessions?has_error=true&limit=25',
+    description:
+      'Queries recorded sessions with filters for errors, rage clicks, user ID, environment, and date range.',
+    headers: [
+      { name: 'Authorization', type: 'string', required: true, desc: 'Bearer <token>' },
+    ],
+    params: [
+      { name: 'limit', type: 'query integer', required: false, desc: 'Maximum sessions to return (1-100). Default: 25.' },
+      { name: 'offset', type: 'query integer', required: false, desc: 'Pagination offset. Default: 0.' },
+      { name: 'has_error', type: 'query boolean', required: false, desc: 'Filter sessions containing errors (true/false).' },
+      { name: 'has_rage_click', type: 'query boolean', required: false, desc: 'Filter sessions containing rage clicks (true/false).' },
+      { name: 'user_id', type: 'query string', required: false, desc: 'Filter by specific user identifier.' },
+      { name: 'environment', type: 'query string', required: false, desc: 'Filter by environment name.' },
+    ],
+    defaultHeaders: {
+      Accept: 'application/json',
+    },
+    responseSample: JSON.stringify(
+      {
+        items: [
+          {
+            id: 'sess_01j8xyz9abc123',
+            project_id: 1,
+            user_id: 'usr_42',
+            environment: 'production',
+            start_time: '2026-11-05T09:00:00Z',
+            end_time: '2026-11-05T09:00:45Z',
+            duration_ms: 45000,
+            chunk_count: 3,
+            event_count: 384,
+            total_size_bytes: 135000,
+            has_error: true,
+            has_rage_click: false,
+            created_at: '2026-11-05T09:00:00Z',
+            updated_at: '2026-11-05T09:00:45Z',
+          },
+        ],
+        total: 1,
+        limit: 25,
+        offset: 0,
+      },
+      null,
+      2,
+    ),
+  },
+  {
+    id: 'get-replay-session-detail',
+    title: 'Get Session & Player Chunks',
+    category: 'SESSION REPLAY API',
+    method: 'GET',
+    path: '/projects/:projectId/sessions/:sessionId',
+    description:
+      'Returns session metadata, ordered chunk list with presigned GET download URLs (15-min TTL) for rrweb playback, and synchronized timeline error markers.',
+    headers: [
+      { name: 'Authorization', type: 'string', required: true, desc: 'Bearer <token>' },
+    ],
+    defaultHeaders: {
+      Accept: 'application/json',
+    },
+    responseSample: JSON.stringify(
+      {
+        session: {
+          id: 'sess_01j8xyz9abc123',
+          project_id: 1,
+          user_id: 'usr_42',
+          duration_ms: 45000,
+          chunk_count: 1,
+          has_error: true,
+        },
+        chunks: [
+          {
+            chunk_seq: 0,
+            size_bytes: 45000,
+            event_count: 128,
+            url: 'https://artracker-storage.r2.cloudflarestorage.com/projects/1/sessions/sess_01j8xyz9abc123/chunk_0.gz?X-Amz-Signature=...',
+          },
+        ],
+        timeline_events: [
+          {
+            id: '018f2d84-91f8-7440-a152-475968d9f4e2',
+            kind: 'log',
+            name: 'TypeError: Cannot read properties of undefined',
+            level: 'error',
+            event_timestamp: '2026-11-05T09:00:15Z',
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  },
+  {
     id: 'healthz',
     title: 'Health & Ingest Buffer Status',
     category: 'SYSTEM & HEALTH',
@@ -856,7 +1068,9 @@ function DocsView({
   const resolvedPath = useMemo(() => {
     if (!activeSection.path) return ''
     const pid = projectId ?? 1
-    return activeSection.path.replace(':projectId', String(pid))
+    return activeSection.path
+      .replace(':projectId', String(pid))
+      .replace(':sessionId', 'sess_01j8xyz9abc123')
   }, [activeSection.path, projectId])
 
   const fullUrl = useMemo(() => {

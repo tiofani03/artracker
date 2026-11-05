@@ -32,6 +32,15 @@ type Config struct {
 	PublicURL          string // frontend base URL, post-login redirect target
 	GoogleClientID     string
 	GoogleClientSecret string
+
+	// Session Replay & S3 / Cloudflare R2 Object Storage
+	R2AccountID         string
+	R2AccessKeyID       string
+	R2AccessKeySecret   string
+	R2BucketName        string
+	R2Endpoint          string
+	R2Region            string
+	ReplayMaxChunkBytes int64
 }
 
 // Placeholders shipped in .env.example / used as the dev default; never valid in production.
@@ -63,6 +72,18 @@ func Load() Config {
 		PublicURL:          strings.TrimRight(env("PUBLIC_URL", "http://localhost:5173"), "/"),
 		GoogleClientID:     env("GOOGLE_CLIENT_ID", ""),
 		GoogleClientSecret: env("GOOGLE_CLIENT_SECRET", ""),
+
+		R2AccountID:         env("R2_ACCOUNT_ID", ""),
+		R2AccessKeyID:       env("R2_ACCESS_KEY_ID", ""),
+		R2AccessKeySecret:   env("R2_ACCESS_KEY_SECRET", ""),
+		R2BucketName:        env("R2_BUCKET_NAME", ""),
+		R2Endpoint:          env("R2_ENDPOINT", ""),
+		R2Region:            env("R2_REGION", "auto"),
+		ReplayMaxChunkBytes: int64(envInt("REPLAY_MAX_CHUNK_BYTES", 5242880)),
+	}
+
+	if cfg.R2Endpoint == "" && cfg.R2AccountID != "" {
+		cfg.R2Endpoint = "https://" + cfg.R2AccountID + ".r2.cloudflarestorage.com"
 	}
 	if cfg.Env == "production" {
 		if cfg.JWTSecret == "" {

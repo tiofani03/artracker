@@ -11,15 +11,17 @@ import (
 	"github.com/tiofani03/artracker/backend/internal/auth"
 	"github.com/tiofani03/artracker/backend/internal/config"
 	"github.com/tiofani03/artracker/backend/internal/ingest"
+	"github.com/tiofani03/artracker/backend/internal/storage"
 )
 
 // Handler carries the dependencies every route needs.
 type Handler struct {
-	db        *pgxpool.Pool
-	cfg       config.Config
-	issuer    *auth.Issuer
-	providers map[string]OAuthProvider
-	ingestSvc *ingest.Service
+	db          *pgxpool.Pool
+	cfg         config.Config
+	issuer      *auth.Issuer
+	providers   map[string]OAuthProvider
+	ingestSvc   *ingest.Service
+	replayStore storage.ReplayStore
 
 	// in-memory artwork store, used only when the database is disabled (SKIP_DB)
 	mu     sync.RWMutex
@@ -48,6 +50,12 @@ func New(pool *pgxpool.Pool, cfg config.Config, issuer *auth.Issuer, providers m
 // WithIngest replaces the ingest service (useful for custom sinks or test mocks).
 func (h *Handler) WithIngest(svc *ingest.Service) *Handler {
 	h.ingestSvc = svc
+	return h
+}
+
+// WithReplayStore injects the object storage provider for session replays.
+func (h *Handler) WithReplayStore(s storage.ReplayStore) *Handler {
+	h.replayStore = s
 	return h
 }
 

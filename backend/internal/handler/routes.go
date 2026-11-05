@@ -15,13 +15,15 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Delete("/artworks/:id", h.DeleteArtwork)
 
 	api.Post("/ingest", h.VerifyIngestKey, h.RateLimitIngest, h.Ingest)
+	api.Post("/replay/chunk-url", h.VerifyIngestKey, h.RateLimitIngest, h.GenerateChunkUploadURL)
+	api.Post("/replay/chunk-ack", h.VerifyIngestKey, h.RateLimitIngest, h.AcknowledgeChunk)
 
 	if h.db == nil {
 		// SKIP_DB mode: only the in-memory artwork routes exist.
 		off := func(*fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "this feature needs the database (SKIP_DB is enabled)")
 		}
-		for _, prefix := range []string{"/auth", "/orgs", "/projects", "/sdk"} {
+		for _, prefix := range []string{"/auth", "/orgs", "/projects", "/sdk", "/replay"} {
 			api.All(prefix, off)
 			api.All(prefix+"/*", off)
 		}
@@ -48,6 +50,8 @@ func (h *Handler) Routes(api fiber.Router) {
 
 	api.Get("/projects/:projectID/stats", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetProjectStats)
 	api.Get("/projects/:projectID/events", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListProjectEvents)
+	api.Get("/projects/:projectID/sessions", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListProjectSessions)
+	api.Get("/projects/:projectID/sessions/:sessionID", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetProjectSession)
 	api.Post("/projects/:projectID/seed-mock", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.SeedProjectMockData)
 	api.Post("/projects/:projectID/test-event", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.SendProjectTestEvent)
 
