@@ -128,6 +128,7 @@ func main() {
 	h := handler.New(pool, cfg, auth.NewIssuer(cfg.JWTSecret, 15*time.Minute), providers).
 		WithIngest(ingestSvc).
 		WithReplayStore(replayStore)
+	ingestSvc.WithIssueProcessor(h.IssueService())
 	app.Get("/healthz", h.Health)
 	app.Get("/auth/callback/:provider", h.OAuthCallback)
 	h.Routes(app.Group("/api/v1"))
