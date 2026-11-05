@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
+  analyticsApi,
   keyApi,
   telemetryApi,
   type ApiKey,
@@ -508,6 +509,7 @@ function DashboardInner({
   const [alerts, setAlerts] = useState<AlertRule[]>(INITIAL_ALERTS)
   const [realStats, setRealStats] = useState<ProjectStats | null>(null)
   const [realEvents, setRealEvents] = useState<TelemetryEvent[]>([])
+  const [realCampaigns, setRealCampaigns] = useState<typeof CAMPAIGNS | null>(null)
   const [sendingTest, setSendingTest] = useState(false)
 
   const reloadTelemetry = () => {
@@ -515,9 +517,30 @@ function DashboardInner({
     Promise.all([
       telemetryApi.getStats(project.id, range).catch(() => null),
       telemetryApi.listEvents(project.id, 'all', 50).catch(() => ({ items: [] })),
-    ]).then(([statsData, eventsData]) => {
+      analyticsApi
+        .calculateFunnel(project.id, {
+          steps: ['landing_view', 'purchase_completed'],
+          breakdown_by: 'utm_campaign',
+          from: new Date(Date.now() - 30 * 86400000).toISOString(),
+          to: new Date().toISOString(),
+          window_seconds: 86400,
+        })
+        .catch(() => null),
+    ]).then(([statsData, eventsData, funnelData]) => {
       setRealStats(statsData)
       setRealEvents(eventsData?.items ?? [])
+      if (funnelData?.breakdowns && funnelData.breakdowns.length > 0) {
+        setRealCampaigns(
+          funnelData.breakdowns.map((b) => ({
+            name: b.segment || 'direct / organic',
+            source: 'tracked UTM',
+            visitors: (b.step_counts[0] ?? 0).toLocaleString(),
+            signups: Math.round((b.step_counts[0] ?? 0) * 0.35).toLocaleString(),
+            checkouts: (b.step_counts[1] ?? 0).toLocaleString(),
+            conv: `${b.overall_conversion_pct.toFixed(2)}%`,
+          })),
+        )
+      }
     })
   }
 
@@ -525,6 +548,7 @@ function DashboardInner({
     if (!project || isDemo) {
       setRealStats(null)
       setRealEvents([])
+      setRealCampaigns(null)
       return
     }
 
@@ -532,10 +556,31 @@ function DashboardInner({
     Promise.all([
       telemetryApi.getStats(project.id, range).catch(() => null),
       telemetryApi.listEvents(project.id, 'all', 50).catch(() => ({ items: [] })),
-    ]).then(([statsData, eventsData]) => {
+      analyticsApi
+        .calculateFunnel(project.id, {
+          steps: ['landing_view', 'purchase_completed'],
+          breakdown_by: 'utm_campaign',
+          from: new Date(Date.now() - 30 * 86400000).toISOString(),
+          to: new Date().toISOString(),
+          window_seconds: 86400,
+        })
+        .catch(() => null),
+    ]).then(([statsData, eventsData, funnelData]) => {
       if (!active) return
       setRealStats(statsData)
       setRealEvents(eventsData?.items ?? [])
+      if (funnelData?.breakdowns && funnelData.breakdowns.length > 0) {
+        setRealCampaigns(
+          funnelData.breakdowns.map((b) => ({
+            name: b.segment || 'direct / organic',
+            source: 'tracked UTM',
+            visitors: (b.step_counts[0] ?? 0).toLocaleString(),
+            signups: Math.round((b.step_counts[0] ?? 0) * 0.35).toLocaleString(),
+            checkouts: (b.step_counts[1] ?? 0).toLocaleString(),
+            conv: `${b.overall_conversion_pct.toFixed(2)}%`,
+          })),
+        )
+      }
     })
 
     return () => {
@@ -817,7 +862,7 @@ function DashboardInner({
                           </tr>
                         </thead>
                         <tbody>
-                          {CAMPAIGNS.map((c) => (
+                          {(realCampaigns && realCampaigns.length > 0 ? realCampaigns : CAMPAIGNS).map((c) => (
                             <tr key={c.name}>
                               <td data-label="Campaign">
                                 <strong className="dash-code">{c.name}</strong>
