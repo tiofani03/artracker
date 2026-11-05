@@ -6,6 +6,7 @@ import './index.css'
 import App from './App.tsx'
 import { AuthProvider } from './auth/AuthContext'
 import DashboardPage from './pages/DashboardPage'
+import DocsPage from './pages/DocsPage'
 import LoginPage from './pages/LoginPage'
 import SettingsPage from './pages/SettingsPage'
 import { useLocation } from './router'
@@ -15,6 +16,9 @@ function Routes() {
   switch (path.replace(/\/+$/, '') || '/') {
     case '/login':
       return <LoginPage />
+    case '/docs':
+    case '/dashboard/docs':
+      return <DocsPage />
     case '/dashboard':
       return <DashboardPage section="overview" />
     case '/dashboard/replays':
