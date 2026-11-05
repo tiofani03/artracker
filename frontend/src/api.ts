@@ -42,6 +42,9 @@ let accessToken: string | null = null
 export function setAccessToken(token: string | null) {
   accessToken = token
 }
+export function getAccessToken(): string | null {
+  return accessToken
+}
 
 // Refresh tokens rotate and reuse revokes the session, so concurrent refreshes
 // (StrictMode double effects, parallel 401s) must share one request.

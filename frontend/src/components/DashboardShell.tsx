@@ -117,6 +117,17 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
     ],
   },
   {
+    heading: 'Developers',
+    items: [
+      {
+        to: '/dashboard/docs',
+        label: 'API Docs & Playground',
+        icon: 'M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2Zm3 5 4 3-4 3m6 0h4',
+        demoAllowed: true,
+      },
+    ],
+  },
+  {
     heading: 'Workspace',
     items: [
       {
