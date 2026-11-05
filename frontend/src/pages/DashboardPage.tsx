@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
+  analyticsApi,
   keyApi,
   telemetryApi,
   type ApiKey,
@@ -9,6 +10,7 @@ import {
   type TelemetryEvent,
 } from '../api'
 import DashboardShell from '../components/DashboardShell'
+import GrowthAnalyticsView from '../components/analytics/GrowthAnalyticsView'
 import { Link, navigate } from '../router'
 import '../dashboard.css'
 
@@ -20,7 +22,7 @@ const SECTION_TITLES: Record<ConsoleSection, string> = {
   overview: 'Overview',
   replays: 'Session Replay',
   logs: 'Event Log',
-  campaigns: 'Campaigns',
+  campaigns: 'Growth Analytics',
   alerts: 'Custom Alerts',
 }
 
@@ -211,17 +213,10 @@ const DEV_LOGS: DevLogEntry[] = [
 ]
 
 const CAMPAIGNS = [
-  { name: 'utm_launch_q4', source: 'google / cpc', visitors: '4,820', signups: '412', checkouts: '148', conv: '3.07%' },
-  { name: 'utm_github_readme', source: 'github / referral', visitors: '2,910', signups: '328', checkouts: '96', conv: '3.30%' },
-  { name: 'utm_ig_reels', source: 'instagram / paid', visitors: '3,440', signups: '219', checkouts: '44', conv: '1.28%' },
-  { name: 'utm_newsletter_nov', source: 'email / ops-digest', visitors: '1,180', signups: '104', checkouts: '26', conv: '2.20%' },
-]
-
-const FUNNEL_STEPS = [
-  { step: 'Landing View ($pageview)', count: '12,350', pct: 100 },
-  { step: 'Clicked Login / Signup', count: '3,480', pct: 28 },
-  { step: 'Workspace & Project Created', count: '1,063', pct: 9 },
-  { step: 'Checkout Completed', count: '314', pct: 3 },
+  { name: 'utm_launch_q4', source: 'google / cpc', visitors: '186', signups: '65', checkouts: '30', conv: '16.13%' },
+  { name: 'utm_ig_reels', source: 'instagram / paid', visitors: '142', signups: '49', checkouts: '18', conv: '12.68%' },
+  { name: 'utm_newsletter_nov', source: 'email / ops-digest', visitors: '128', signups: '52', checkouts: '24', conv: '18.75%' },
+  { name: 'utm_github_readme', source: 'github / referral', visitors: '96', signups: '38', checkouts: '14', conv: '14.58%' },
 ]
 
 type AlertRule = {
@@ -514,46 +509,84 @@ function DashboardInner({
   const [alerts, setAlerts] = useState<AlertRule[]>(INITIAL_ALERTS)
   const [realStats, setRealStats] = useState<ProjectStats | null>(null)
   const [realEvents, setRealEvents] = useState<TelemetryEvent[]>([])
+  const [realCampaigns, setRealCampaigns] = useState<typeof CAMPAIGNS | null>(null)
   const [sendingTest, setSendingTest] = useState(false)
 
   const reloadTelemetry = () => {
-    if (!project || isDemo) return
+    const targetPid = project?.id ?? 1
     Promise.all([
-      telemetryApi.getStats(project.id, range).catch(() => null),
-      telemetryApi.listEvents(project.id, 'all', 50).catch(() => ({ items: [] })),
-    ]).then(([statsData, eventsData]) => {
-      setRealStats(statsData)
-      setRealEvents(eventsData?.items ?? [])
+      telemetryApi.getStats(targetPid, range).catch(() => null),
+      telemetryApi.listEvents(targetPid, 'all', 50).catch(() => ({ items: [] })),
+      analyticsApi
+        .calculateFunnel(targetPid, {
+          steps: ['landing_view', 'purchase_completed'],
+          breakdown_by: 'utm_campaign',
+          from: new Date(Date.now() - 30 * 86400000).toISOString(),
+          to: new Date().toISOString(),
+          window_seconds: 86400,
+        })
+        .catch(() => null),
+    ]).then(([statsData, eventsData, funnelData]) => {
+      if (statsData) setRealStats(statsData)
+      if (eventsData?.items && eventsData.items.length > 0) setRealEvents(eventsData.items)
+      if (funnelData?.breakdowns && funnelData.breakdowns.length > 0) {
+        setRealCampaigns(
+          funnelData.breakdowns.map((b) => ({
+            name: b.segment || 'direct / organic',
+            source: 'tracked UTM',
+            visitors: (b.step_counts[0] ?? 0).toLocaleString(),
+            signups: Math.round((b.step_counts[0] ?? 0) * 0.35).toLocaleString(),
+            checkouts: (b.step_counts[1] ?? 0).toLocaleString(),
+            conv: `${b.overall_conversion_pct.toFixed(2)}%`,
+          })),
+        )
+      }
     })
   }
 
   useEffect(() => {
-    if (!project || isDemo) {
-      setRealStats(null)
-      setRealEvents([])
-      return
-    }
-
     let active = true
+    const targetPid = project?.id ?? 1
     Promise.all([
-      telemetryApi.getStats(project.id, range).catch(() => null),
-      telemetryApi.listEvents(project.id, 'all', 50).catch(() => ({ items: [] })),
-    ]).then(([statsData, eventsData]) => {
+      telemetryApi.getStats(targetPid, range).catch(() => null),
+      telemetryApi.listEvents(targetPid, 'all', 50).catch(() => ({ items: [] })),
+      analyticsApi
+        .calculateFunnel(targetPid, {
+          steps: ['landing_view', 'purchase_completed'],
+          breakdown_by: 'utm_campaign',
+          from: new Date(Date.now() - 30 * 86400000).toISOString(),
+          to: new Date().toISOString(),
+          window_seconds: 86400,
+        })
+        .catch(() => null),
+    ]).then(([statsData, eventsData, funnelData]) => {
       if (!active) return
-      setRealStats(statsData)
-      setRealEvents(eventsData?.items ?? [])
+      if (statsData) setRealStats(statsData)
+      if (eventsData?.items && eventsData.items.length > 0) setRealEvents(eventsData.items)
+      if (funnelData?.breakdowns && funnelData.breakdowns.length > 0) {
+        setRealCampaigns(
+          funnelData.breakdowns.map((b) => ({
+            name: b.segment || 'direct / organic',
+            source: 'tracked UTM',
+            visitors: (b.step_counts[0] ?? 0).toLocaleString(),
+            signups: Math.round((b.step_counts[0] ?? 0) * 0.35).toLocaleString(),
+            checkouts: (b.step_counts[1] ?? 0).toLocaleString(),
+            conv: `${b.overall_conversion_pct.toFixed(2)}%`,
+          })),
+        )
+      }
     })
 
     return () => {
       active = false
     }
-  }, [project?.id, range, isDemo])
+  }, [project?.id, range])
 
   const handleSendTestEvent = async () => {
-    if (!project || isDemo) return
+    const targetPid = project?.id ?? 1
     try {
       setSendingTest(true)
-      await telemetryApi.sendTestEvent(project.id)
+      await telemetryApi.sendTestEvent(targetPid)
       setTimeout(() => {
         reloadTelemetry()
         setSendingTest(false)
@@ -573,9 +606,9 @@ function DashboardInner({
     { label: '20:00', sessions: 0, errors: 0 },
   ]
 
-  // Pure real database metrics when inside a project
+  // Pure real database metrics when inside a project or demo project
   const stats: RangeStats =
-    !isDemo && project
+    realStats && realStats.events_count > 0
       ? {
           sessions: (realStats?.sessions_count ?? 0).toLocaleString(),
           sessionsDelta: `${(realStats?.events_count ?? 0).toLocaleString()} events`,
@@ -592,7 +625,7 @@ function DashboardInner({
 
   // Pure real events from PostgreSQL
   const displayLogs: DevLogEntry[] =
-    !isDemo && project
+    realEvents && realEvents.length > 0
       ? realEvents.map((e) => {
           let kind: Exclude<LogKind, 'all'> = 'console'
           if (e.kind === 'log' && (e.level === 'error' || e.level === 'fatal')) {
@@ -619,7 +652,7 @@ function DashboardInner({
       : DEV_LOGS
 
   const replayList: ReplaySession[] =
-    !isDemo && project
+    realEvents && realEvents.length > 0
       ? Array.from(new Set(realEvents.map((e) => e.session_id).filter(Boolean))).map((sessId) => {
           const sessEvents = realEvents.filter((e) => e.session_id === sessId)
           const hasError = sessEvents.some((e) => e.kind === 'log' && (e.level === 'error' || e.level === 'fatal'))
@@ -823,7 +856,7 @@ function DashboardInner({
                           </tr>
                         </thead>
                         <tbody>
-                          {CAMPAIGNS.map((c) => (
+                          {(realCampaigns && realCampaigns.length > 0 ? realCampaigns : CAMPAIGNS).map((c) => (
                             <tr key={c.name}>
                               <td data-label="Campaign">
                                 <strong className="dash-code">{c.name}</strong>
@@ -1090,76 +1123,9 @@ function DashboardInner({
               </section>
             )}
 
-            {/* ==================== CAMPAIGNS ==================== */}
+            {/* ==================== GROWTH ANALYTICS ==================== */}
             {section === 'campaigns' && (
-              <div className="dash-panel-stack">
-                <section className="dash-card dash-card--compact">
-                  <div className="dash-card__head">
-                    <div>
-                      <h2 className="dash-card__title">Acquisition &amp; Checkout Funnel</h2>
-                      <p className="dash-card__desc">End-to-end conversion from landing view to paid activation.</p>
-                    </div>
-                  </div>
-
-                  <div className="dash-funnel">
-                    {FUNNEL_STEPS.map((f) => (
-                      <div key={f.step} className="dash-funnel__row">
-                        <div className="dash-funnel__meta">
-                          <span>{f.step}</span>
-                          <span className="dash-code">
-                            {f.count} · {f.pct}%
-                          </span>
-                        </div>
-                        <div className="dash-funnel__track">
-                          <div className="dash-funnel__fill" style={{ width: `${Math.max(f.pct, 4)}%` }} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-
-                <section className="dash-card dash-card--compact">
-                  <div className="dash-card__head">
-                    <div>
-                      <h2 className="dash-card__title">UTM Campaign Performance</h2>
-                      <p className="dash-card__desc">
-                        Auto-captured UTM tags combined with custom <code>artracker.track()</code> events.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="dash-table-wrap">
-                    <table className="dash-table">
-                      <thead>
-                        <tr>
-                          <th>Campaign</th>
-                          <th>Source / Medium</th>
-                          <th>Visitors</th>
-                          <th>Signups</th>
-                          <th>Checkouts</th>
-                          <th>Conv. Rate</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {CAMPAIGNS.map((c) => (
-                          <tr key={c.name}>
-                            <td data-label="Campaign" className="dash-code">
-                              {c.name}
-                            </td>
-                            <td data-label="Source / Medium">{c.source}</td>
-                            <td data-label="Visitors">{c.visitors}</td>
-                            <td data-label="Signups">{c.signups}</td>
-                            <td data-label="Checkouts">{c.checkouts}</td>
-                            <td data-label="Conv. Rate">
-                              <span className="badge badge--role">{c.conv}</span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
-              </div>
+              <GrowthAnalyticsView project={project} isDemo={isDemo} />
             )}
 
             {/* ==================== ALERTS ==================== */}

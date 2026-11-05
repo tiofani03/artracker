@@ -77,6 +77,59 @@ var openAPISpecBytes = []byte(`{
         }
       }
     },
+    "/events": {
+      "post": {
+        "summary": "Batch Growth & Product Events Ingestion",
+        "description": "Asynchronous high-throughput ingestion endpoint for custom product & marketing events. Supports Content-Encoding: gzip, two-layer idempotency deduplication, auto-UTM extraction, and user properties merge.",
+        "operationId": "ingestEventsBatch",
+        "tags": ["Ingestion"],
+        "parameters": [
+          {
+            "name": "X-Artracker-Key",
+            "in": "header",
+            "required": true,
+            "description": "Project client SDK key starting with art_live_",
+            "schema": { "type": "string", "example": "art_live_a892b109c3d4e5f6" }
+          },
+          {
+            "name": "Content-Encoding",
+            "in": "header",
+            "required": false,
+            "description": "Optional compression encoding",
+            "schema": { "type": "string", "enum": ["gzip"] }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AnalyticsEventEnvelope" }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Events batch enqueued for persistence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "accepted" },
+                    "queued_items": { "type": "integer", "example": 3 }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Invalid JSON or empty events array" },
+          "401": { "description": "Missing or invalid client key" },
+          "413": { "description": "Payload exceeds 512KB gzip or 2MB uncompressed limit" },
+          "429": { "description": "Rate limit exceeded" },
+          "503": { "description": "Analytics buffer saturated" }
+        }
+      }
+    },
     "/sdk/validate": {
       "get": {
         "summary": "Validate SDK Client Key",
@@ -304,6 +357,157 @@ var openAPISpecBytes = []byte(`{
           "404": { "description": "Session not found" }
         }
       }
+    },
+    "/projects/{projectID}/analytics/catalog": {
+      "get": {
+        "summary": "Get Event and Attribute Catalog",
+        "description": "Returns distinct event names with frequency counts, captured UTM sources, browsers, OSes, and top property keys.",
+        "operationId": "getAnalyticsCatalog",
+        "tags": ["Growth Analytics"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Catalog of tracking names and dimensions",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AnalyticsCatalogResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{projectID}/analytics/funnel": {
+      "post": {
+        "summary": "Calculate Funnel Conversion",
+        "description": "Computes drop-off conversion rates, window duration constraints, and optional breakdown segments across 2 to 5 ordered steps.",
+        "operationId": "calculateFunnel",
+        "tags": ["Growth Analytics"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/FunnelQueryRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Funnel conversion analysis result",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/FunnelQueryResponse" }
+              }
+            }
+          },
+          "400": { "description": "Invalid steps or date range" }
+        }
+      }
+    },
+    "/projects/{projectID}/analytics/retention": {
+      "get": {
+        "summary": "Calculate Cohort Retention Matrix",
+        "description": "Computes an N-day or N-week cohort retention matrix with customizable start/return events and local timezone boundaries.",
+        "operationId": "calculateCohortRetention",
+        "tags": ["Growth Analytics"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "granularity", "in": "query", "required": false, "schema": { "type": "string", "enum": ["day", "week"], "default": "week" } },
+          { "name": "periods", "in": "query", "required": false, "schema": { "type": "integer", "default": 8 } },
+          { "name": "start_event", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "return_event", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "tz", "in": "query", "required": false, "schema": { "type": "string", "default": "UTC" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cohort retention matrix",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CohortRetentionResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{projectID}/analytics/funnels": {
+      "get": {
+        "summary": "List Saved Funnel Presets",
+        "description": "Retrieves all saved funnel definitions for the project.",
+        "operationId": "listSavedFunnels",
+        "tags": ["Growth Analytics"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of saved funnels",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": { "type": "array", "items": { "$ref": "#/components/schemas/SavedFunnel" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Save a Funnel Preset",
+        "description": "Saves a 2-5 step custom funnel definition for team collaboration.",
+        "operationId": "createSavedFunnel",
+        "tags": ["Growth Analytics"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SaveFunnelInput" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Funnel definition saved",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SavedFunnel" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{projectID}/analytics/funnels/{funnelID}": {
+      "delete": {
+        "summary": "Delete a Saved Funnel",
+        "description": "Deletes a previously saved funnel preset.",
+        "operationId": "deleteSavedFunnel",
+        "tags": ["Growth Analytics"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "funnelID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "204": { "description": "Funnel deleted" }
+        }
+      }
     }
   },
   "components": {
@@ -483,6 +687,174 @@ var openAPISpecBytes = []byte(`{
               }
             }
           }
+        }
+      },
+      "AnalyticsEventItem": {
+        "type": "object",
+        "required": ["event_name"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "event_name": { "type": "string", "example": "add_to_cart" },
+          "timestamp": { "type": "string", "format": "date-time" },
+          "session_id": { "type": "string", "example": "ses_94829" },
+          "user_id": { "type": "string", "example": "usr_83910" },
+          "device_id": { "type": "string", "example": "dev_abc123" },
+          "utm_source": { "type": "string", "example": "google" },
+          "utm_medium": { "type": "string", "example": "cpc" },
+          "utm_campaign": { "type": "string", "example": "q4_sale" },
+          "browser": { "type": "string", "example": "Chrome" },
+          "os": { "type": "string", "example": "Android" },
+          "properties": { "type": "object", "example": { "product_id": "sku_99", "price": 150000 } }
+        }
+      },
+      "AnalyticsEventEnvelope": {
+        "type": "object",
+        "required": ["events"],
+        "properties": {
+          "sent_at": { "type": "string", "format": "date-time" },
+          "sdk": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "example": "artracker-android" },
+              "version": { "type": "string", "example": "1.2.0" }
+            }
+          },
+          "context": {
+            "type": "object",
+            "properties": {
+              "device_id": { "type": "string", "example": "dev_abc123" },
+              "os": { "type": "string", "example": "Android 15" },
+              "app_version": { "type": "string", "example": "2.4.1" },
+              "user_properties": { "type": "object", "example": { "plan": "pro" } }
+            }
+          },
+          "events": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/AnalyticsEventItem" }
+          }
+        }
+      },
+      "FunnelQueryRequest": {
+        "type": "object",
+        "required": ["steps"],
+        "properties": {
+          "steps": { "type": "array", "items": { "type": "string" }, "example": ["landing_view", "view_product", "add_to_cart", "purchase_completed"] },
+          "from": { "type": "string", "format": "date-time" },
+          "to": { "type": "string", "format": "date-time" },
+          "window_seconds": { "type": "integer", "example": 86400, "default": 86400 },
+          "counting_mode": { "type": "string", "enum": ["users", "sessions"], "default": "users" },
+          "breakdown_by": { "type": "string", "example": "utm_source" },
+          "property_filters": { "type": "object", "example": { "country": "ID" } }
+        }
+      },
+      "FunnelStepResult": {
+        "type": "object",
+        "properties": {
+          "step": { "type": "integer", "example": 1 },
+          "event_name": { "type": "string", "example": "landing_view" },
+          "count": { "type": "integer", "example": 10500 },
+          "overall_pct": { "type": "number", "example": 100.0 },
+          "step_conv_pct": { "type": "number", "example": 100.0 },
+          "drop_off_count": { "type": "integer", "example": 0 },
+          "drop_off_pct": { "type": "number", "example": 0.0 },
+          "median_seconds": { "type": "number", "example": 0.0 }
+        }
+      },
+      "FunnelBreakdown": {
+        "type": "object",
+        "properties": {
+          "segment": { "type": "string", "example": "google" },
+          "overall_conversion_pct": { "type": "number", "example": 24.5 },
+          "step_counts": { "type": "array", "items": { "type": "integer" }, "example": [5000, 3200, 1800, 1225] }
+        }
+      },
+      "FunnelQueryResponse": {
+        "type": "object",
+        "properties": {
+          "execution_ms": { "type": "integer", "example": 38 },
+          "window_seconds": { "type": "integer", "example": 86400 },
+          "counting_mode": { "type": "string", "example": "users" },
+          "overall_conversion_pct": { "type": "number", "example": 18.5 },
+          "steps": { "type": "array", "items": { "$ref": "#/components/schemas/FunnelStepResult" } },
+          "breakdowns": { "type": "array", "items": { "$ref": "#/components/schemas/FunnelBreakdown" } }
+        }
+      },
+      "CohortRetentionResponse": {
+        "type": "object",
+        "properties": {
+          "granularity": { "type": "string", "example": "week" },
+          "timezone": { "type": "string", "example": "Asia/Jakarta" },
+          "start_event": { "type": "string", "example": "signup" },
+          "return_event": { "type": "string", "example": "" },
+          "cohorts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "cohort_label": { "type": "string", "example": "Wk of 06 Oct" },
+                "cohort_date": { "type": "string", "format": "date-time" },
+                "cohort_size": { "type": "integer", "example": 1420 },
+                "cells": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "period": { "type": "integer", "example": 1 },
+                      "retained_users": { "type": "integer", "example": 450 },
+                      "percentage": { "type": "number", "example": 31.69 },
+                      "is_future": { "type": "boolean", "example": false }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "weighted_averages": { "type": "array", "items": { "type": "number" }, "example": [100.0, 32.4, 21.8, 16.5] }
+        }
+      },
+      "SavedFunnel": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "example": 1 },
+          "project_id": { "type": "integer", "example": 10 },
+          "name": { "type": "string", "example": "E-Commerce Checkout" },
+          "steps": { "type": "array", "items": { "type": "string" }, "example": ["view_product", "add_to_cart", "purchase"] },
+          "window_seconds": { "type": "integer", "example": 86400 },
+          "counting_mode": { "type": "string", "example": "users" },
+          "breakdown_by": { "type": "string", "example": "utm_source" },
+          "created_by": { "type": "integer", "example": 42 },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SaveFunnelInput": {
+        "type": "object",
+        "required": ["name", "steps"],
+        "properties": {
+          "name": { "type": "string", "example": "E-Commerce Checkout" },
+          "steps": { "type": "array", "items": { "type": "string" }, "example": ["view_product", "add_to_cart", "purchase"] },
+          "window_seconds": { "type": "integer", "example": 86400, "default": 86400 },
+          "counting_mode": { "type": "string", "enum": ["users", "sessions"], "default": "users" },
+          "breakdown_by": { "type": "string", "example": "utm_source" }
+        }
+      },
+      "AnalyticsCatalogResponse": {
+        "type": "object",
+        "properties": {
+          "event_names": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string", "example": "add_to_cart" },
+                "count": { "type": "integer", "example": 14200 }
+              }
+            }
+          },
+          "utm_sources": { "type": "array", "items": { "type": "string" }, "example": ["google", "facebook", "newsletter"] },
+          "browsers": { "type": "array", "items": { "type": "string" }, "example": ["Chrome", "Safari", "Firefox"] },
+          "operating_systems": { "type": "array", "items": { "type": "string" }, "example": ["Android", "iOS", "macOS"] },
+          "property_keys": { "type": "array", "items": { "type": "string" }, "example": ["plan", "price", "category"] }
         }
       }
     }

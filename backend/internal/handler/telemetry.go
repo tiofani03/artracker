@@ -11,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 
+	"github.com/tiofani03/artracker/backend/internal/analytics"
 	"github.com/tiofani03/artracker/backend/internal/ingest"
 )
 
@@ -397,6 +398,155 @@ func (h *Handler) SeedProjectMockData(c *fiber.Ctx) error {
 
 	if err := h.ingestSvc.Sink().WriteBatch(ctx, rows); err != nil {
 		return err
+	}
+
+	// Also seed Growth Analytics events & cohort history if analytics service is enabled
+	if h.analyticsSvc != nil {
+		analyticsRows := make([]analytics.EventRow, 0, 150)
+		sources := []string{"google", "meta_ads", "twitter", "email", "organic"}
+		browsers := []string{"Chrome", "Safari", "Firefox"}
+
+		// Generate multi-week funnel conversions
+		for w := 3; w >= 0; w-- {
+			weekBase := now.Add(-time.Duration(w*7*24) * time.Hour)
+			for u := 1; u <= 30; u++ {
+				uID := fmt.Sprintf("usr_%d_%d", w, u)
+				dID := fmt.Sprintf("dev_%d_%d", w, u)
+				utm := sources[(w+u)%len(sources)]
+				browser := browsers[u%len(browsers)]
+				userStart := weekBase.Add(time.Duration(u*45) * time.Minute)
+
+				rID1, _ := uuid.NewV7()
+				analyticsRows = append(analyticsRows, analytics.EventRow{
+					ID: rID1, ProjectID: projectID, SessionID: fmt.Sprintf("ses_%d_%d", w, u),
+					UserID: uID, DeviceID: dID, ActorID: "u:" + uID, EventName: "landing_view",
+					Properties: []byte(`{"plan":"pro"}`), UTMSource: utm, Browser: browser, OS: "Web",
+					Timestamp: userStart,
+				})
+
+				// 75% view product
+				if u%4 != 0 {
+					rID2, _ := uuid.NewV7()
+					analyticsRows = append(analyticsRows, analytics.EventRow{
+						ID: rID2, ProjectID: projectID, SessionID: fmt.Sprintf("ses_%d_%d", w, u),
+						UserID: uID, DeviceID: dID, ActorID: "u:" + uID, EventName: "view_product",
+						Properties: []byte(`{"plan":"pro"}`), UTMSource: utm, Browser: browser, OS: "Web",
+						Timestamp: userStart.Add(3 * time.Minute),
+					})
+				}
+
+				// 45% add to cart
+				if u%2 == 0 {
+					rID3, _ := uuid.NewV7()
+					analyticsRows = append(analyticsRows, analytics.EventRow{
+						ID: rID3, ProjectID: projectID, SessionID: fmt.Sprintf("ses_%d_%d", w, u),
+						UserID: uID, DeviceID: dID, ActorID: "u:" + uID, EventName: "add_to_cart",
+						Properties: []byte(`{"plan":"pro"}`), UTMSource: utm, Browser: browser, OS: "Web",
+						Timestamp: userStart.Add(7 * time.Minute),
+					})
+				}
+
+				// 25% checkout
+				if u%4 == 1 {
+					rID4, _ := uuid.NewV7()
+					analyticsRows = append(analyticsRows, analytics.EventRow{
+						ID: rID4, ProjectID: projectID, SessionID: fmt.Sprintf("ses_%d_%d", w, u),
+						UserID: uID, DeviceID: dID, ActorID: "u:" + uID, EventName: "checkout_start",
+						Properties: []byte(`{"plan":"pro"}`), UTMSource: utm, Browser: browser, OS: "Web",
+						Timestamp: userStart.Add(11 * time.Minute),
+					})
+
+					// 15% complete purchase
+					if u%8 == 1 {
+						rID5, _ := uuid.NewV7()
+						analyticsRows = append(analyticsRows, analytics.EventRow{
+							ID: rID5, ProjectID: projectID, SessionID: fmt.Sprintf("ses_%d_%d", w, u),
+							UserID: uID, DeviceID: dID, ActorID: "u:" + uID, EventName: "purchase_completed",
+							Properties: []byte(`{"plan":"pro","revenue":250000}`), UTMSource: utm, Browser: browser, OS: "Web",
+							Timestamp: userStart.Add(15 * time.Minute),
+						})
+					}
+				}
+
+				// Returning events in subsequent weeks for realistic Cohort Retention
+				for rWeek := 1; rWeek <= w; rWeek++ {
+					if (u+rWeek)%2 == 0 {
+						retTime := userStart.Add(time.Duration(rWeek*7*24)*time.Hour + time.Duration((u%24))*time.Hour)
+						if retTime.Before(now) {
+							retEvID, _ := uuid.NewV7()
+							retSession := fmt.Sprintf("ses_ret_%s_%d", uID, rWeek)
+							analyticsRows = append(analyticsRows, analytics.EventRow{
+								ID: retEvID, ProjectID: projectID, SessionID: retSession,
+								UserID: uID, DeviceID: dID, ActorID: "u:" + uID, EventName: "view_product",
+								Properties: []byte(`{"source":"retention"}`), UTMSource: utm, Browser: browser, OS: "Web",
+								Timestamp: retTime,
+							})
+						}
+					}
+				}
+			}
+		}
+
+		_ = h.analyticsSvc.Sink().WriteBatch(ctx, analyticsRows, nil)
+
+		// Seed default saved funnels if none exist
+		existingFunnels, _ := h.analyticsSvc.ListSavedFunnels(ctx, projectID)
+		if len(existingFunnels) == 0 {
+			_, _ = h.analyticsSvc.CreateSavedFunnel(ctx, projectID, nil, analytics.SaveFunnelInput{
+				Name:          "Acquisition & Checkout Funnel",
+				Steps:         []string{"landing_view", "view_product", "add_to_cart", "checkout_start", "purchase_completed"},
+				WindowSeconds: 86400,
+				CountingMode:  "users",
+				BreakdownBy:   "utm_source",
+			})
+			_, _ = h.analyticsSvc.CreateSavedFunnel(ctx, projectID, nil, analytics.SaveFunnelInput{
+				Name:          "SaaS Product Activation",
+				Steps:         []string{"landing_view", "view_product", "checkout_start", "purchase_completed"},
+				WindowSeconds: 43200,
+				CountingMode:  "users",
+				BreakdownBy:   "browser",
+			})
+		}
+	}
+
+	// Also seed diagnostic issues and replay captures if database is connected
+	if h.db != nil {
+		var issueCount int64
+		_ = h.db.QueryRow(ctx, `SELECT count(*) FROM issues WHERE project_id = $1`, projectID).Scan(&issueCount)
+		if issueCount == 0 {
+			var issueID int64
+			_ = h.db.QueryRow(ctx, `
+				INSERT INTO issues (project_id, fingerprint, title, type, status, first_seen, last_seen, count)
+				VALUES ($1, 'fp_type_error_charge_id', 'TypeError: Cannot read properties of undefined (reading ''charge_id'')', 'TypeError', 'open', now() - interval '2 days', now() - interval '4 minutes', 28)
+				ON CONFLICT DO NOTHING RETURNING id
+			`, projectID).Scan(&issueID)
+			if issueID > 0 {
+				_, _ = h.db.Exec(ctx, `
+					INSERT INTO issue_events (issue_id, session_id, user_id, stack_trace, message, breadcrumbs, device_info, release_version, created_at)
+					VALUES ($1, 'ses_94k2p8', 'usr_1', 'TypeError: Cannot read properties of undefined (reading ''charge_id'')\n    at PaymentForm.tsx:142:19', 'Cannot read properties of undefined (reading ''charge_id'')', '[]'::jsonb, '{"browser":"Chrome 131"}'::jsonb, '2.4.1', now() - interval '4 minutes')
+				`, issueID)
+			}
+			_, _ = h.db.Exec(ctx, `
+				INSERT INTO issues (project_id, fingerprint, title, type, status, first_seen, last_seen, count)
+				VALUES 
+				($1, 'fp_net_502_charge', 'POST /api/v1/charge → 502 Bad Gateway (upstream timeout)', 'NetworkError', 'open', now() - interval '1 day', now() - interval '18 minutes', 19),
+				($1, 'fp_unhandled_rejection_fetch', 'UnhandledRejection: NetworkError when attempting to fetch resource', 'UnhandledRejection', 'open', now() - interval '3 days', now() - interval '42 minutes', 14)
+				ON CONFLICT DO NOTHING
+			`, projectID)
+		}
+
+		var replayCount int64
+		_ = h.db.QueryRow(ctx, `SELECT count(*) FROM replay_sessions WHERE project_id = $1`, projectID).Scan(&replayCount)
+		if replayCount == 0 {
+			_, _ = h.db.Exec(ctx, `
+				INSERT INTO replay_sessions (id, project_id, user_id, environment, start_time, duration_ms, chunk_count, event_count, total_size_bytes, has_error, has_rage_click, storage_prefix, created_at, updated_at)
+				VALUES 
+				('ses_94k2p8', $1, 'nadia.putri@fintech.id', 'production', now() - interval '42 minutes', 102000, 3, 480, 48200, true, true, 'projects/1/sessions/ses_94k2p8/', now(), now()),
+				('ses_71m9x3', $1, 'rian.wijaya@commerce.co', 'production', now() - interval '2 hours', 138000, 4, 620, 52100, false, false, 'projects/1/sessions/ses_71m9x3/', now(), now()),
+				('ses_58c4v1', $1, 'kevin.tan@saas.sg', 'production', now() - interval '5 hours', 185000, 5, 890, 68900, false, false, 'projects/1/sessions/ses_58c4v1/', now(), now())
+				ON CONFLICT DO NOTHING
+			`, projectID)
+		}
 	}
 
 	return c.JSON(fiber.Map{

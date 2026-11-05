@@ -462,6 +462,154 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
     ],
   },
   {
+    id: 'events-batch',
+    title: 'Batch Product Events',
+    category: 'CORE INGESTION API',
+    method: 'POST',
+    path: '/events',
+    description:
+      'High-performance batch endpoint for product and growth marketing event tracking. Features Bulkhead Isolation, Two-Layer Idempotency, automatic UTM & URL query parsing, and user traits merge.',
+    callouts: [
+      {
+        type: 'info',
+        title: 'Bulkhead Isolation',
+        content:
+          'This endpoint operates on dedicated worker queues and rate limiters separate from /ingest, ensuring high-volume error logs never block or drop business-critical conversion events.',
+      },
+      {
+        type: 'tip',
+        title: 'Automatic Identity Stitching',
+        content:
+          'Events dispatched with a device_id or session_id prior to login automatically stitch to the user_id upon signup or authentication without requiring a separate /identify endpoint.',
+      },
+    ],
+    headers: [
+      { name: 'X-Artracker-Key', type: 'string', required: true, desc: 'Project client API key starting with art_live_.' },
+      { name: 'Content-Type', type: 'string', required: true, desc: 'application/json' },
+      { name: 'Content-Encoding', type: 'string', required: false, desc: 'Optional gzip for compressed payloads.' },
+    ],
+    params: [
+      { name: 'sent_at', type: 'string (ISO-8601)', required: false, desc: 'Device timestamp when envelope was dispatched for clock-skew normalization.' },
+      { name: 'sdk', type: 'object', required: false, desc: 'SDK identifier and version (e.g. { name: "artracker-android", version: "1.2.0" }).' },
+      {
+        name: 'context',
+        type: 'object',
+        required: false,
+        desc: 'Batch context: device_id, os, browser, app_version, user_properties.',
+        children: [
+          { name: 'context.device_id', type: 'string', required: false, desc: 'Stable hardware/installation identifier for anonymous attribution.' },
+          { name: 'context.os', type: 'string', required: false, desc: 'Operating system (e.g. "Android 15", "iOS 18", "macOS").' },
+          { name: 'context.user_properties', type: 'object', required: false, desc: 'User traits auto-merged into all event properties in this batch.' },
+        ],
+      },
+      {
+        name: 'events',
+        type: 'array<RawEvent>',
+        required: true,
+        desc: 'Array containing 1 to 500 custom product and marketing events.',
+        children: [
+          { name: 'events[].event_name', type: 'string', required: true, desc: 'Custom action name (e.g. "add_to_cart", "purchase_completed"). Max 255 chars.' },
+          { name: 'events[].id', type: 'string (UUID)', required: false, desc: 'Client UUID for idempotent deduplication. Prevents duplicates on mobile network retries.' },
+          { name: 'events[].timestamp', type: 'string (ISO-8601)', required: false, desc: 'Event timestamp recorded on client.' },
+          { name: 'events[].session_id', type: 'string', required: false, desc: 'Active browser/app session ID.' },
+          { name: 'events[].user_id', type: 'string', required: false, desc: 'Authenticated customer ID or email.' },
+          { name: 'events[].utm_source', type: 'string', required: false, desc: 'Campaign source (auto-parsed from URL query string if omitted).' },
+          { name: 'events[].properties', type: 'object', required: false, desc: 'Custom metadata: order total, SKU list, screen name, etc. Max 32 KB.' },
+        ],
+      },
+    ],
+    responseSample: JSON.stringify({ status: 'accepted', queued_items: 2 }, null, 2),
+    defaultHeaders: {
+      'Content-Type': 'application/json',
+      'X-Artracker-Key': 'art_live_xxxxxxxxxxxxxxxx',
+    },
+    presets: [
+      {
+        name: '1. Anonymous Landing + UTM',
+        body: JSON.stringify(
+          {
+            sent_at: new Date().toISOString(),
+            sdk: { name: 'artracker-web', version: '1.2.0' },
+            context: {
+              device_id: 'dev_anon_99a1',
+              browser: 'Chrome 131',
+              os: 'macOS',
+              utm_source: 'google',
+              utm_medium: 'cpc',
+            },
+            events: [
+              {
+                id: '0192f7b6-7c88-7000-8a12-000000000010',
+                event_name: 'landing_view',
+                timestamp: new Date().toISOString(),
+                session_id: 'ses_anon_101',
+                properties: { page_title: 'Summer Launch Sale', page_path: '/sale' },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      },
+      {
+        name: '2. User Signup (Identity Stitch)',
+        body: JSON.stringify(
+          {
+            sent_at: new Date().toISOString(),
+            sdk: { name: 'artracker-android', version: '1.2.0' },
+            context: {
+              device_id: 'dev_anon_99a1',
+              os: 'Android 15',
+              user_properties: { plan: 'pro', country: 'ID' },
+            },
+            events: [
+              {
+                id: '0192f7b6-7c88-7000-8a12-000000000011',
+                event_name: 'signup_completed',
+                timestamp: new Date().toISOString(),
+                session_id: 'ses_anon_101',
+                user_id: 'usr_sarah_wijaya',
+                properties: { signup_method: 'google_sso' },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      },
+      {
+        name: '3. Checkout Completed',
+        body: JSON.stringify(
+          {
+            sent_at: new Date().toISOString(),
+            sdk: { name: 'artracker-web', version: '1.2.0' },
+            context: {
+              device_id: 'dev_anon_99a1',
+              os: 'macOS',
+            },
+            events: [
+              {
+                id: '0192f7b6-7c88-7000-8a12-000000000012',
+                event_name: 'purchase_completed',
+                timestamp: new Date().toISOString(),
+                session_id: 'ses_anon_101',
+                user_id: 'usr_sarah_wijaya',
+                properties: {
+                  order_id: 'ORD-2026-9912',
+                  revenue: 350000,
+                  currency: 'IDR',
+                  item_count: 2,
+                },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      },
+    ],
+  },
+  {
     id: 'validate-key',
     title: 'Validate Client Key',
     category: 'CORE INGESTION API',
@@ -769,6 +917,156 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
             name: 'TypeError: Cannot read properties of undefined',
             level: 'error',
             event_timestamp: '2026-11-05T09:00:15Z',
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  },
+  {
+    id: 'analytics-funnel',
+    title: 'Calculate Funnel Conversion',
+    category: 'GROWTH ANALYTICS API',
+    method: 'POST',
+    path: '/projects/:projectId/analytics/funnel',
+    description:
+      'Calculates multi-step conversion rates and drop-off percentages with window timeout enforcement (e.g. 1 hour to 30 days) and first-touch segment breakdown.',
+    headers: [
+      { name: 'Authorization', type: 'string', required: true, desc: 'Bearer <token> (Dashboard user session)' },
+      { name: 'Content-Type', type: 'string', required: true, desc: 'application/json' },
+    ],
+    params: [
+      { name: 'steps', type: 'array<string>', required: true, desc: 'Array of 2 to 5 ordered event names.' },
+      { name: 'window_seconds', type: 'integer', required: false, desc: 'Max seconds allowed between Step 1 and subsequent steps. Default 86400 (24h).' },
+      { name: 'counting_mode', type: 'string', required: false, desc: '"users" (default) or "sessions".' },
+      { name: 'breakdown_by', type: 'string', required: false, desc: 'Segment attribute: "utm_source", "utm_medium", "browser", "os", or "prop:<key>".' },
+      { name: 'property_filters', type: 'object', required: false, desc: 'Key-value filter matching events.properties via GIN jsonb_path_ops.' },
+    ],
+    presets: [
+      {
+        name: '4-Step E-Commerce Funnel',
+        body: JSON.stringify(
+          {
+            steps: ['landing_view', 'view_product', 'add_to_cart', 'purchase_completed'],
+            window_seconds: 86400,
+            counting_mode: 'users',
+            breakdown_by: 'utm_source',
+          },
+          null,
+          2,
+        ),
+      },
+    ],
+    responseSample: JSON.stringify(
+      {
+        execution_ms: 32,
+        window_seconds: 86400,
+        counting_mode: 'users',
+        overall_conversion_pct: 18.5,
+        steps: [
+          { step: 1, event_name: 'landing_view', count: 10000, overall_pct: 100, step_conv_pct: 100, drop_off_count: 0, drop_off_pct: 0 },
+          { step: 2, event_name: 'view_product', count: 6800, overall_pct: 68, step_conv_pct: 68, drop_off_count: 3200, drop_off_pct: 32 },
+          { step: 3, event_name: 'add_to_cart', count: 3400, overall_pct: 34, step_conv_pct: 50, drop_off_count: 3400, drop_off_pct: 50 },
+          { step: 4, event_name: 'purchase_completed', count: 1850, overall_pct: 18.5, step_conv_pct: 54.4, drop_off_count: 1550, drop_off_pct: 45.6 },
+        ],
+        breakdowns: [
+          { segment: 'google', overall_conversion_pct: 22.4, step_counts: [4500, 3200, 1800, 1008] },
+          { segment: 'meta_ads', overall_conversion_pct: 15.3, step_counts: [3500, 2200, 1000, 535] },
+        ],
+      },
+      null,
+      2,
+    ),
+  },
+  {
+    id: 'analytics-retention',
+    title: 'Calculate Cohort Retention',
+    category: 'GROWTH ANALYTICS API',
+    method: 'GET',
+    path: '/projects/:projectId/analytics/retention?granularity=week&periods=8',
+    description:
+      'Generates an N-day or N-week cohort retention matrix based on initial anchor event and subsequent return activity, aligned to the requested timezone midnight.',
+    headers: [
+      { name: 'Authorization', type: 'string', required: true, desc: 'Bearer <token> (Dashboard user session)' },
+    ],
+    responseSample: JSON.stringify(
+      {
+        granularity: 'week',
+        timezone: 'Asia/Jakarta',
+        start_event: 'landing_view',
+        return_event: '',
+        weighted_averages: [100.0, 36.4, 25.8, 19.2],
+        cohorts: [
+          {
+            cohort_label: 'Wk of 06 Oct',
+            cohort_date: '2026-10-06T00:00:00Z',
+            cohort_size: 1420,
+            cells: [
+              { period: 0, retained_users: 1420, percentage: 100.0, is_future: false },
+              { period: 1, retained_users: 450, percentage: 31.7, is_future: false },
+              { period: 2, retained_users: 280, percentage: 19.7, is_future: false },
+              { period: 3, retained_users: 0, percentage: null, is_future: true },
+            ],
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  },
+  {
+    id: 'analytics-catalog',
+    title: 'Get Analytics Catalog',
+    category: 'GROWTH ANALYTICS API',
+    method: 'GET',
+    path: '/projects/:projectId/analytics/catalog',
+    description:
+      'Returns distinct event names with occurrence counts, recorded UTM sources, browsers, operating systems, and top JSONB property keys.',
+    headers: [
+      { name: 'Authorization', type: 'string', required: true, desc: 'Bearer <token> (Dashboard user session)' },
+    ],
+    responseSample: JSON.stringify(
+      {
+        event_names: [
+          { name: 'landing_view', count: 48200 },
+          { name: 'view_product', count: 31500 },
+          { name: 'add_to_cart', count: 18200 },
+          { name: 'purchase_completed', count: 8900 },
+        ],
+        utm_sources: ['google', 'meta_ads', 'twitter', 'email', 'organic'],
+        browsers: ['Chrome', 'Safari', 'Firefox', 'Edge'],
+        operating_systems: ['Android', 'iOS', 'macOS', 'Windows'],
+        property_keys: ['plan', 'price', 'product_id', 'currency'],
+      },
+      null,
+      2,
+    ),
+  },
+  {
+    id: 'analytics-funnels',
+    title: 'List Saved Funnel Presets',
+    category: 'GROWTH ANALYTICS API',
+    method: 'GET',
+    path: '/projects/:projectId/analytics/funnels',
+    description:
+      'Retrieves all team-saved funnel configurations for the current project.',
+    headers: [
+      { name: 'Authorization', type: 'string', required: true, desc: 'Bearer <token> (Dashboard user session)' },
+    ],
+    responseSample: JSON.stringify(
+      {
+        items: [
+          {
+            id: 1,
+            project_id: 10,
+            name: 'Acquisition & Checkout Funnel',
+            steps: ['landing_view', 'view_product', 'add_to_cart', 'purchase_completed'],
+            window_seconds: 86400,
+            counting_mode: 'users',
+            breakdown_by: 'utm_source',
+            created_at: '2026-11-05T08:00:00Z',
+            updated_at: '2026-11-05T08:00:00Z',
           },
         ],
       },

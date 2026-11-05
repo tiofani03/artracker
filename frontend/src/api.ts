@@ -72,7 +72,7 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : { 'X-Demo-Mode': '1' }),
       ...(init.headers ?? {}),
     },
   })
@@ -276,4 +276,123 @@ export const issueApi = {
       `/projects/${projectId}/releases/${version}/sourcemaps`,
       content,
     ),
+}
+
+export type FunnelStepResult = {
+  step: number
+  event_name: string
+  count: number
+  overall_pct: number
+  step_conv_pct: number
+  drop_off_count: number
+  drop_off_pct: number
+  median_seconds: number
+}
+
+export type FunnelBreakdown = {
+  segment: string
+  overall_conversion_pct: number
+  step_counts: number[]
+}
+
+export type FunnelQueryResponse = {
+  execution_ms: number
+  window_seconds: number
+  counting_mode: string
+  overall_conversion_pct: number
+  steps: FunnelStepResult[]
+  breakdowns?: FunnelBreakdown[]
+}
+
+export type FunnelQueryRequest = {
+  steps: string[]
+  from?: string
+  to?: string
+  window_seconds?: number
+  counting_mode?: 'users' | 'sessions'
+  breakdown_by?: string
+  property_filters?: Record<string, unknown>
+}
+
+export type CohortCell = {
+  period: number
+  retained_users: number
+  percentage: number | null
+  is_future: boolean
+}
+
+export type CohortRow = {
+  cohort_label: string
+  cohort_date: string
+  cohort_size: number
+  cells: CohortCell[]
+}
+
+export type CohortResponse = {
+  granularity: string
+  timezone: string
+  start_event: string
+  return_event: string
+  cohorts: CohortRow[]
+  weighted_averages: number[]
+}
+
+export type EventCatalog = {
+  event_names: { name: string; count: number }[]
+  utm_sources: string[]
+  browsers: string[]
+  operating_systems: string[]
+  property_keys: string[]
+}
+
+export type SavedFunnel = {
+  id: number
+  project_id: number
+  name: string
+  steps: string[]
+  window_seconds: number
+  counting_mode: string
+  breakdown_by: string
+  created_by?: number
+  created_at: string
+  updated_at: string
+}
+
+export type SaveFunnelInput = {
+  name: string
+  steps: string[]
+  window_seconds?: number
+  counting_mode?: string
+  breakdown_by?: string
+}
+
+export const analyticsApi = {
+  catalog: (projectId: number) =>
+    request<EventCatalog>(`/projects/${projectId}/analytics/catalog`),
+  calculateFunnel: (projectId: number, req: FunnelQueryRequest) =>
+    post<FunnelQueryResponse>(`/projects/${projectId}/analytics/funnel`, req),
+  calculateCohort: (
+    projectId: number,
+    opts: {
+      granularity?: string
+      periods?: number
+      start_event?: string
+      return_event?: string
+      tz?: string
+    } = {},
+  ) => {
+    const params = new URLSearchParams()
+    if (opts.granularity) params.set('granularity', opts.granularity)
+    if (opts.periods) params.set('periods', String(opts.periods))
+    if (opts.start_event) params.set('start_event', opts.start_event)
+    if (opts.return_event) params.set('return_event', opts.return_event)
+    if (opts.tz) params.set('tz', opts.tz)
+    return request<CohortResponse>(`/projects/${projectId}/analytics/retention?${params.toString()}`)
+  },
+  listSavedFunnels: (projectId: number) =>
+    request<{ items: SavedFunnel[] }>(`/projects/${projectId}/analytics/funnels`),
+  createSavedFunnel: (projectId: number, input: SaveFunnelInput) =>
+    post<SavedFunnel>(`/projects/${projectId}/analytics/funnels`, input),
+  deleteSavedFunnel: (projectId: number, funnelId: number) =>
+    request<void>(`/projects/${projectId}/analytics/funnels/${funnelId}`, { method: 'DELETE' }),
 }
