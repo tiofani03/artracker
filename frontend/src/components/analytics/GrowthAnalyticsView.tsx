@@ -299,6 +299,11 @@ export default function GrowthAnalyticsView({ project, isDemo = false }: Props) 
   // Run Funnel Query
   const runFunnel = useCallback(async () => {
     const targetPid = project?.id ?? 1
+    const validSteps = steps.filter((s) => s.trim() !== '')
+    if (validSteps.length < 2) {
+      setError('A funnel requires at least 2 steps (e.g. Step 1 to Step 2) to calculate conversion rates.')
+      return
+    }
     setLoading(true)
     setError('')
     try {
@@ -307,7 +312,7 @@ export default function GrowthAnalyticsView({ project, isDemo = false }: Props) 
       const to = new Date().toISOString()
 
       const res = await analyticsApi.calculateFunnel(targetPid, {
-        steps: steps.filter((s) => s.trim() !== ''),
+        steps: validSteps,
         from,
         to,
         window_seconds: windowSeconds,
@@ -395,12 +400,12 @@ export default function GrowthAnalyticsView({ project, isDemo = false }: Props) 
   return (
     <div className="growth-analytics-view">
       {/* Top Header Row with Navigation Tabs and Date Range */}
-      <div className="dash-card dash-card--compact growth-header-card">
+      <div className="growth-header-card">
         <div className="growth-header-main">
           <div>
-            <h2 className="dash-card__title">Growth Marketing &amp; Product Analytics</h2>
+            <h2 className="dash-card__title">Funnels &amp; Retention</h2>
             <p className="dash-card__desc">
-              Multi-step funnel conversion drop-offs and N-day / N-week cohort retention analysis.
+              Track user journey conversions, discover drop-off friction points, and analyze cohort retention.
             </p>
           </div>
 
@@ -412,7 +417,7 @@ export default function GrowthAnalyticsView({ project, isDemo = false }: Props) 
                 className={`dash-seg__btn${tab === 'funnels' ? ' is-active' : ''}`}
                 onClick={() => setTab('funnels')}
               >
-                Funnel Analysis
+                Conversion Funnel
               </button>
               <button
                 type="button"
@@ -432,7 +437,7 @@ export default function GrowthAnalyticsView({ project, isDemo = false }: Props) 
                   className={`dash-seg__btn${dateRange === r ? ' is-active' : ''}`}
                   onClick={() => setDateRange(r)}
                 >
-                  {r}
+                  {r === '7d' ? '7 Days' : r === '30d' ? '30 Days' : '90 Days'}
                 </button>
               ))}
             </div>
@@ -446,10 +451,9 @@ export default function GrowthAnalyticsView({ project, isDemo = false }: Props) 
       {hasNoData && (
         <div className="growth-empty-banner">
           <div className="growth-empty-banner__text">
-            <strong>No tracking events found in PostgreSQL yet</strong>
+            <strong>No tracking events found in database</strong>
             <p>
-              Send events from your Web, Android, or iOS SDK to <code>POST /api/v1/events</code>, or
-              seed live realistic multi-step funnel and cohort data to try the visualization.
+              Send events from your Web, Android, or iOS SDK, or seed realistic preview telemetry to explore the charts.
             </p>
           </div>
           <button
@@ -458,15 +462,14 @@ export default function GrowthAnalyticsView({ project, isDemo = false }: Props) 
             onClick={handleSeedData}
             disabled={seeding}
           >
-            {seeding ? 'Seeding Events...' : '⚡ Seed Live Preview Data into DB'}
+            {seeding ? 'Seeding Events...' : 'Seed Realistic Data to Database'}
           </button>
         </div>
       )}
 
       {/* Main Content Area */}
       {tab === 'funnels' ? (
-        <div className="growth-funnels-layout">
-          {/* Funnel Builder Controls */}
+        <section className="calm-funnel-card">
           <FunnelBuilder
             steps={steps}
             onStepsChange={setSteps}
@@ -484,35 +487,22 @@ export default function GrowthAnalyticsView({ project, isDemo = false }: Props) 
             loading={loading}
           />
 
-          {/* Funnel Bar Chart & Drop-off Visualization */}
-          <section className="dash-card dash-card--compact">
-            <div className="dash-card__head">
-              <div>
-                <h3 className="dash-card__title">Funnel Conversion &amp; Drop-off Analysis</h3>
-                <p className="dash-card__desc">
-                  Sequential conversion tracking with window timeout detection and drop-offs.
-                </p>
-              </div>
-            </div>
-
-            <FunnelChart
-              steps={funnelData?.steps || []}
-              breakdowns={funnelData?.breakdowns}
-              overallConversionPct={funnelData?.overall_conversion_pct || 0}
-              windowSeconds={funnelData?.window_seconds || windowSeconds}
-              countingMode={funnelData?.counting_mode || countingMode}
-              executionMs={funnelData?.execution_ms || 0}
-            />
-          </section>
-        </div>
+          <FunnelChart
+            steps={funnelData?.steps || []}
+            breakdowns={funnelData?.breakdowns}
+            overallConversionPct={funnelData?.overall_conversion_pct || 0}
+            windowSeconds={funnelData?.window_seconds || windowSeconds}
+            countingMode={funnelData?.counting_mode || countingMode}
+            executionMs={funnelData?.execution_ms || 0}
+          />
+        </section>
       ) : (
         <section className="dash-card dash-card--compact">
           <div className="dash-card__head">
             <div>
               <h3 className="dash-card__title">Cohort Retention Heatmap</h3>
               <p className="dash-card__desc">
-                Percentage of active users who returned in subsequent days or weeks after their
-                initial anchor event.
+                Percentage of active users who returned in subsequent days or weeks after their initial anchor event.
               </p>
             </div>
           </div>
