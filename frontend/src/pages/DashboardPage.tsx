@@ -24,6 +24,8 @@ const SECTION_TITLES: Record<ConsoleSection, string> = {
   alerts: 'Custom Alerts',
 }
 
+type BucketPoint = { label: string; sessions: number; errors: number }
+
 type RangeStats = {
   sessions: string
   sessionsDelta: string
@@ -31,7 +33,7 @@ type RangeStats = {
   errorNote: string
   conversions: string
   convRate: string
-  buckets: { label: string; sessions: number; errors: number }[]
+  buckets: BucketPoint[]
 }
 
 const RANGE_DATA: Record<RangeKey, RangeStats> = {
@@ -271,15 +273,15 @@ function SdkStatusBanner({
   project,
   isDemo,
   eventsCount,
-  onSeed,
-  seeding,
+  onSendTest,
+  sendingTest,
 }: {
   activeOrg: OrgMembership | null
   project: Project | null
   isDemo: boolean
   eventsCount?: number
-  onSeed?: () => void
-  seeding?: boolean
+  onSendTest?: () => void
+  sendingTest?: boolean
 }) {
   const [keys, setKeys] = useState<ApiKey[]>([])
 
@@ -313,20 +315,20 @@ function SdkStatusBanner({
         </div>
         <span className="sdk-strip__hint">
           {eventsCount !== undefined && eventsCount > 0
-            ? `🟢 Live telemetry active (${eventsCount.toLocaleString()} real events captured)`
+            ? `🟢 Live PostgreSQL connected (${eventsCount.toLocaleString()} events recorded in DB)`
             : isDemo
               ? 'Sample telemetry displayed in demo mode'
               : 'Waiting for SDK client events at /api/v1/ingest'}
         </span>
-        {project && !isDemo && onSeed && (
+        {project && !isDemo && onSendTest && (
           <button
             type="button"
             className="dash-btn"
-            onClick={onSeed}
-            disabled={seeding}
+            onClick={onSendTest}
+            disabled={sendingTest}
             style={{ marginLeft: 'auto', padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
           >
-            {seeding ? 'Seeding...' : '⚡ Seed Project Mock Data'}
+            {sendingTest ? 'Ingesting...' : '⚡ Send Real Test Event'}
           </button>
         )}
       </div>
@@ -512,7 +514,7 @@ function DashboardInner({
   const [alerts, setAlerts] = useState<AlertRule[]>(INITIAL_ALERTS)
   const [realStats, setRealStats] = useState<ProjectStats | null>(null)
   const [realEvents, setRealEvents] = useState<TelemetryEvent[]>([])
-  const [seeding, setSeeding] = useState(false)
+  const [sendingTest, setSendingTest] = useState(false)
 
   const reloadTelemetry = () => {
     if (!project || isDemo) return
@@ -547,36 +549,50 @@ function DashboardInner({
     }
   }, [project?.id, range, isDemo])
 
-  const handleSeed = async () => {
+  const handleSendTestEvent = async () => {
     if (!project || isDemo) return
     try {
-      setSeeding(true)
-      await telemetryApi.seedMock(project.id)
-      reloadTelemetry()
+      setSendingTest(true)
+      await telemetryApi.sendTestEvent(project.id)
+      setTimeout(() => {
+        reloadTelemetry()
+        setSendingTest(false)
+      }, 350)
     } catch (err) {
-      console.error('Seed mock failed', err)
-    } finally {
-      setSeeding(false)
+      console.error('Send test event failed', err)
+      setSendingTest(false)
     }
   }
 
+  const emptyBuckets: BucketPoint[] = [
+    { label: '00:00', sessions: 0, errors: 0 },
+    { label: '04:00', sessions: 0, errors: 0 },
+    { label: '08:00', sessions: 0, errors: 0 },
+    { label: '12:00', sessions: 0, errors: 0 },
+    { label: '16:00', sessions: 0, errors: 0 },
+    { label: '20:00', sessions: 0, errors: 0 },
+  ]
+
+  // Pure real database metrics when inside a project
   const stats: RangeStats =
-    !isDemo && project && realStats && realStats.events_count > 0
+    !isDemo && project
       ? {
-          sessions: realStats.sessions_count.toLocaleString(),
-          sessionsDelta: `${realStats.events_count.toLocaleString()} events`,
-          errorFree: realStats.error_free_pct,
-          errorNote: realStats.error_note,
-          conversions: `${realStats.sessions_count}`,
-          convRate: realStats.sessions_count > 0 ? '100% active' : '0%',
-          buckets: realStats.buckets.length > 0 ? realStats.buckets : RANGE_DATA[range].buckets,
+          sessions: (realStats?.sessions_count ?? 0).toLocaleString(),
+          sessionsDelta: `${(realStats?.events_count ?? 0).toLocaleString()} events`,
+          errorFree: realStats?.error_free_pct ?? '100.0%',
+          errorNote: realStats?.error_note ?? '0 unhandled',
+          conversions: (realStats?.sessions_count ?? 0).toLocaleString(),
+          convRate: realStats && realStats.sessions_count > 0 ? '100% active' : '0%',
+          buckets:
+            realStats?.buckets && realStats.buckets.length > 0
+              ? realStats.buckets
+              : emptyBuckets,
         }
       : RANGE_DATA[range]
 
-  const activeSession = REPLAY_SESSIONS.find((s) => s.id === selectedSessionId) ?? REPLAY_SESSIONS[0]
-
+  // Pure real events from PostgreSQL
   const displayLogs: DevLogEntry[] =
-    !isDemo && project && realEvents.length > 0
+    !isDemo && project
       ? realEvents.map((e) => {
           let kind: Exclude<LogKind, 'all'> = 'console'
           if (e.kind === 'log' && (e.level === 'error' || e.level === 'fatal')) {
@@ -601,6 +617,40 @@ function DashboardInner({
           }
         })
       : DEV_LOGS
+
+  const replayList: ReplaySession[] =
+    !isDemo && project
+      ? Array.from(new Set(realEvents.map((e) => e.session_id).filter(Boolean))).map((sessId) => {
+          const sessEvents = realEvents.filter((e) => e.session_id === sessId)
+          const hasError = sessEvents.some((e) => e.kind === 'log' && (e.level === 'error' || e.level === 'fatal'))
+          const firstEv = sessEvents[sessEvents.length - 1]
+          return {
+            id: sessId,
+            user: firstEv.user_id || 'anonymous_user',
+            route: '/checkout',
+            campaign: 'direct',
+            duration: formatAgo(firstEv.event_timestamp),
+            status: hasError ? ('error' as const) : ('clean' as const),
+            statusLabel: hasError ? 'Exception' : 'Completed',
+            meta: `${sessEvents.length} events · ${firstEv.environment || 'production'}`,
+            cursorX: 58,
+            cursorY: 64,
+            steps: sessEvents.map((ev, i) => ({
+              t: `00:${String(i * 4).padStart(2, '0')}`,
+              kind:
+                ev.kind === 'log' && (ev.level === 'error' || ev.level === 'fatal')
+                  ? ('error' as const)
+                  : ev.kind === 'log' && ev.level === 'warn'
+                    ? ('warn' as const)
+                    : ('dom' as const),
+              text: ev.name || ev.message || `${ev.kind} captured`,
+              pct: Math.min(100, Math.round(((i + 1) / sessEvents.length) * 100)),
+            })),
+          }
+        })
+      : REPLAY_SESSIONS
+
+  const activeSession: ReplaySession | undefined = replayList.find((s) => s.id === selectedSessionId) ?? replayList[0]
 
   const filteredLogs = logFilter === 'all' ? displayLogs : displayLogs.filter((l) => l.kind === logFilter)
 
@@ -630,8 +680,8 @@ function DashboardInner({
         project={project}
         isDemo={isDemo}
         eventsCount={realStats?.events_count}
-        onSeed={handleSeed}
-        seeding={seeding}
+        onSendTest={handleSendTestEvent}
+        sendingTest={sendingTest}
       />
 
             {/* ==================== OVERVIEW ==================== */}
@@ -715,26 +765,39 @@ function DashboardInner({
                     </div>
 
                     <div className="dash-list">
-                      {displayLogs.slice(0, 3).map((item) => (
-                        <div key={item.id} className="dash-list__row">
-                          <div className="dash-list__main">
-                            <div className="dash-list__top">
-                              <span className={`badge badge--${item.kind}`}>{item.kind}</span>
-                              <span className="dash-code">{item.occurrences}×</span>
-                              <span className="dash-code">{item.time}</span>
-                            </div>
-                            <p className="dash-list__title">{item.title}</p>
-                            <p className="dash-list__sub dash-code">{item.detail}</p>
-                          </div>
-                          <button
-                            type="button"
-                            className="dash-btn"
-                            onClick={() => openReplay(item.sessionId)}
-                          >
-                            Replay →
-                          </button>
+                      {displayLogs.length === 0 ? (
+                        <div style={{ padding: '2.5rem 1rem', textAlign: 'center', color: 'var(--color-fg-muted)' }}>
+                          <p style={{ fontWeight: 500, margin: '0 0 0.25rem 0', color: 'var(--color-fg)' }}>
+                            No unresolved issues
+                          </p>
+                          <p style={{ fontSize: '0.8125rem', margin: 0 }}>
+                            {!isDemo && project && (realStats?.events_count ?? 0) === 0
+                              ? 'No telemetry events ingested yet for this project.'
+                              : 'All recorded sessions in this window are clean.'}
+                          </p>
                         </div>
-                      ))}
+                      ) : (
+                        displayLogs.slice(0, 3).map((item) => (
+                          <div key={item.id} className="dash-list__row">
+                            <div className="dash-list__main">
+                              <div className="dash-list__top">
+                                <span className={`badge badge--${item.kind}`}>{item.kind}</span>
+                                <span className="dash-code">{item.occurrences}×</span>
+                                <span className="dash-code">{item.time}</span>
+                              </div>
+                              <p className="dash-list__title">{item.title}</p>
+                              <p className="dash-list__sub dash-code">{item.detail}</p>
+                            </div>
+                            <button
+                              type="button"
+                              className="dash-btn"
+                              onClick={() => openReplay(item.sessionId)}
+                            >
+                              Replay →
+                            </button>
+                          </div>
+                        ))
+                      )}
                     </div>
                   </section>
 
@@ -783,145 +846,167 @@ function DashboardInner({
 
             {/* ==================== SESSION REPLAY ==================== */}
             {section === 'replays' && (
-              <div className="dash-replay-grid">
-                <section className="dash-card dash-card--compact" aria-label="Recorded sessions">
-                  <div className="dash-card__head">
-                    <div>
-                      <h2 className="dash-card__title">Session Queue</h2>
-                      <p className="dash-card__desc">3 recent captures · PII masked on device</p>
-                    </div>
-                  </div>
-
-                  <div className="dash-session-list">
-                    {REPLAY_SESSIONS.map((s) => {
-                      const selected = s.id === activeSession.id
-                      return (
-                        <button
-                          key={s.id}
-                          type="button"
-                          className={`dash-session-item${selected ? ' is-selected' : ''}`}
-                          onClick={() => {
-                            setSelectedSessionId(s.id)
-                            setScrubPct(s.steps[s.steps.length - 1]?.pct ?? 50)
-                          }}
-                        >
-                          <div className="dash-session-item__top">
-                            <span className="dash-code">{s.id}</span>
-                            <span
-                              className={`badge ${
-                                s.status === 'error'
-                                  ? 'badge--exception'
-                                  : s.status === 'warn'
-                                    ? 'badge--console'
-                                    : 'badge--active'
-                              }`}
-                            >
-                              {s.statusLabel}
-                            </span>
-                          </div>
-                          <strong className="dash-session-item__user">{s.user}</strong>
-                          <span className="dash-session-item__meta">
-                            {s.meta} · {s.duration}
-                          </span>
-                        </button>
-                      )
-                    })}
+              !activeSession || replayList.length === 0 ? (
+                <section className="dash-card dash-card--compact" style={{ padding: '3.5rem 1.5rem', textAlign: 'center' }}>
+                  <div style={{ maxWidth: 440, margin: '0 auto' }}>
+                    <div style={{ fontSize: '2.25rem', marginBottom: '0.75rem' }}>📹</div>
+                    <h2 className="dash-card__title" style={{ marginBottom: '0.5rem' }}>No Session Captures Yet</h2>
+                    <p className="dash-card__desc" style={{ marginBottom: '1.5rem' }}>
+                      Telemetry events or sessions ingested via <code>POST /api/v1/ingest</code> will automatically populate replay timelines here.
+                    </p>
+                    {project && !isDemo && (
+                      <button
+                        type="button"
+                        className="dash-btn"
+                        onClick={handleSendTestEvent}
+                        disabled={sendingTest}
+                      >
+                        {sendingTest ? 'Ingesting...' : '⚡ Send Real Test Event to DB'}
+                      </button>
+                    )}
                   </div>
                 </section>
-
-                <section className="dash-card dash-card--compact" aria-label="Session player">
-                  <div className="dash-card__head">
-                    <div>
-                      <h2 className="dash-card__title">
-                        {activeSession.user} · <span className="dash-code">{activeSession.route}</span>
-                      </h2>
-                      <p className="dash-card__desc">
-                        {activeSession.meta} · campaign <code className="dash-code">{activeSession.campaign}</code>
-                      </p>
-                    </div>
-                    <span className="badge badge--role">{activeSession.duration}</span>
-                  </div>
-
-                  <div className="replay-player">
-                    <div className="replay-player__chrome">
-                      <div className="replay-player__dots" aria-hidden="true">
-                        <span />
-                        <span />
-                        <span />
+              ) : (
+                <div className="dash-replay-grid">
+                  <section className="dash-card dash-card--compact" aria-label="Recorded sessions">
+                    <div className="dash-card__head">
+                      <div>
+                        <h2 className="dash-card__title">Session Queue</h2>
+                        <p className="dash-card__desc">{replayList.length} recent captures · PII masked on device</p>
                       </div>
-                      <span className="replay-player__url">https://app.customer.dev{activeSession.route}</span>
-                      <span className="replay-player__mask">rrweb · PII Masked</span>
                     </div>
 
-                    <div className="replay-player__viewport">
-                      <div className="replay-wire-card">
-                        <div className="replay-wire-line--title" />
-                        <div className="replay-wire-field">•••• •••• •••• 4242 (masked on client)</div>
-                        <div className="replay-wire-actions">
-                          <span className="replay-wire-btn">Pay Rp 450.000</span>
-                          {activeSession.status === 'error' && scrubPct >= 45 && (
-                            <span className="badge badge--exception">502 Bad Gateway</span>
-                          )}
+                    <div className="dash-session-list">
+                      {replayList.map((s) => {
+                        const selected = s.id === activeSession.id
+                        return (
+                          <button
+                            key={s.id}
+                            type="button"
+                            className={`dash-session-item${selected ? ' is-selected' : ''}`}
+                            onClick={() => {
+                              setSelectedSessionId(s.id)
+                              setScrubPct(s.steps[s.steps.length - 1]?.pct ?? 50)
+                            }}
+                          >
+                            <div className="dash-session-item__top">
+                              <span className="dash-code">{s.id}</span>
+                              <span
+                                className={`badge ${
+                                  s.status === 'error'
+                                    ? 'badge--exception'
+                                    : s.status === 'warn'
+                                      ? 'badge--console'
+                                      : 'badge--active'
+                                }`}
+                              >
+                                {s.statusLabel}
+                              </span>
+                            </div>
+                            <strong className="dash-session-item__user">{s.user}</strong>
+                            <span className="dash-session-item__meta">
+                              {s.meta} · {s.duration}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </section>
+
+                  <section className="dash-card dash-card--compact" aria-label="Session player">
+                    <div className="dash-card__head">
+                      <div>
+                        <h2 className="dash-card__title">
+                          {activeSession.user} · <span className="dash-code">{activeSession.route}</span>
+                        </h2>
+                        <p className="dash-card__desc">
+                          {activeSession.meta} · campaign <code className="dash-code">{activeSession.campaign}</code>
+                        </p>
+                      </div>
+                      <span className="badge badge--role">{activeSession.duration}</span>
+                    </div>
+
+                    <div className="replay-player">
+                      <div className="replay-player__chrome">
+                        <div className="replay-player__dots" aria-hidden="true">
+                          <span />
+                          <span />
+                          <span />
+                        </div>
+                        <span className="replay-player__url">https://app.customer.dev{activeSession.route}</span>
+                        <span className="replay-player__mask">rrweb · PII Masked</span>
+                      </div>
+
+                      <div className="replay-player__viewport">
+                        <div className="replay-wire-card">
+                          <div className="replay-wire-line--title" />
+                          <div className="replay-wire-field">•••• •••• •••• 4242 (masked on client)</div>
+                          <div className="replay-wire-actions">
+                            <span className="replay-wire-btn">Pay Rp 450.000</span>
+                            {activeSession.status === 'error' && scrubPct >= 45 && (
+                              <span className="badge badge--exception">502 Bad Gateway</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div
+                          className="replay-cursor"
+                          style={{
+                            left: `${Math.min(Math.max((activeSession.cursorX ?? 50) + (scrubPct - 50) * 0.25, 18), 84)}%`,
+                            top: `${activeSession.cursorY ?? 50}%`,
+                          }}
+                          aria-hidden="true"
+                        >
+                          <span className="replay-cursor__ring" />
                         </div>
                       </div>
 
-                      <div
-                        className="replay-cursor"
-                        style={{
-                          left: `${Math.min(Math.max(activeSession.cursorX + (scrubPct - 50) * 0.25, 18), 84)}%`,
-                          top: `${activeSession.cursorY}%`,
-                        }}
-                        aria-hidden="true"
-                      >
-                        <span className="replay-cursor__ring" />
+                      <div className="replay-scrubber">
+                        <label htmlFor="replay-range" className="replay-scrubber__time">
+                          {scrubPct}%
+                        </label>
+                        <input
+                          id="replay-range"
+                          type="range"
+                          min={0}
+                          max={100}
+                          value={scrubPct}
+                          onChange={(e) => setScrubPct(Number(e.target.value))}
+                          className="replay-scrubber__input"
+                        />
+                        <span className="replay-scrubber__time">{activeSession.duration}</span>
                       </div>
                     </div>
 
-                    <div className="replay-scrubber">
-                      <label htmlFor="replay-range" className="replay-scrubber__time">
-                        {scrubPct}%
-                      </label>
-                      <input
-                        id="replay-range"
-                        type="range"
-                        min={0}
-                        max={100}
-                        value={scrubPct}
-                        onChange={(e) => setScrubPct(Number(e.target.value))}
-                        className="replay-scrubber__input"
-                      />
-                      <span className="replay-scrubber__time">{activeSession.duration}</span>
-                    </div>
-                  </div>
-
-                  <div className="dash-list">
-                    {activeSession.steps.map((st) => (
-                      <button
-                        key={st.t + st.text}
-                        type="button"
-                        className={`dash-step-row${Math.abs(scrubPct - st.pct) <= 12 ? ' is-near' : ''}`}
-                        onClick={() => setScrubPct(st.pct)}
-                      >
-                        <span className="dash-code">{st.t}</span>
-                        <span
-                          className={`badge ${
-                            st.kind === 'error'
-                              ? 'badge--exception'
-                              : st.kind === 'warn'
-                                ? 'badge--console'
-                                : st.kind === 'net'
-                                  ? 'badge--network'
-                                  : 'badge--preview'
-                          }`}
+                    <div className="dash-list">
+                      {activeSession.steps.map((st) => (
+                        <button
+                          key={st.t + st.text}
+                          type="button"
+                          className={`dash-step-row${Math.abs(scrubPct - st.pct) <= 12 ? ' is-near' : ''}`}
+                          onClick={() => setScrubPct(st.pct)}
                         >
-                          {st.kind}
-                        </span>
-                        <span className="dash-step-row__text">{st.text}</span>
-                      </button>
-                    ))}
-                  </div>
-                </section>
-              </div>
+                          <span className="dash-code">{st.t}</span>
+                          <span
+                            className={`badge ${
+                              st.kind === 'error'
+                                ? 'badge--exception'
+                                : st.kind === 'warn'
+                                  ? 'badge--console'
+                                  : st.kind === 'net'
+                                    ? 'badge--network'
+                                    : 'badge--preview'
+                            }`}
+                          >
+                            {st.kind}
+                          </span>
+                          <span className="dash-step-row__text">{st.text}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                </div>
+              )
             )}
 
             {/* ==================== EVENT LOG ==================== */}
@@ -957,27 +1042,50 @@ function DashboardInner({
                 </div>
 
                 <div className="dash-list">
-                  {filteredLogs.map((entry) => (
-                    <div key={entry.id} className="dash-list__row">
-                      <div className="dash-list__main">
-                        <div className="dash-list__top">
-                          <span className={`badge badge--${entry.kind}`}>{entry.kind}</span>
-                          <span className="dash-code">{entry.occurrences}× events</span>
-                          <span className="dash-code">{entry.time}</span>
-                          <span className="dash-code">{entry.sessionId}</span>
-                        </div>
-                        <p className="dash-list__title">{entry.title}</p>
-                        <p className="dash-list__sub dash-code">{entry.detail}</p>
-                      </div>
-                      <button
-                        type="button"
-                        className="dash-btn"
-                        onClick={() => openReplay(entry.sessionId)}
-                      >
-                        Open Replay →
-                      </button>
+                  {filteredLogs.length === 0 ? (
+                    <div style={{ padding: '3rem 1rem', textAlign: 'center', color: 'var(--color-fg-muted)' }}>
+                      <p style={{ fontWeight: 500, margin: '0 0 0.5rem 0', color: 'var(--color-fg)' }}>
+                        No telemetry logs found in PostgreSQL
+                      </p>
+                      <p style={{ fontSize: '0.8125rem', margin: '0 0 1.25rem 0' }}>
+                        {!isDemo && project && (realStats?.events_count ?? 0) === 0
+                          ? 'Send events using your SDK client key to POST /api/v1/ingest or send a live test event.'
+                          : 'No events match the selected filter.'}
+                      </p>
+                      {project && !isDemo && (
+                        <button
+                          type="button"
+                          className="dash-btn"
+                          onClick={handleSendTestEvent}
+                          disabled={sendingTest}
+                        >
+                          {sendingTest ? 'Ingesting...' : '⚡ Send Real Test Event to DB'}
+                        </button>
+                      )}
                     </div>
-                  ))}
+                  ) : (
+                    filteredLogs.map((entry) => (
+                      <div key={entry.id} className="dash-list__row">
+                        <div className="dash-list__main">
+                          <div className="dash-list__top">
+                            <span className={`badge badge--${entry.kind}`}>{entry.kind}</span>
+                            <span className="dash-code">{entry.occurrences}× events</span>
+                            <span className="dash-code">{entry.time}</span>
+                            <span className="dash-code">{entry.sessionId}</span>
+                          </div>
+                          <p className="dash-list__title">{entry.title}</p>
+                          <p className="dash-list__sub dash-code">{entry.detail}</p>
+                        </div>
+                        <button
+                          type="button"
+                          className="dash-btn"
+                          onClick={() => openReplay(entry.sessionId)}
+                        >
+                          Open Replay →
+                        </button>
+                      </div>
+                    ))
+                  )}
                 </div>
               </section>
             )}

@@ -122,6 +122,25 @@ func TestTelemetryQueryEndpoints(t *testing.T) {
 	if seedResp.Seeded != 50 {
 		t.Errorf("expected 50 seeded items, got %d", seedResp.Seeded)
 	}
+
+	// 4. Test Send Test Event
+	app.Post("/api/v1/projects/:projectID/test-event", h.SendProjectTestEvent)
+	req4 := httptest.NewRequest("POST", "/api/v1/projects/10/test-event", nil)
+	resp4, err := app.Test(req4, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp4.StatusCode != 200 {
+		t.Fatalf("test-event status = %d, want 200", resp4.StatusCode)
+	}
+	var testEvResp struct {
+		Status  string `json:"status"`
+		EventID string `json:"event_id"`
+	}
+	_ = json.NewDecoder(resp4.Body).Decode(&testEvResp)
+	if testEvResp.Status != "accepted" || testEvResp.EventID == "" {
+		t.Errorf("expected accepted status and non-empty event_id, got %+v", testEvResp)
+	}
 }
 
 func cBackground() context.Context {
