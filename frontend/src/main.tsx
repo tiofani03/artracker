@@ -17,6 +17,7 @@ function Routes() {
     case '/login':
       return <LoginPage />
     case '/docs':
+    case '/dashboard/docs':
       return <DocsPage />
     case '/dashboard':
       return <DashboardPage section="overview" />
@@ -28,8 +29,6 @@ function Routes() {
       return <DashboardPage section="campaigns" />
     case '/dashboard/alerts':
       return <DashboardPage section="alerts" />
-    case '/dashboard/docs':
-      return <DocsPage insideDashboard />
     case '/dashboard/settings':
       return <SettingsPage />
     default:

@@ -53,4 +53,6 @@ func (h *Handler) Routes(api fiber.Router) {
 
 	api.Get("/sdk/validate", h.sdkValidate(false))
 	api.Get("/sdk/validate-admin", h.sdkValidate(true))
+
+	api.Get("/openapi.json", h.OpenAPISpec)
 }

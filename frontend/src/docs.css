@@ -1,0 +1,806 @@
+/* Fumadocs Enterprise Documentation & API Reference Design System
+   Modeled strictly on Fumadocs (fumadocs.dev) and Mintlify.
+   Zero amateur emojis. Clean typography, callouts, search dialog, and interactive console. */
+
+.fuma-root {
+  min-height: 100vh;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- Top Navbar ---------- */
+.fuma-nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+  height: 56px;
+  display: flex;
+  align-items: center;
+}
+
+.fuma-nav__inner {
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.fuma-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  text-decoration: none;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.0625rem;
+}
+
+.fuma-brand__badge {
+  font-family: var(--font-outlier);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 0.15rem 0.45rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-paper-2);
+  color: var(--color-muted);
+  border: var(--rule-hair) solid var(--color-rule);
+}
+
+.fuma-nav__links {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+.fuma-nav__link {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-ink-2);
+  text-decoration: none;
+  transition: color var(--dur-micro) var(--ease-out);
+}
+
+.fuma-nav__link:hover,
+.fuma-nav__link.is-active {
+  color: var(--color-accent);
+}
+
+.fuma-search-trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--color-paper-2);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  padding: 0.35rem 0.625rem;
+  color: var(--color-muted);
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: all var(--dur-micro) var(--ease-out);
+}
+
+.fuma-search-trigger:hover {
+  border-color: var(--color-rule-2);
+  color: var(--color-ink);
+}
+
+.fuma-kbd {
+  font-family: var(--font-outlier);
+  font-size: 0.6875rem;
+  background: var(--color-paper-hi);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+}
+
+/* ---------- 3-Column Layout Container ---------- */
+.fuma-container {
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 480px;
+  flex: 1;
+}
+
+@media (max-width: 1280px) {
+  .fuma-container {
+    grid-template-columns: 220px minmax(0, 1fr) 420px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .fuma-container {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+  .fuma-col-right {
+    grid-column: 1 / -1;
+    position: static !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .fuma-container {
+    display: flex;
+    flex-direction: column;
+  }
+  .fuma-col-nav {
+    position: static !important;
+    height: auto !important;
+    border-right: none !important;
+    border-bottom: var(--rule-hair) solid var(--color-rule);
+  }
+}
+
+/* ---------- Column 1: Left Navigation ---------- */
+.fuma-col-nav {
+  position: sticky;
+  top: 56px;
+  height: calc(100vh - 56px);
+  overflow-y: auto;
+  padding: 1.5rem 1rem;
+  border-right: var(--rule-hair) solid var(--color-rule);
+  background: var(--color-paper);
+}
+
+.fuma-group {
+  margin-bottom: 1.5rem;
+}
+
+.fuma-group__title {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  margin: 0 0 0.5rem 0.5rem;
+}
+
+.fuma-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border: none;
+  background: transparent;
+  color: var(--color-ink-2);
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-align: left;
+  text-decoration: none;
+  border-radius: var(--radius-input);
+  cursor: pointer;
+  transition: all var(--dur-micro) var(--ease-out);
+}
+
+.fuma-item:hover {
+  background: var(--color-paper-2);
+  color: var(--color-ink);
+}
+
+.fuma-item.is-active {
+  background: var(--color-accent-wash);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+/* HTTP Method Badges */
+.fuma-method {
+  font-family: var(--font-outlier);
+  font-size: 0.625rem;
+  font-weight: 700;
+  padding: 0.125rem 0.35rem;
+  border-radius: 3px;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.fuma-method--post {
+  background: oklch(93% 0.05 156);
+  color: oklch(42% 0.14 156);
+}
+
+.fuma-method--get {
+  background: oklch(93% 0.04 256);
+  color: oklch(45% 0.18 256);
+}
+
+.fuma-method--delete {
+  background: oklch(93% 0.05 26);
+  color: oklch(48% 0.17 26);
+}
+
+/* ---------- Column 2: Center Content Area ---------- */
+.fuma-col-content {
+  padding: 2.25rem 2.5rem;
+  max-width: 840px;
+}
+
+.fuma-crumbs {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-muted);
+  margin-bottom: 0.5rem;
+}
+
+.fuma-title {
+  font-family: var(--font-display);
+  font-size: 1.875rem;
+  font-weight: 700;
+  color: var(--color-ink);
+  letter-spacing: -0.02em;
+  margin: 0 0 0.75rem 0;
+  line-height: 1.2;
+}
+
+.fuma-lead {
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: var(--color-ink-2);
+  margin: 0 0 1.75rem 0;
+}
+
+/* Fumadocs Callout Component */
+.fuma-callout {
+  padding: 0.875rem 1.125rem;
+  border-radius: var(--radius-card);
+  margin: 1.25rem 0;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  border-left: 3px solid;
+}
+
+.fuma-callout strong {
+  display: block;
+  font-size: 0.8125rem;
+  margin-bottom: 0.25rem;
+}
+
+.fuma-callout--info {
+  background: oklch(96% 0.015 250);
+  border-color: var(--color-accent);
+  color: var(--color-ink);
+}
+
+.fuma-callout--info strong {
+  color: var(--color-accent);
+}
+
+.fuma-callout--tip {
+  background: oklch(96% 0.02 156);
+  border-color: oklch(50% 0.14 156);
+  color: var(--color-ink);
+}
+
+.fuma-callout--tip strong {
+  color: oklch(42% 0.14 156);
+}
+
+.fuma-callout--warning {
+  background: oklch(96.5% 0.025 68);
+  border-color: oklch(54% 0.14 68);
+  color: var(--color-ink);
+}
+
+.fuma-callout--warning strong {
+  color: oklch(48% 0.14 68);
+}
+
+/* Endpoint Bar */
+.fuma-endpoint-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: var(--color-paper-2);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  padding: 0.625rem 0.875rem;
+  font-family: var(--font-outlier);
+  font-size: 0.8125rem;
+  margin-bottom: 2rem;
+}
+
+.fuma-endpoint-bar__path {
+  font-weight: 600;
+  color: var(--color-ink);
+  word-break: break-all;
+}
+
+.fuma-endpoint-bar__copy {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--color-muted);
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.75rem;
+  border-radius: 3px;
+  font-family: var(--font-body);
+}
+
+.fuma-endpoint-bar__copy:hover {
+  background: var(--color-paper-3);
+  color: var(--color-ink);
+}
+
+/* Tables */
+.fuma-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  margin: 1rem 0 2rem 0;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-card);
+}
+
+.fuma-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.fuma-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-muted);
+  padding: 0.6rem 0.875rem;
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+  background: var(--color-paper-2);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.fuma-table td {
+  padding: 0.75rem 0.875rem;
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+  vertical-align: top;
+  line-height: 1.5;
+}
+
+.fuma-table tr:last-child td {
+  border-bottom: none;
+}
+
+.fuma-param-name {
+  font-family: var(--font-outlier);
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.fuma-param-type {
+  display: inline-block;
+  font-family: var(--font-outlier);
+  font-size: 0.6875rem;
+  color: var(--color-muted);
+  background: var(--color-paper-2);
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  border: var(--rule-hair) solid var(--color-rule);
+  margin-left: 0.35rem;
+}
+
+.fuma-param-req {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--color-error);
+  margin-left: 0.35rem;
+}
+
+.fuma-param-opt {
+  font-size: 0.6875rem;
+  color: var(--color-muted);
+  margin-left: 0.35rem;
+}
+
+/* ---------- Column 3: Right Console (Dark Charcoal) ---------- */
+.fuma-col-right {
+  position: sticky;
+  top: 56px;
+  height: calc(100vh - 56px);
+  overflow-y: auto;
+  padding: 1.25rem;
+  background: #090d16;
+  border-left: var(--rule-hair) solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.fuma-console-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.fuma-console-tabs {
+  display: flex;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px;
+  border-radius: var(--radius-input);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.fuma-tab-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--dur-micro) var(--ease-out);
+}
+
+.fuma-tab-btn:hover {
+  color: #ffffff;
+}
+
+.fuma-tab-btn.is-active {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.fuma-editor-box {
+  background: #040711;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  margin-bottom: 0.75rem;
+}
+
+.fuma-editor-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.35rem 0.75rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.6875rem;
+  color: #94a3b8;
+}
+
+.fuma-textarea {
+  width: 100%;
+  min-height: 180px;
+  background: transparent;
+  border: none;
+  color: #e2e8f0;
+  font-family: var(--font-outlier);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  padding: 0.75rem;
+  resize: vertical;
+  outline: none;
+}
+
+.fuma-code-block {
+  margin: 0;
+  padding: 0.75rem;
+  font-family: var(--font-outlier);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: #e2e8f0;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.fuma-run-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.625rem 1rem;
+  background: oklch(50% 0.17 156);
+  color: #ffffff;
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius-input);
+  cursor: pointer;
+  transition: all var(--dur-micro) var(--ease-out);
+  margin-bottom: 0.75rem;
+}
+
+.fuma-run-btn:hover {
+  background: oklch(46% 0.18 156);
+}
+
+.fuma-run-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.fuma-resp-card {
+  background: #040711;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.fuma-resp-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.45rem 0.75rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.fuma-resp-card__body {
+  padding: 0.75rem;
+  margin: 0;
+  font-family: var(--font-outlier);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: #cbd5e1;
+  max-height: 240px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Command Palette / Search Dialog Modal */
+.fuma-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  z-index: 500;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10vh;
+}
+
+.fuma-modal-card {
+  width: 100%;
+  max-width: 580px;
+  background: var(--color-paper-hi);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+
+.fuma-search-input {
+  width: 100%;
+  padding: 0.875rem 1.125rem;
+  border: none;
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+  font-family: var(--font-body);
+  font-size: 0.9375rem;
+  color: var(--color-ink);
+  outline: none;
+  background: transparent;
+}
+
+.fuma-search-results {
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+.fuma-search-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-input);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-micro) var(--ease-out);
+}
+
+.fuma-search-item:hover,
+.fuma-search-item.is-selected {
+  background: var(--color-paper-2);
+}
+
+/* ---------- Inline Markdown & Prose Typography ---------- */
+.fuma-inline-code {
+  font-family: var(--font-outlier);
+  font-size: 0.8125rem;
+  background: var(--color-paper-2);
+  border: var(--rule-hair) solid var(--color-rule);
+  color: var(--color-accent);
+  padding: 0.125rem 0.375rem;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.fuma-prose {
+  font-size: 0.875rem;
+  line-height: 1.68;
+  color: var(--color-ink-2);
+}
+
+.fuma-prose strong {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+.fuma-prose__h2 {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--color-ink);
+  margin: 1.75rem 0 0.75rem 0;
+  letter-spacing: -0.015em;
+}
+
+.fuma-prose__h3 {
+  font-family: var(--font-display);
+  font-size: 1.0625rem;
+  font-weight: 600;
+  color: var(--color-ink);
+  margin: 1.5rem 0 0.5rem 0;
+}
+
+.fuma-prose__p {
+  margin: 0 0 1rem 0;
+}
+
+.fuma-list-ol {
+  margin: 0.75rem 0 1.25rem 1.25rem;
+  padding: 0;
+  list-style-type: decimal;
+}
+
+.fuma-list-ol li {
+  margin-bottom: 0.5rem;
+  line-height: 1.6;
+}
+
+.fuma-list-ul {
+  margin: 0.75rem 0 1.25rem 1.25rem;
+  padding: 0;
+  list-style-type: disc;
+}
+
+.fuma-list-ul li {
+  margin-bottom: 0.4rem;
+  line-height: 1.6;
+}
+
+.fuma-code-box {
+  background: #0d121f;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-card);
+  margin: 1rem 0 1.25rem 0;
+  overflow: hidden;
+}
+
+.fuma-code-box__lang {
+  padding: 0.35rem 0.75rem;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-family: var(--font-outlier);
+  font-size: 0.6875rem;
+  color: #94a3b8;
+  text-transform: uppercase;
+}
+
+.fuma-code-box__pre {
+  margin: 0;
+  padding: 0.875rem;
+  font-family: var(--font-outlier);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: #e2e8f0;
+  overflow-x: auto;
+}
+
+/* ---------- Collapsible Console / Playground ---------- */
+.fuma-container.has-console-collapsed {
+  grid-template-columns: 240px minmax(0, 1fr) !important;
+}
+
+.fuma-container.has-console-collapsed .fuma-col-right {
+  display: none !important;
+}
+
+.fuma-container.has-console-collapsed .fuma-col-content {
+  max-width: 1040px;
+}
+
+/* Navbar Toggle Button */
+.fuma-panel-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--color-paper-2);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  padding: 0.35rem 0.625rem;
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-ink-2);
+  cursor: pointer;
+  transition: all var(--dur-micro) var(--ease-out);
+}
+
+.fuma-panel-btn:hover {
+  background: var(--color-paper-3);
+  color: var(--color-ink);
+  border-color: var(--color-rule-2);
+}
+
+.fuma-panel-btn.is-active {
+  background: var(--color-accent-wash);
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  font-weight: 600;
+}
+
+/* Console Close Button */
+.fuma-close-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--dur-micro) var(--ease-out);
+}
+
+.fuma-close-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+/* Floating Re-open Button when closed */
+.fuma-reopen-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: oklch(50% 0.17 156);
+  color: #ffffff;
+  border: none;
+  border-radius: var(--radius-input);
+  padding: 0.35rem 0.75rem;
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  margin-left: 0.5rem;
+  transition: all var(--dur-micro) var(--ease-out);
+}
+
+.fuma-reopen-btn:hover {
+  background: oklch(46% 0.18 156);
+}
+
+

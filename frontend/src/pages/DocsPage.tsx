@@ -1,40 +1,307 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   BASE,
   getAccessToken,
   keyApi,
   type ApiKey,
-  type Project,
 } from '../api'
-import DashboardShell from '../components/DashboardShell'
+import { useAuth } from '../auth/AuthContext'
 import { Link } from '../router'
-import '../dashboard.css'
+import '../docs.css'
+
+function renderInline(text: string): ReactNode {
+  if (!text) return text
+  const parts: ReactNode[] = []
+  // Matches **bold**, *italic*, `inline-code`
+  const regex = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g
+  let lastIdx = 0
+  let match: RegExpExecArray | null
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIdx) {
+      parts.push(text.substring(lastIdx, match.index))
+    }
+    const token = match[0]
+    if (token.startsWith('**') && token.endsWith('**')) {
+      parts.push(<strong key={match.index}>{token.slice(2, -2)}</strong>)
+    } else if (token.startsWith('*') && token.endsWith('*')) {
+      parts.push(<em key={match.index}>{token.slice(1, -1)}</em>)
+    } else if (token.startsWith('`') && token.endsWith('`')) {
+      parts.push(
+        <code key={match.index} className="fuma-inline-code">
+          {token.slice(1, -1)}
+        </code>,
+      )
+    }
+    lastIdx = regex.lastIndex
+  }
+
+  if (lastIdx < text.length) {
+    parts.push(text.substring(lastIdx))
+  }
+
+  return parts.length > 0 ? parts : text
+}
+
+function MarkdownContent({ content }: { content: string }) {
+  const blocks = content.split(/\n\n+/)
+  return (
+    <div className="fuma-prose">
+      {blocks.map((block, idx) => {
+        const trimmed = block.trim()
+        if (!trimmed) return null
+
+        // H3 Header: ### Title
+        if (trimmed.startsWith('### ')) {
+          return (
+            <h3 key={idx} className="fuma-prose__h3">
+              {renderInline(trimmed.replace(/^###\s+/, ''))}
+            </h3>
+          )
+        }
+
+        // H2 Header: ## Title
+        if (trimmed.startsWith('## ')) {
+          return (
+            <h2 key={idx} className="fuma-prose__h2">
+              {renderInline(trimmed.replace(/^##\s+/, ''))}
+            </h2>
+          )
+        }
+
+        // Code block: ```lang ... ```
+        if (trimmed.startsWith('```')) {
+          const lines = trimmed.split('\n')
+          const lang = lines[0].replace('```', '').trim()
+          const code = lines.slice(1, lines[lines.length - 1].startsWith('```') ? -1 : undefined).join('\n')
+          return (
+            <div key={idx} className="fuma-code-box">
+              {lang && <div className="fuma-code-box__lang">{lang}</div>}
+              <pre className="fuma-code-box__pre">
+                <code>{code}</code>
+              </pre>
+            </div>
+          )
+        }
+
+        // Markdown Table: | Col 1 | Col 2 |
+        if (trimmed.startsWith('|') && trimmed.includes('\n|')) {
+          const lines = trimmed.split('\n').map((l) => l.trim()).filter(Boolean)
+          const parseRow = (line: string) =>
+            line
+              .split('|')
+              .map((c) => c.trim())
+              .filter((c, i, a) => !(i === 0 && c === '') && !(i === a.length - 1 && c === ''))
+
+          const headerCols = parseRow(lines[0])
+          const bodyRows = lines.slice(2).map(parseRow)
+
+          return (
+            <div key={idx} className="fuma-table-wrap">
+              <table className="fuma-table">
+                <thead>
+                  <tr>
+                    {headerCols.map((h, hi) => (
+                      <th key={hi}>{renderInline(h)}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {bodyRows.map((cols, ri) => (
+                    <tr key={ri}>
+                      {cols.map((col, ci) => (
+                        <td key={ci}>{renderInline(col)}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        }
+
+        // Ordered list: 1. ... \n 2. ...
+        if (/^\d+\.\s+/.test(trimmed)) {
+          const items = trimmed.split('\n').filter((l) => /^\d+\.\s+/.test(l.trim()))
+          return (
+            <ol key={idx} className="fuma-list-ol">
+              {items.map((item, ii) => (
+                <li key={ii}>{renderInline(item.replace(/^\d+\.\s+/, ''))}</li>
+              ))}
+            </ol>
+          )
+        }
+
+        // Unordered bullet list: - ... \n - ...
+        if (/^-\s+/.test(trimmed)) {
+          const items = trimmed.split('\n').filter((l) => /^-\s+/.test(l.trim()))
+          return (
+            <ul key={idx} className="fuma-list-ul">
+              {items.map((item, ii) => (
+                <li key={ii}>{renderInline(item.replace(/^-\s+/, ''))}</li>
+              ))}
+            </ul>
+          )
+        }
+
+        // Normal paragraph
+        return (
+          <p key={idx} className="fuma-prose__p">
+            {renderInline(trimmed)}
+          </p>
+        )
+      })}
+    </div>
+  )
+}
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
-type EndpointDef = {
-  id: string
+type FieldParam = {
   name: string
-  method: HttpMethod
-  path: string
-  category: 'Ingestion' | 'Telemetry Queries' | 'System & Health'
-  description: string
-  authType: 'api_key' | 'bearer' | 'none'
-  defaultHeaders: Record<string, string>
-  defaultBody?: string
-  presets?: { name: string; desc: string; body: string }[]
+  type: string
+  required: boolean
+  desc: string
+  children?: FieldParam[]
 }
 
-const ENDPOINTS: EndpointDef[] = [
+type DocSection = {
+  id: string
+  title: string
+  category: string
+  method?: HttpMethod
+  path?: string
+  description: string
+  callouts?: { type: 'info' | 'tip' | 'warning'; title: string; content: string }[]
+  headers?: { name: string; type: string; required: boolean; desc: string }[]
+  params?: FieldParam[]
+  responseSample?: string
+  defaultHeaders?: Record<string, string>
+  defaultBody?: string
+  presets?: { name: string; body: string }[]
+  isGuide?: boolean
+  guideContent?: string
+}
+
+const SECTIONS: DocSection[] = [
+  {
+    id: 'architecture',
+    title: 'Architecture & Ingestion SLA',
+    category: 'GETTING STARTED',
+    isGuide: true,
+    description:
+      'High-throughput telemetry ingestion pipeline designed for 1,000,000+ daily active users with sub-25ms non-blocking write latency.',
+    callouts: [
+      {
+        type: 'info',
+        title: 'SLA Guarantee',
+        content:
+          'Ingestion writes are non-blocking. The edge validates the payload, enqueues the batch into memory, and responds with HTTP 202 Accepted in under 25ms before persisting to PostgreSQL.',
+      },
+      {
+        type: 'tip',
+        title: 'Binary Ingestion Protocol',
+        content:
+          'Background workers flush telemetry batches using the binary pgx.CopyFrom protocol directly into range-partitioned tables for zero-lock insert throughput.',
+      },
+    ],
+    guideContent: `### Ingestion Pipeline Workflow
+
+ARTracker isolates ingress validation from database persistence:
+
+1. **Ingress & Anti-Zipbomb Verification**: Incoming batches over HTTP/2 are decompressed via pooled gzip readers protected by a 2 MB hard limit to prevent zip-bomb exploits.
+2. **Sharded In-Memory Key Cache**: Project API keys are verified in under 0.1ms via an in-memory sharded LRU cache with negative caching and singleflight deduplication.
+3. **Per-Project Dual Token Bucket**: Telemetry volume is rate-limited per project across both requests per second (120 RPS) and events per second (1,200 EPS).
+4. **Buffered Channel Queue**: Valid envelopes are accepted into an in-memory worker channel and immediately return HTTP 202 Accepted to the client (<25ms SLA).
+5. **Worker Pool Batch Flush**: Asynchronous background workers consume envelopes, normalize timestamps for client clock drift, generate UUIDv7 identifiers, and bulk-insert records into range-partitioned PostgreSQL tables using the binary pgx.CopyFrom protocol.`,
+  },
+  {
+    id: 'authentication',
+    title: 'Authentication & API Keys',
+    category: 'GETTING STARTED',
+    isGuide: true,
+    description:
+      'ARTracker uses two authentication schemes depending on whether requests originate from client-side SDKs or administrative API clients.',
+    callouts: [
+      {
+        type: 'info',
+        title: 'SDK Client Keys',
+        content:
+          'SDK keys start with art_live_ and are validated against the in-memory cache without hitting PostgreSQL on every request.',
+      },
+      {
+        type: 'warning',
+        title: 'Rotated Keys',
+        content:
+          'When rotating an API key in Settings, the old key remains valid during the transition window before full revocation takes effect.',
+      },
+    ],
+    guideContent: `### Client SDK Authentication
+SDK clients transmitting telemetry to \`POST /api/v1/ingest\` authenticate via the \`X-Artracker-Key\` header:
+
+\`\`\`http
+X-Artracker-Key: art_live_a892b109c3d4e5f6...
+\`\`\`
+
+- Keys are scoped per-project and can be rotated or revoked at any time from **Settings**.
+- Key verification is cached in memory with a 60-second TTL.
+
+### Administrative API Authentication
+Dashboard management endpoints (such as querying project stats or listing event logs) require a Bearer token issued upon Google SSO authentication:
+
+\`\`\`http
+Authorization: Bearer eyJhbGciOiJIUzI1Ni...
+\`\`\``,
+  },
   {
     id: 'ingest-batch',
-    name: 'Batch Telemetry Ingest',
+    title: 'Batch Telemetry Ingest',
+    category: 'CORE INGESTION API',
     method: 'POST',
     path: '/ingest',
-    category: 'Ingestion',
     description:
-      'High-throughput asynchronous batch ingest for events, logs, and sessions. Non-blocking write with SLA <25ms. Supports optional gzip compression.',
-    authType: 'api_key',
+      'High-throughput batch ingestion endpoint accepting up to 500 events, error logs, and session heartbeats in a single request. Supports Content-Encoding: gzip.',
+    callouts: [
+      {
+        type: 'tip',
+        title: 'Payload Compression',
+        content:
+          'Pass Content-Encoding: gzip to transmit compressed telemetry batches. The server decompresses payloads via sync.Pool readers without allocation overhead.',
+      },
+      {
+        type: 'warning',
+        title: 'Attribute Size Cap',
+        content:
+          'Individual event attributes exceeding 32 KB are automatically truncated and marked with __truncated: true to protect database storage.',
+      },
+    ],
+    headers: [
+      { name: 'X-Artracker-Key', type: 'string', required: true, desc: 'Project client API key starting with art_live_.' },
+      { name: 'Content-Type', type: 'string', required: true, desc: 'application/json' },
+      { name: 'Content-Encoding', type: 'string', required: false, desc: 'Optional gzip for compressed payloads.' },
+    ],
+    params: [
+      { name: 'sent_at', type: 'string (ISO-8601)', required: false, desc: 'Device wall-clock timestamp when envelope was dispatched. Used to correct client clock skew.' },
+      { name: 'sdk', type: 'object', required: false, desc: 'Client library identifier and version string (e.g. { name: "artracker-browser", version: "1.2.0" }).' },
+      { name: 'context', type: 'object', required: false, desc: 'Global device/environment metadata: environment, app_version, os, browser, user_agent.' },
+      {
+        name: 'items',
+        type: 'array<RawItem>',
+        required: true,
+        desc: 'Batch array containing 1 to 500 telemetry items (events, error logs, or session captures).',
+        children: [
+          { name: 'items[].type', type: 'string', required: true, desc: 'Record classification: "event", "log", or "session".' },
+          { name: 'items[].name', type: 'string', required: false, desc: 'Event identifier (e.g. "campaign_attribution", "checkout_completed"). Max 255 chars.' },
+          { name: 'items[].level', type: 'string', required: false, desc: 'Severity level for logs: "debug", "info", "warn", "error", or "fatal".' },
+          { name: 'items[].message', type: 'string', required: false, desc: 'Error message or console output. Max 4,096 chars.' },
+          { name: 'items[].session_id', type: 'string', required: false, desc: 'Session identifier linking events directly to Session Replay timelines.' },
+          { name: 'items[].user_id', type: 'string', required: false, desc: 'User identifier or email.' },
+          { name: 'items[].timestamp', type: 'string (ISO-8601)', required: false, desc: 'Client event occurrence timestamp. Normalized on ingest.' },
+          { name: 'items[].attributes', type: 'object', required: false, desc: 'Custom JSON metadata dictionary (UTM parameters, revenue, order details). Max 32 KB.' },
+        ],
+      },
+    ],
+    responseSample: JSON.stringify({ status: 'accepted', queued_items: 2 }, null, 2),
     defaultHeaders: {
       'Content-Type': 'application/json',
       'X-Artracker-Key': 'art_live_xxxxxxxxxxxxxxxx',
@@ -43,38 +310,31 @@ const ENDPOINTS: EndpointDef[] = [
       {
         sent_at: new Date().toISOString(),
         sdk: { name: 'artracker-browser', version: '1.2.0' },
-        context: {
-          environment: 'production',
-          app_version: '2.4.1',
-          user_agent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
-        },
+        context: { environment: 'production', app_version: '2.4.1' },
         items: [
           {
             type: 'event',
             name: 'campaign_attribution',
-            session_id: 'ses_live_94829',
+            session_id: 'ses_94829',
             user_id: 'usr_83910',
             timestamp: new Date().toISOString(),
             attributes: {
               utm_source: 'instagram',
               utm_medium: 'reels',
               utm_campaign: 'utm_launch_q4',
-              referrer: 'https://instagram.com',
               landing_page: '/pricing',
             },
           },
           {
             type: 'event',
             name: 'checkout_completed',
-            session_id: 'ses_live_94829',
+            session_id: 'ses_94829',
             user_id: 'usr_83910',
             timestamp: new Date().toISOString(),
             attributes: {
-              plan: 'enterprise_tier',
+              plan: 'enterprise',
               billing_cycle: 'annual',
               amount_idr: 4500000,
-              currency: 'IDR',
-              items_count: 1,
             },
           },
         ],
@@ -84,8 +344,33 @@ const ENDPOINTS: EndpointDef[] = [
     ),
     presets: [
       {
-        name: '🛒 Campaign Attribution & Purchase',
-        desc: 'UTM marketing parameters linked to revenue conversion',
+        name: 'Standard Batch',
+        body: JSON.stringify(
+          {
+            sent_at: new Date().toISOString(),
+            sdk: { name: 'artracker-browser', version: '1.2.0' },
+            context: { environment: 'production' },
+            items: [
+              {
+                type: 'event',
+                name: 'page_view',
+                session_id: `ses_${Date.now()}`,
+                attributes: { path: '/pricing', referrer: 'https://google.com' },
+              },
+              {
+                type: 'event',
+                name: 'button_clicked',
+                session_id: `ses_${Date.now()}`,
+                attributes: { button_id: 'btn-signup', label: 'Create Account' },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      },
+      {
+        name: 'Campaign Attribution (UTM)',
         body: JSON.stringify(
           {
             sent_at: new Date().toISOString(),
@@ -96,13 +381,13 @@ const ENDPOINTS: EndpointDef[] = [
                 type: 'event',
                 name: 'campaign_attribution',
                 session_id: `ses_${Date.now()}`,
-                user_id: 'customer.vip@commerce.co',
+                user_id: 'rian.wijaya@commerce.co',
                 timestamp: new Date().toISOString(),
                 attributes: {
                   utm_source: 'google',
                   utm_medium: 'cpc',
                   utm_campaign: 'utm_launch_q4',
-                  utm_term: 'realtime error tracker',
+                  utm_term: 'realtime error tracking',
                   revenue: 1250000,
                 },
               },
@@ -110,7 +395,7 @@ const ENDPOINTS: EndpointDef[] = [
                 type: 'event',
                 name: 'checkout_completed',
                 session_id: `ses_${Date.now()}`,
-                attributes: { order_id: 'ORD-9841', items: 3, total: 1250000 },
+                attributes: { order_id: 'ORD-9841', items_count: 2, total_idr: 1250000 },
               },
             ],
           },
@@ -119,8 +404,7 @@ const ENDPOINTS: EndpointDef[] = [
         ),
       },
       {
-        name: '🚨 Unhandled Exception & Stack Trace',
-        desc: 'Fatal client error log with component and device context',
+        name: 'Unhandled Error Log',
         body: JSON.stringify(
           {
             sent_at: new Date().toISOString(),
@@ -149,8 +433,7 @@ const ENDPOINTS: EndpointDef[] = [
         ),
       },
       {
-        name: '🌐 Network 502 Bad Gateway Span',
-        desc: 'HTTP API failure captured by client fetch interceptor',
+        name: 'Network 502 Span',
         body: JSON.stringify(
           {
             sent_at: new Date().toISOString(),
@@ -163,7 +446,7 @@ const ENDPOINTS: EndpointDef[] = [
                 session_id: `ses_${Date.now()}`,
                 timestamp: new Date().toISOString(),
                 attributes: {
-                  url: 'https://api.payment-gateway.dev/v1/charge',
+                  url: 'https://api.payment.dev/v1/charge',
                   method: 'POST',
                   status: 502,
                   status_text: 'Bad Gateway',
@@ -176,227 +459,373 @@ const ENDPOINTS: EndpointDef[] = [
           2,
         ),
       },
-      {
-        name: '📦 Multi-item Batch (Events & Logs)',
-        desc: 'Standard SDK flush envelope containing 5 items',
-        body: JSON.stringify(
-          {
-            sent_at: new Date().toISOString(),
-            sdk: { name: 'artracker-browser', version: '1.2.0' },
-            context: { environment: 'production', app_version: '2.4.1' },
-            items: [
-              {
-                type: 'event',
-                name: 'page_view',
-                session_id: `ses_${Date.now()}`,
-                timestamp: new Date().toISOString(),
-                attributes: { path: '/dashboard/overview', referrer: 'https://google.com' },
-              },
-              {
-                type: 'event',
-                name: 'button_clicked',
-                session_id: `ses_${Date.now()}`,
-                attributes: { element_id: 'cta-primary', label: 'Start Free Trial' },
-              },
-              {
-                type: 'log',
-                level: 'warn',
-                message: 'Template hydration took 2100ms exceeding 2s budget',
-                session_id: `ses_${Date.now()}`,
-              },
-            ],
-          },
-          null,
-          2,
-        ),
-      },
     ],
   },
   {
+    id: 'validate-key',
+    title: 'Validate Client Key',
+    category: 'CORE INGESTION API',
+    method: 'GET',
+    path: '/sdk/validate',
+    description:
+      'Low-latency key validation endpoint. Validates client credentials against the in-memory key cache without hitting PostgreSQL.',
+    headers: [
+      { name: 'X-Artracker-Key', type: 'string', required: true, desc: 'Project client API key to validate.' },
+    ],
+    responseSample: JSON.stringify({ valid: true, project_id: 1 }, null, 2),
+    defaultHeaders: {
+      'X-Artracker-Key': 'art_live_xxxxxxxxxxxxxxxx',
+    },
+  },
+  {
     id: 'get-stats',
-    name: 'Get Project Telemetry Stats',
+    title: 'Get Project Statistics',
+    category: 'TELEMETRY QUERY API',
     method: 'GET',
     path: '/projects/:projectId/stats?range=24h',
-    category: 'Telemetry Queries',
     description:
-      'Calculates aggregated telemetry metrics (sessions, total events, error counts, crash-free percentage, and time buckets) directly from PostgreSQL.',
-    authType: 'bearer',
+      'Aggregates session counts, total events, error volumes, crash-free rates, and time-series buckets from PostgreSQL.',
+    headers: [
+      { name: 'Authorization', type: 'string', required: true, desc: 'Bearer <token> (Dashboard user session)' },
+    ],
+    params: [
+      { name: 'range', type: 'query string', required: false, desc: 'Time window for aggregation: "24h", "7d", or "30d". Default: 24h.' },
+    ],
+    responseSample: JSON.stringify(
+      {
+        range: '24h',
+        sessions_count: 148,
+        events_count: 892,
+        errors_count: 4,
+        error_free_pct: '97.3%',
+        error_note: '4 unhandled exceptions',
+        buckets: [
+          { label: '00:00', sessions: 24, errors: 0 },
+          { label: '06:00', sessions: 48, errors: 1 },
+          { label: '12:00', sessions: 52, errors: 2 },
+          { label: '18:00', sessions: 24, errors: 1 },
+        ],
+      },
+      null,
+      2,
+    ),
     defaultHeaders: {
       Accept: 'application/json',
     },
   },
   {
     id: 'get-events',
-    name: 'List Project Telemetry Events',
+    title: 'List Telemetry Events',
+    category: 'TELEMETRY QUERY API',
     method: 'GET',
     path: '/projects/:projectId/events?kind=all&limit=50',
-    category: 'Telemetry Queries',
     description:
-      'Returns raw telemetry rows from PostgreSQL telemetry_events partitioned table, order by event_timestamp DESC.',
-    authType: 'bearer',
+      'Retrieves recent telemetry rows from the PostgreSQL partitioned table, ordered chronologically by event_timestamp DESC.',
+    headers: [
+      { name: 'Authorization', type: 'string', required: true, desc: 'Bearer <token>' },
+    ],
+    params: [
+      { name: 'kind', type: 'query string', required: false, desc: 'Filter by item type: "all", "event", "log", or "session". Default: all.' },
+      { name: 'limit', type: 'query integer', required: false, desc: 'Maximum records to return (1 - 100). Default: 50.' },
+    ],
+    responseSample: JSON.stringify(
+      {
+        items: [
+          {
+            id: '018f2d84-91f8-7440-a152-475968d9f4e2',
+            kind: 'event',
+            name: 'checkout_completed',
+            session_id: 'ses_94829',
+            event_timestamp: '2026-11-05T09:00:00Z',
+            attributes: { amount_idr: 4500000, plan: 'enterprise' },
+          },
+        ],
+      },
+      null,
+      2,
+    ),
     defaultHeaders: {
       Accept: 'application/json',
     },
   },
   {
     id: 'post-test-event',
-    name: 'Trigger Real Test Telemetry Event',
+    title: 'Trigger Test Event',
+    category: 'TELEMETRY QUERY API',
     method: 'POST',
     path: '/projects/:projectId/test-event',
-    category: 'Telemetry Queries',
     description:
-      'Instantly enqueues 1 real test event into the high-performance async ingest queue and flushes it to PostgreSQL.',
-    authType: 'bearer',
+      'Enqueues a synthetic event into the live ingestion worker pool for instant verification of database writes and dashboard telemetry.',
+    headers: [
+      { name: 'Authorization', type: 'string', required: true, desc: 'Bearer <token>' },
+    ],
+    responseSample: JSON.stringify({ status: 'accepted', event_id: '018f2d84-91f8-7440-a152-475968d9f4e2' }, null, 2),
     defaultHeaders: {
       Accept: 'application/json',
     },
   },
   {
-    id: 'get-healthz',
-    name: 'System Health & Ingest Buffer Depth',
+    id: 'healthz',
+    title: 'Health & Ingest Buffer Status',
+    category: 'SYSTEM & HEALTH',
     method: 'GET',
     path: '/healthz',
-    category: 'System & Health',
     description:
-      'Returns the real-time health of the database connection, worker pool status, channel queue depth, and batch buffer capacity.',
-    authType: 'none',
+      'Returns real-time health metrics including database pool readiness, queue buffer depth, active workers, and throughput statistics.',
+    responseSample: JSON.stringify(
+      {
+        status: 'ok',
+        db: 'up',
+        ingest: {
+          status: 'healthy',
+          queue_depth: 0,
+          queue_capacity: 2048,
+          utilization_pct: 0,
+          workers: 4,
+          requests_per_sec: 14,
+          events_received_total: 10420,
+          events_flushed_total: 10420,
+        },
+      },
+      null,
+      2,
+    ),
     defaultHeaders: {
       Accept: 'application/json',
     },
   },
   {
-    id: 'validate-key',
-    name: 'Validate SDK Client Key',
-    method: 'GET',
-    path: '/sdk/validate',
-    category: 'System & Health',
-    description:
-      'Ultra-fast in-memory lookup checking if a client API key is valid and retrieving its project ID without querying PostgreSQL.',
-    authType: 'api_key',
-    defaultHeaders: {
-      'X-Artracker-Key': 'art_live_xxxxxxxxxxxxxxxx',
-    },
+    id: 'error-codes',
+    title: 'Error Code Reference',
+    category: 'SYSTEM & HEALTH',
+    isGuide: true,
+    description: 'Standardized HTTP status codes returned by ARTracker API endpoints.',
+    guideContent: `### HTTP Status Codes
+
+| Status | Code | Meaning | Remediation |
+| :--- | :--- | :--- | :--- |
+| **202** | \`Accepted\` | Payload validated and enqueued for async persistence | Normal operational response for ingest |
+| **400** | \`Bad Request\` | Malformed JSON or validation rule failure | Check JSON syntax and ensure \`items\` array is not empty |
+| **401** | \`Unauthorized\` | Invalid or missing client key | Provide a valid \`X-Artracker-Key\` header |
+| **403** | \`Forbidden\` | Key revoked or insufficient project permissions | Re-issue API key in project Settings |
+| **413** | \`Payload Too Large\` | Payload exceeded 512 KB compressed or 2 MB raw | Batch items into smaller chunks before dispatch |
+| **429** | \`Too Many Requests\` | Per-project token bucket limit exceeded | Apply exponential backoff with jitter on SDK transport |
+| **503** | \`Service Unavailable\` | Ingest buffer queue saturated | SDK should buffer events locally in memory/disk and retry |`,
   },
 ]
 
-export default function DocsPage({ insideDashboard = false }: { insideDashboard?: boolean }) {
-  if (insideDashboard) {
-    return (
-      <DashboardShell sectionTitle="API Docs & Playground" allowDemo>
-        {({ project, isDemo }) => (
-          <DocsInner
-            project={project}
-            isDemo={isDemo}
-          />
-        )}
-      </DashboardShell>
+export default function DocsPage() {
+  const { user } = useAuth()
+  const [activeProjectId] = useState<number | null>(() => {
+    try {
+      const val = localStorage.getItem('artracker.project')
+      return val ? Number(val) : null
+    } catch {
+      return null
+    }
+  })
+
+  const [playgroundOpen, setPlaygroundOpen] = useState(true)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+
+  // Global keyboard shortcut: Cmd+K / Ctrl+K
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setSearchOpen((prev) => !prev)
+      } else if (e.key === 'Escape') {
+        setSearchOpen(false)
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [])
+
+  const filteredSections = useMemo(() => {
+    if (!searchQuery.trim()) return SECTIONS
+    const q = searchQuery.toLowerCase()
+    return SECTIONS.filter(
+      (s) =>
+        s.title.toLowerCase().includes(q) ||
+        s.category.toLowerCase().includes(q) ||
+        (s.path && s.path.toLowerCase().includes(q)) ||
+        s.description.toLowerCase().includes(q),
     )
-  }
+  }, [searchQuery])
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--color-paper)' }}>
-      {/* Standalone Header */}
-      <header
-        style={{
-          borderBottom: 'var(--rule-hair) solid var(--color-rule)',
-          background: 'var(--color-paper-hi)',
-          position: 'sticky',
-          top: 0,
-          zIndex: 100,
-        }}
-      >
-        <div
-          style={{
-            maxWidth: 1360,
-            margin: '0 auto',
-            padding: '0.875rem 1.5rem',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            <Link
-              to="/"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                textDecoration: 'none',
-                color: 'var(--color-ink)',
-                fontWeight: 700,
-                fontSize: '1.125rem',
-              }}
-            >
-              <svg style={{ width: 22, height: 22 }} viewBox="0 0 24 24" fill="none">
-                <path
-                  d="M4 19L12 4L20 19M7.5 14H16.5"
-                  stroke="currentColor"
-                  strokeWidth="2.4"
-                  strokeLinecap="square"
-                />
+    <div className="fuma-root">
+      {/* Top Navbar */}
+      <header className="fuma-nav">
+        <div className="fuma-nav__inner">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
+            <Link to="/" className="fuma-brand">
+              <svg style={{ width: 20, height: 20 }} viewBox="0 0 24 24" fill="none">
+                <path d="M4 19L12 4L20 19M7.5 14H16.5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="square" />
               </svg>
               <span>ARTracker</span>
             </Link>
-            <span
-              style={{
-                fontSize: '0.75rem',
-                padding: '0.15rem 0.5rem',
-                borderRadius: '4px',
-                background: 'var(--color-accent-subtle)',
-                color: 'var(--color-accent)',
-                fontWeight: 600,
-              }}
-            >
-              API Reference v1
-            </span>
+            <span className="fuma-brand__badge">Docs v1.0</span>
           </div>
+
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <Link to="/dashboard" className="dash-btn dash-btn--primary">
-              Console Dashboard →
+            {/* Search Button (Fumadocs style) */}
+            <button
+              type="button"
+              className="fuma-search-trigger"
+              onClick={() => setSearchOpen(true)}
+              aria-label="Search documentation"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8" />
+                <path d="m21 21-4.3-4.3" />
+              </svg>
+              <span>Search docs...</span>
+              <kbd className="fuma-kbd">⌘K</kbd>
+            </button>
+
+            {/* Toggle Playground Button */}
+            <button
+              type="button"
+              className={`fuma-panel-btn${playgroundOpen ? ' is-active' : ''}`}
+              onClick={() => setPlaygroundOpen((prev) => !prev)}
+              title={playgroundOpen ? 'Collapse API Playground' : 'Open API Playground'}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect width="18" height="18" x="3" y="3" rx="2" />
+                <path d="M15 3v18" />
+              </svg>
+              <span>{playgroundOpen ? 'Hide Playground' : 'Open Playground'}</span>
+            </button>
+
+            <a
+              href={`${BASE}/openapi.json`}
+              target="_blank"
+              rel="noreferrer"
+              className="fuma-nav__link"
+              style={{ fontSize: '0.8125rem', fontFamily: 'var(--font-outlier)' }}
+            >
+              OpenAPI Spec
+            </a>
+
+            {user && (
+              <span style={{ fontSize: '0.8125rem', color: 'var(--color-muted)' }}>
+                {user.email}
+              </span>
+            )}
+
+            <Link to="/dashboard" className="dash-btn dash-btn--primary" style={{ padding: '0.35rem 0.75rem', fontSize: '0.8125rem' }}>
+              Console Dashboard
             </Link>
           </div>
         </div>
       </header>
 
-      <main style={{ maxWidth: 1360, margin: '0 auto', padding: '2rem 1.5rem' }}>
-        <DocsInner />
-      </main>
+      {/* Main 3-Column Docs View */}
+      <DocsView
+        projectId={activeProjectId}
+        playgroundOpen={playgroundOpen}
+        onTogglePlayground={() => setPlaygroundOpen((prev) => !prev)}
+        onSelect={() => setSearchOpen(false)}
+      />
+
+      {/* Command Palette / Search Modal */}
+      {searchOpen && (
+        <div
+          className="fuma-modal-overlay"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSearchOpen(false)
+          }}
+        >
+          <div className="fuma-modal-card">
+            <input
+              type="text"
+              autoFocus
+              className="fuma-search-input"
+              placeholder="Type a command or search documentation..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            <div className="fuma-search-results">
+              {filteredSections.length === 0 ? (
+                <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--color-muted)', fontSize: '0.8125rem' }}>
+                  No matching endpoints or guides found.
+                </div>
+              ) : (
+                filteredSections.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    className="fuma-search-item"
+                    onClick={() => {
+                      setSearchOpen(false)
+                      const el = document.getElementById(`nav-${s.id}`)
+                      el?.click()
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{s.title}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--color-muted)', marginTop: '0.15rem' }}>
+                        {s.category} {s.path ? `· ${s.path}` : ''}
+                      </div>
+                    </div>
+                    {s.method && (
+                      <span className={`fuma-method fuma-method--${s.method.toLowerCase()}`}>
+                        {s.method}
+                      </span>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function DocsInner({
-  project,
-  isDemo,
+function DocsView({
+  projectId,
+  playgroundOpen,
+  onTogglePlayground,
+  onSelect,
 }: {
-  project?: Project | null
-  isDemo?: boolean
+  projectId?: number | null
+  playgroundOpen: boolean
+  onTogglePlayground: () => void
+  onSelect?: () => void
 }) {
-  const [selectedEndpoint, setSelectedEndpoint] = useState<EndpointDef>(ENDPOINTS[0])
+  const [selectedId, setSelectedId] = useState<string>('ingest-batch')
   const [projectKeys, setProjectKeys] = useState<ApiKey[]>([])
   const [activeKey, setActiveKey] = useState<string>('')
-  const [customHeaders, setCustomHeaders] = useState<string>('')
-  const [requestBody, setRequestBody] = useState<string>(selectedEndpoint.defaultBody || '')
-  const [useGzip, setUseGzip] = useState(false)
-  const [codeLang, setCodeLang] = useState<'curl' | 'js' | 'go' | 'python'>('curl')
-  const [activeTab, setActiveTab] = useState<'playground' | 'spec' | 'architecture'>('playground')
+  const [copiedUrl, setCopiedUrl] = useState(false)
+  const [copiedCode, setCopiedCode] = useState(false)
 
-  // Execution state
+  // Console / Playground state
+  const [consoleMode, setConsoleMode] = useState<'playground' | 'code'>('playground')
+  const [codeLang, setCodeLang] = useState<'curl' | 'node' | 'go' | 'python'>('curl')
+  const [customHeaders, setCustomHeaders] = useState<string>('')
+  const [requestBody, setRequestBody] = useState<string>('')
+  const [useGzip, setUseGzip] = useState(false)
   const [executing, setExecuting] = useState(false)
   const [respStatus, setRespStatus] = useState<number | null>(null)
   const [respStatusText, setRespStatusText] = useState<string>('')
   const [respLatencyMs, setRespLatencyMs] = useState<number | null>(null)
-  const [respHeaders, setRespHeaders] = useState<Record<string, string>>({})
   const [respBody, setRespBody] = useState<string>('')
-  const [copiedCode, setCopiedCode] = useState(false)
-  const [copiedKey, setCopiedKey] = useState(false)
 
-  // Fetch project API keys when inside a valid project
+  const activeSection = useMemo(
+    () => SECTIONS.find((s) => s.id === selectedId) || SECTIONS[0],
+    [selectedId],
+  )
+
+  // Fetch project keys if available
   useEffect(() => {
-    if (!project || isDemo) return
+    if (!projectId) return
     keyApi
-      .list(project.id)
+      .list(projectId)
       .then((res) => {
         setProjectKeys(res.items)
         if (res.items.length > 0) {
@@ -404,12 +833,12 @@ function DocsInner({
         }
       })
       .catch((err) => console.error('Failed to load project keys', err))
-  }, [project?.id, isDemo])
+  }, [projectId])
 
-  // Sync endpoint changes to headers & body
+  // Sync section switch to playground
   useEffect(() => {
-    const headers = { ...selectedEndpoint.defaultHeaders }
-    if (selectedEndpoint.authType === 'api_key' && activeKey) {
+    const headers = { ...(activeSection.defaultHeaders || {}) }
+    if (activeSection.headers?.some((h) => h.name === 'X-Artracker-Key') && activeKey) {
       headers['X-Artracker-Key'] = activeKey
     }
     setCustomHeaders(
@@ -417,28 +846,29 @@ function DocsInner({
         .map(([k, v]) => `${k}: ${v}`)
         .join('\n'),
     )
-    setRequestBody(selectedEndpoint.defaultBody || '')
+    setRequestBody(activeSection.defaultBody || '')
     setRespStatus(null)
     setRespBody('')
     setRespLatencyMs(null)
-  }, [selectedEndpoint, activeKey])
+  }, [activeSection, activeKey])
 
-  // Resolved dynamic path replacing `:projectId`
+  // Resolved dynamic path
   const resolvedPath = useMemo(() => {
-    let p = selectedEndpoint.path
-    const pid = project?.id ?? 1
-    p = p.replace(':projectId', String(pid))
-    return p
-  }, [selectedEndpoint.path, project?.id])
+    if (!activeSection.path) return ''
+    const pid = projectId ?? 1
+    return activeSection.path.replace(':projectId', String(pid))
+  }, [activeSection.path, projectId])
 
   const fullUrl = useMemo(() => {
+    if (!resolvedPath) return ''
     const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5174'
     if (resolvedPath === '/healthz') return `${origin}/healthz`
     return `${origin}${BASE}${resolvedPath}`
   }, [resolvedPath])
 
-  // Execute request
+  // Execute playground request
   const handleExecute = async () => {
+    if (!fullUrl || !activeSection.method) return
     setExecuting(true)
     setRespStatus(null)
     setRespBody('')
@@ -454,8 +884,8 @@ function DocsInner({
       }
     })
 
-    // Auto-attach Bearer token if required
-    if (selectedEndpoint.authType === 'bearer') {
+    // Attach Bearer token if required
+    if (activeSection.headers?.some((h) => h.name === 'Authorization')) {
       const token = getAccessToken()
       if (token && !parsedHeaders['Authorization']) {
         parsedHeaders['Authorization'] = `Bearer ${token}`
@@ -463,12 +893,10 @@ function DocsInner({
     }
 
     let finalBody: BodyInit | undefined = undefined
-    if (selectedEndpoint.method !== 'GET') {
+    if (activeSection.method !== 'GET') {
       if (useGzip && typeof CompressionStream !== 'undefined') {
         try {
-          const stream = new Blob([requestBody])
-            .stream()
-            .pipeThrough(new CompressionStream('gzip'))
+          const stream = new Blob([requestBody]).stream().pipeThrough(new CompressionStream('gzip'))
           finalBody = await new Response(stream).blob()
           parsedHeaders['Content-Encoding'] = 'gzip'
         } catch {
@@ -482,7 +910,7 @@ function DocsInner({
     const start = performance.now()
     try {
       const res = await fetch(fullUrl, {
-        method: selectedEndpoint.method,
+        method: activeSection.method,
         headers: parsedHeaders,
         body: finalBody,
         credentials: 'include',
@@ -491,12 +919,6 @@ function DocsInner({
       setRespLatencyMs(latency)
       setRespStatus(res.status)
       setRespStatusText(res.statusText)
-
-      const hdrs: Record<string, string> = {}
-      res.headers.forEach((val, key) => {
-        hdrs[key] = val
-      })
-      setRespHeaders(hdrs)
 
       const text = await res.text()
       try {
@@ -509,7 +931,7 @@ function DocsInner({
       const latency = Math.round(performance.now() - start)
       setRespLatencyMs(latency)
       setRespStatus(500)
-      setRespStatusText('Client Network Error')
+      setRespStatusText('Network Connection Error')
       setRespBody(err instanceof Error ? err.message : String(err))
     } finally {
       setExecuting(false)
@@ -518,7 +940,8 @@ function DocsInner({
 
   // Generate code snippet
   const generatedCode = useMemo(() => {
-    const method = selectedEndpoint.method
+    if (!fullUrl || !activeSection.method) return ''
+    const method = activeSection.method
     const headersList = customHeaders
       .split('\n')
       .map((l) => l.trim())
@@ -540,7 +963,7 @@ function DocsInner({
       return cmd
     }
 
-    if (codeLang === 'js') {
+    if (codeLang === 'node') {
       const headersObj = headersList.reduce<Record<string, string>>((acc, l) => {
         const [k, ...rest] = l.split(':')
         acc[k.trim()] = rest.join(':').trim()
@@ -574,10 +997,12 @@ func main() {
 	body := []byte(\`${requestBody}\`)
 
 	req, _ := http.NewRequest("${method}", url, bytes.NewBuffer(body))
-${headersList.map((h) => {
-  const [k, ...v] = h.split(':')
-  return `	req.Header.Set("${k.trim()}", "${v.join(':').trim()}")`
-}).join('\n')}
+${headersList
+  .map((h) => {
+    const [k, ...v] = h.split(':')
+    return `	req.Header.Set("${k.trim()}", "${v.join(':').trim()}")`
+  })
+  .join('\n')}
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -613,829 +1038,486 @@ print(response.status_code, response.json())`
     }
 
     return ''
-  }, [selectedEndpoint, customHeaders, requestBody, fullUrl, codeLang, useGzip])
+  }, [fullUrl, activeSection.method, customHeaders, requestBody, codeLang, useGzip])
 
-  const copyCodeToClipboard = () => {
+  const copyUrl = () => {
+    if (!fullUrl) return
+    navigator.clipboard.writeText(fullUrl)
+    setCopiedUrl(true)
+    setTimeout(() => setCopiedUrl(false), 1600)
+  }
+
+  const copyCode = () => {
     navigator.clipboard.writeText(generatedCode)
     setCopiedCode(true)
-    setTimeout(() => setCopiedCode(false), 1800)
+    setTimeout(() => setCopiedCode(false), 1600)
   }
 
-  const copyKeyToClipboard = (k: string) => {
-    navigator.clipboard.writeText(k)
-    setCopiedKey(true)
-    setTimeout(() => setCopiedKey(false), 1800)
-  }
+  // Categories list
+  const categories = useMemo(() => {
+    const list: string[] = []
+    SECTIONS.forEach((s) => {
+      if (!list.includes(s.category)) list.push(s.category)
+    })
+    return list
+  }, [])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      {/* Title & Context */}
-      <div className="dash-title" style={{ marginBottom: 0 }}>
-        <div>
-          <h1 style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
-            <span>Backend Documentation &amp; API Playground</span>
-            <span
-              style={{
-                fontSize: '0.75rem',
-                padding: '0.2rem 0.5rem',
-                borderRadius: '4px',
-                background: 'var(--color-accent)',
-                color: '#fff',
-                fontWeight: 600,
-                letterSpacing: '0.02em',
-              }}
-            >
-              Enterprise Tier
+    <div className={`fuma-container${playgroundOpen ? '' : ' has-console-collapsed'}`}>
+      {/* COLUMN 1: LEFT NAVIGATION */}
+      <aside className="fuma-col-nav">
+        {categories.map((cat) => (
+          <div key={cat} className="fuma-group">
+            <div className="fuma-group__title">{cat}</div>
+            {SECTIONS.filter((s) => s.category === cat).map((s) => {
+              const isActive = s.id === selectedId
+              return (
+                <button
+                  id={`nav-${s.id}`}
+                  key={s.id}
+                  type="button"
+                  className={`fuma-item${isActive ? ' is-active' : ''}`}
+                  onClick={() => {
+                    setSelectedId(s.id)
+                    onSelect?.()
+                  }}
+                >
+                  {s.method && (
+                    <span className={`fuma-method fuma-method--${s.method.toLowerCase()}`}>
+                      {s.method}
+                    </span>
+                  )}
+                  <span>{s.title}</span>
+                </button>
+              )
+            })}
+          </div>
+        ))}
+      </aside>
+
+      {/* COLUMN 2: CENTER DOCUMENTATION CONTENT */}
+      <article className="fuma-col-content">
+        <div className="fuma-crumbs">Docs &gt; {activeSection.category} &gt; {activeSection.title}</div>
+        <h1 className="fuma-title">{activeSection.title}</h1>
+        <p className="fuma-lead">{renderInline(activeSection.description)}</p>
+
+        {/* Fumadocs Callout Cards */}
+        {activeSection.callouts?.map((c) => (
+          <div key={c.title} className={`fuma-callout fuma-callout--${c.type}`}>
+            <strong>{renderInline(c.title)}</strong>
+            <div>{renderInline(c.content)}</div>
+          </div>
+        ))}
+
+        {activeSection.path && (
+          <div className="fuma-endpoint-bar">
+            <span className={`fuma-method fuma-method--${activeSection.method?.toLowerCase()}`}>
+              {activeSection.method}
             </span>
-          </h1>
-          <p>
-            Interactive testing harness, envelope specifications, and client SDK integration guide
-            for ARTracker high-throughput ingest pipeline.
-          </p>
-        </div>
-      </div>
-
-      {/* Navigation Tabs */}
-      <div
-        className="dash-seg"
-        style={{ alignSelf: 'flex-start' }}
-        role="tablist"
-        aria-label="Documentation sections"
-      >
-        <button
-          type="button"
-          className={`dash-seg__btn${activeTab === 'playground' ? ' is-active' : ''}`}
-          onClick={() => setActiveTab('playground')}
-        >
-          ⚡ Interactive Playground
-        </button>
-        <button
-          type="button"
-          className={`dash-seg__btn${activeTab === 'spec' ? ' is-active' : ''}`}
-          onClick={() => setActiveTab('spec')}
-        >
-          📖 Ingest Envelope Spec
-        </button>
-        <button
-          type="button"
-          className={`dash-seg__btn${activeTab === 'architecture' ? ' is-active' : ''}`}
-          onClick={() => setActiveTab('architecture')}
-        >
-          🏛️ High-Perf Architecture (&lt;25ms SLA)
-        </button>
-      </div>
-
-      {/* ========================================================= */}
-      {/* SECTION 1: INTERACTIVE PLAYGROUND                         */}
-      {/* ========================================================= */}
-      {activeTab === 'playground' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          {/* Active Project & API Key Strip */}
-          {project && (
-            <div
-              className="dash-card dash-card--compact"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                flexWrap: 'wrap',
-                gap: '1rem',
-                background: 'var(--color-paper-2)',
-                borderColor: 'var(--color-rule)',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ fontSize: '0.8125rem', color: 'var(--color-fg-muted)' }}>
-                  Active Project:
-                </span>
-                <strong style={{ fontSize: '0.875rem' }}>{project.name}</strong>
-                <span className="badge badge--role">ID: {project.id}</span>
-              </div>
-
-              {projectKeys.length > 0 ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: 'auto' }}>
-                  <span style={{ fontSize: '0.8125rem', color: 'var(--color-fg-muted)' }}>
-                    Using API Key:
-                  </span>
-                  <select
-                    className="dash-select"
-                    value={activeKey}
-                    onChange={(e) => setActiveKey(e.target.value)}
-                    style={{ fontSize: '0.8125rem', fontFamily: 'var(--font-mono)' }}
-                  >
-                    {projectKeys.map((k) => (
-                      <option key={k.id} value={k.prefix}>
-                        {k.key_type} key ({k.prefix})
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    className="dash-btn"
-                    onClick={() => copyKeyToClipboard(activeKey)}
-                    style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
-                  >
-                    {copiedKey ? '✓ Copied' : 'Copy'}
-                  </button>
-                </div>
-              ) : (
-                <div style={{ marginLeft: 'auto', fontSize: '0.8125rem', color: 'var(--color-fg-muted)' }}>
-                  No API keys generated yet.{' '}
-                  <Link to="/dashboard/settings" style={{ color: 'var(--color-accent)' }}>
-                    Create one in Settings →
-                  </Link>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Playground Main Layout: Left Request Builder, Right Live Execution */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(460px, 1fr))',
-              gap: '1.25rem',
-            }}
-          >
-            {/* LEFT COLUMN: Request Builder */}
-            <div className="dash-card dash-card--compact" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div className="dash-card__head" style={{ marginBottom: 0 }}>
-                <div>
-                  <h2 className="dash-card__title">Request Builder</h2>
-                  <p className="dash-card__desc">Choose an endpoint and configure payload &amp; headers</p>
-                </div>
-              </div>
-
-              {/* Endpoint Selector */}
-              <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-fg-muted)', marginBottom: '0.25rem' }}>
-                  Target Endpoint
-                </label>
-                <select
-                  className="dash-select"
-                  style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: '0.875rem' }}
-                  value={selectedEndpoint.id}
-                  onChange={(e) => {
-                    const ep = ENDPOINTS.find((x) => x.id === e.target.value)
-                    if (ep) setSelectedEndpoint(ep)
-                  }}
-                >
-                  <optgroup label="Ingestion">
-                    {ENDPOINTS.filter((e) => e.category === 'Ingestion').map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {e.method} {e.path} — {e.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Telemetry Queries">
-                    {ENDPOINTS.filter((e) => e.category === 'Telemetry Queries').map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {e.method} {e.path} — {e.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="System & Health">
-                    {ENDPOINTS.filter((e) => e.category === 'System & Health').map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {e.method} {e.path} — {e.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                </select>
-              </div>
-
-              {/* URL Preview */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  padding: '0.5rem 0.75rem',
-                  background: 'var(--color-paper-2)',
-                  borderRadius: 'var(--cut-m)',
-                  border: 'var(--rule-hair) solid var(--color-rule)',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '0.8125rem',
-                }}
-              >
-                <span
-                  style={{
-                    padding: '0.15rem 0.4rem',
-                    borderRadius: '3px',
-                    fontWeight: 700,
-                    fontSize: '0.75rem',
-                    background:
-                      selectedEndpoint.method === 'POST'
-                        ? 'oklch(45% 0.18 142 / 0.15)'
-                        : 'oklch(52% 0.22 250 / 0.15)',
-                    color:
-                      selectedEndpoint.method === 'POST'
-                        ? 'oklch(45% 0.18 142)'
-                        : 'oklch(52% 0.22 250)',
-                  }}
-                >
-                  {selectedEndpoint.method}
-                </span>
-                <span style={{ wordBreak: 'break-all', color: 'var(--color-fg)' }}>
-                  {fullUrl}
-                </span>
-              </div>
-
-              <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--color-fg-muted)' }}>
-                {selectedEndpoint.description}
-              </p>
-
-              {/* Presets if available */}
-              {selectedEndpoint.presets && selectedEndpoint.presets.length > 0 && (
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-fg-muted)', marginBottom: '0.375rem' }}>
-                    Quick Presets (1-Click Load)
-                  </label>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem' }}>
-                    {selectedEndpoint.presets.map((pr) => (
-                      <button
-                        key={pr.name}
-                        type="button"
-                        className="dash-btn"
-                        style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
-                        onClick={() => setRequestBody(pr.body)}
-                        title={pr.desc}
-                      >
-                        {pr.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Headers */}
-              <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-fg-muted)', marginBottom: '0.25rem' }}>
-                  Request Headers (key: value)
-                </label>
-                <textarea
-                  rows={selectedEndpoint.method === 'GET' ? 3 : 4}
-                  className="dash-input"
-                  style={{
-                    width: '100%',
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: '0.75rem',
-                    resize: 'vertical',
-                    padding: '0.5rem',
-                    lineHeight: 1.4,
-                  }}
-                  value={customHeaders}
-                  onChange={(e) => setCustomHeaders(e.target.value)}
-                />
-              </div>
-
-              {/* Body Editor (for POST) */}
-              {selectedEndpoint.method !== 'GET' && (
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-fg-muted)' }}>
-                      JSON Request Body
-                    </label>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                      <label style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={useGzip}
-                          onChange={(e) => setUseGzip(e.target.checked)}
-                        />
-                        <span>Gzip Encoded</span>
-                      </label>
-                      <button
-                        type="button"
-                        className="dash-btn"
-                        style={{ padding: '0.15rem 0.4rem', fontSize: '0.7rem' }}
-                        onClick={() => {
-                          try {
-                            setRequestBody(JSON.stringify(JSON.parse(requestBody), null, 2))
-                          } catch {
-                            // ignore invalid format
-                          }
-                        }}
-                      >
-                        Format
-                      </button>
-                    </div>
-                  </div>
-                  <textarea
-                    rows={12}
-                    className="dash-input"
-                    style={{
-                      width: '100%',
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: '0.75rem',
-                      resize: 'vertical',
-                      padding: '0.625rem',
-                      lineHeight: 1.4,
-                      background: 'var(--color-paper-hi)',
-                    }}
-                    value={requestBody}
-                    onChange={(e) => setRequestBody(e.target.value)}
-                  />
-                </div>
-              )}
-
-              {/* Action Button */}
+            <span className="fuma-endpoint-bar__path">{fullUrl}</span>
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
               <button
                 type="button"
-                className="dash-btn dash-btn--primary"
-                onClick={handleExecute}
-                disabled={executing}
-                style={{
-                  padding: '0.75rem 1.25rem',
-                  fontSize: '0.875rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '0.5rem',
-                }}
+                className="fuma-endpoint-bar__copy"
+                onClick={copyUrl}
               >
-                {executing ? (
-                  <>
-                    <span className="dash-spinner" /> Executing Request...
-                  </>
-                ) : (
-                  <>⚡ Send Request to Backend</>
-                )}
+                {copiedUrl ? 'Copied' : 'Copy'}
               </button>
-            </div>
-
-            {/* RIGHT COLUMN: Response Viewer & Multi-Language SDK Snippets */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              {/* Response Inspector Card */}
-              <section className="dash-card dash-card--compact" style={{ flex: 1 }}>
-                <div className="dash-card__head">
-                  <div>
-                    <h2 className="dash-card__title">Real-Time Response Inspector</h2>
-                    <p className="dash-card__desc">Live round-trip status, latency, and response headers</p>
-                  </div>
-                  {respStatus !== null && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <span
-                        className={`badge ${
-                          respStatus >= 200 && respStatus < 300
-                            ? 'badge--active'
-                            : respStatus === 429
-                              ? 'badge--console'
-                              : 'badge--exception'
-                        }`}
-                        style={{ fontWeight: 700 }}
-                      >
-                        {respStatus} {respStatusText}
-                      </span>
-                      {respLatencyMs !== null && (
-                        <span
-                          className="dash-code"
-                          style={{
-                            fontSize: '0.75rem',
-                            color: respLatencyMs < 25 ? 'oklch(45% 0.18 142)' : 'inherit',
-                          }}
-                        >
-                          ⚡ {respLatencyMs} ms {respLatencyMs < 25 ? '(SLA OK)' : ''}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {respStatus === null && !executing && (
-                  <div
-                    style={{
-                      padding: '4rem 1rem',
-                      textAlign: 'center',
-                      color: 'var(--color-fg-muted)',
-                      border: '1px dashed var(--color-rule)',
-                      borderRadius: 'var(--cut-m)',
-                    }}
-                  >
-                    <div style={{ fontSize: '1.75rem', marginBottom: '0.5rem' }}>📡</div>
-                    <p style={{ margin: '0 0 0.25rem 0', fontWeight: 500, color: 'var(--color-fg)' }}>
-                      Ready to transmit
-                    </p>
-                    <p style={{ margin: 0, fontSize: '0.8125rem' }}>
-                      Click <strong>Send Request to Backend</strong> to test this endpoint live.
-                    </p>
-                  </div>
-                )}
-
-                {executing && (
-                  <div style={{ padding: '3.5rem 1rem', textAlign: 'center', color: 'var(--color-fg-muted)' }}>
-                    <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>⏳</div>
-                    <p style={{ margin: 0, fontSize: '0.875rem' }}>Connecting to API...</p>
-                  </div>
-                )}
-
-                {respStatus !== null && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                    <div
-                      style={{
-                        position: 'relative',
-                        background: 'var(--color-paper-2)',
-                        border: 'var(--rule-hair) solid var(--color-rule)',
-                        borderRadius: 'var(--cut-m)',
-                        padding: '0.75rem',
-                        overflowX: 'auto',
-                      }}
-                    >
-                      <pre
-                        style={{
-                          margin: 0,
-                          fontSize: '0.75rem',
-                          fontFamily: 'var(--font-mono)',
-                          whiteSpace: 'pre-wrap',
-                          wordBreak: 'break-all',
-                          lineHeight: 1.45,
-                        }}
-                      >
-                        {respBody}
-                      </pre>
-                    </div>
-
-                    {Object.keys(respHeaders).length > 0 && (
-                      <details style={{ fontSize: '0.75rem' }}>
-                        <summary style={{ cursor: 'pointer', color: 'var(--color-fg-muted)', userSelect: 'none' }}>
-                          View Response Headers ({Object.keys(respHeaders).length})
-                        </summary>
-                        <div
-                          style={{
-                            marginTop: '0.5rem',
-                            padding: '0.5rem',
-                            background: 'var(--color-paper-2)',
-                            borderRadius: 'var(--cut-s)',
-                            fontFamily: 'var(--font-mono)',
-                            display: 'grid',
-                            gridTemplateColumns: 'max-content 1fr',
-                            gap: '0.25rem 0.75rem',
-                          }}
-                        >
-                          {Object.entries(respHeaders).map(([k, v]) => (
-                            <div key={k} style={{ display: 'contents' }}>
-                              <span style={{ color: 'var(--color-fg-muted)' }}>{k}:</span>
-                              <span>{v}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    )}
-                  </div>
-                )}
-              </section>
-
-              {/* Code Snippet Generator Card */}
-              <section className="dash-card dash-card--compact">
-                <div className="dash-card__head" style={{ marginBottom: '0.5rem' }}>
-                  <div>
-                    <h2 className="dash-card__title">Code Snippet Generator</h2>
-                    <p className="dash-card__desc">Ready-to-use production SDK and CLI commands</p>
-                  </div>
-                  <div className="dash-seg">
-                    {(['curl', 'js', 'go', 'python'] as const).map((lang) => (
-                      <button
-                        key={lang}
-                        type="button"
-                        className={`dash-seg__btn${codeLang === lang ? ' is-active' : ''}`}
-                        onClick={() => setCodeLang(lang)}
-                        style={{ textTransform: 'uppercase', fontSize: '0.7rem' }}
-                      >
-                        {lang}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    position: 'relative',
-                    background: 'var(--color-ink)',
-                    color: '#e2e8f0',
-                    borderRadius: 'var(--cut-m)',
-                    padding: '0.875rem',
-                    overflowX: 'auto',
-                  }}
+              {!playgroundOpen && activeSection.method && (
+                <button
+                  type="button"
+                  className="fuma-reopen-btn"
+                  onClick={onTogglePlayground}
+                  title="Open in Playground"
                 >
-                  <button
-                    type="button"
-                    onClick={copyCodeToClipboard}
-                    style={{
-                      position: 'absolute',
-                      top: '0.5rem',
-                      right: '0.5rem',
-                      padding: '0.25rem 0.5rem',
-                      background: 'rgba(255,255,255,0.15)',
-                      border: 'none',
-                      borderRadius: '4px',
-                      color: '#fff',
-                      fontSize: '0.75rem',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {copiedCode ? '✓ Copied' : 'Copy'}
-                  </button>
-                  <pre
-                    style={{
-                      margin: 0,
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: '0.75rem',
-                      lineHeight: 1.45,
-                      whiteSpace: 'pre',
-                    }}
-                  >
-                    {generatedCode}
-                  </pre>
-                </div>
-              </section>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polygon points="5 3 19 12 5 21 5 3" />
+                  </svg>
+                  <span>Test API</span>
+                </button>
+              )}
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ========================================================= */}
-      {/* SECTION 2: ENVELOPE SPECIFICATION                         */}
-      {/* ========================================================= */}
-      {activeTab === 'spec' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          <section className="dash-card">
-            <h2 className="dash-card__title">Ingest Envelope Specification (`POST /api/v1/ingest`)</h2>
-            <p className="dash-card__desc">
-              Every client telemetry payload is transmitted as an Envelope containing top-level metadata and an array of telemetry items.
-            </p>
+        {/* Guide / Text Sections */}
+        {activeSection.isGuide && activeSection.guideContent && (
+          <MarkdownContent content={activeSection.guideContent} />
+        )}
 
-            <div className="dash-table-wrap" style={{ marginTop: '1rem' }}>
-              <table className="dash-table">
+        {/* Headers Table */}
+        {activeSection.headers && activeSection.headers.length > 0 && (
+          <section style={{ marginBottom: '2rem' }}>
+            <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: '0 0 0.75rem 0' }}>Request Headers</h2>
+            <div className="fuma-table-wrap">
+              <table className="fuma-table">
                 <thead>
                   <tr>
-                    <th>Field</th>
+                    <th>Header</th>
                     <th>Type</th>
-                    <th>Required</th>
                     <th>Description</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr>
-                    <td className="dash-code">sent_at</td>
-                    <td>ISO-8601 String</td>
-                    <td>Optional</td>
-                    <td>Client device wall-clock time when envelope was dispatched. Used to calculate clock-skew.</td>
-                  </tr>
-                  <tr>
-                    <td className="dash-code">sdk.name</td>
-                    <td>String</td>
-                    <td>Optional</td>
-                    <td>Client SDK identifier (e.g. <code>artracker-browser</code>, <code>artracker-android</code>).</td>
-                  </tr>
-                  <tr>
-                    <td className="dash-code">sdk.version</td>
-                    <td>String</td>
-                    <td>Optional</td>
-                    <td>Semantic version string of the client library (e.g. <code>1.2.0</code>).</td>
-                  </tr>
-                  <tr>
-                    <td className="dash-code">context</td>
-                    <td>JSON Object</td>
-                    <td>Optional</td>
-                    <td>
-                      Global environment metadata: <code>environment</code> (default: <code>production</code>),
-                      <code>release_version</code>, <code>os</code>, <code>browser</code>.
-                    </td>
-                  </tr>
-                  <tr>
-                    <td className="dash-code">items</td>
-                    <td>Array&lt;RawItem&gt;</td>
-                    <td><strong>Yes</strong></td>
-                    <td>Array of 1 to 500 telemetry items (events, logs, or sessions).</td>
-                  </tr>
+                  {activeSection.headers.map((h) => (
+                    <tr key={h.name}>
+                      <td>
+                        <span className="fuma-param-name">{h.name}</span>
+                        {h.required ? (
+                          <span className="fuma-param-req">required</span>
+                        ) : (
+                          <span className="fuma-param-opt">optional</span>
+                        )}
+                      </td>
+                      <td>
+                        <span className="fuma-param-type">{h.type}</span>
+                      </td>
+                      <td>{renderInline(h.desc)}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
           </section>
+        )}
 
-          <section className="dash-card">
-            <h2 className="dash-card__title">Item Schema (`RawItem`)</h2>
-            <p className="dash-card__desc">
-              Structure for each individual event or error inside the <code>items</code> array.
-            </p>
-
-            <div className="dash-table-wrap" style={{ marginTop: '1rem' }}>
-              <table className="dash-table">
-                <thead>
-                  <tr>
-                    <th>Field</th>
-                    <th>Type</th>
-                    <th>Allowed Values</th>
-                    <th>Description</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td className="dash-code">type</td>
-                    <td>String</td>
-                    <td><code>event</code> | <code>log</code> | <code>session</code></td>
-                    <td>Telemetry classification. Default: <code>event</code>.</td>
-                  </tr>
-                  <tr>
-                    <td className="dash-code">name</td>
-                    <td>String</td>
-                    <td>Max 255 chars</td>
-                    <td>Event identifier (e.g. <code>checkout_completed</code>, <code>campaign_attribution</code>).</td>
-                  </tr>
-                  <tr>
-                    <td className="dash-code">level</td>
-                    <td>String</td>
-                    <td><code>debug</code> | <code>info</code> | <code>warn</code> | <code>error</code> | <code>fatal</code></td>
-                    <td>Severity level for logs/exceptions. Required when <code>type = "log"</code>.</td>
-                  </tr>
-                  <tr>
-                    <td className="dash-code">message</td>
-                    <td>String</td>
-                    <td>Max 4,096 chars</td>
-                    <td>Human-readable error message or log detail.</td>
-                  </tr>
-                  <tr>
-                    <td className="dash-code">session_id</td>
-                    <td>String</td>
-                    <td>Max 128 chars</td>
-                    <td>Unique browser session token linking events directly to Session Replays.</td>
-                  </tr>
-                  <tr>
-                    <td className="dash-code">user_id</td>
-                    <td>String</td>
-                    <td>Max 128 chars</td>
-                    <td>Pseudonymous user identifier or email.</td>
-                  </tr>
-                  <tr>
-                    <td className="dash-code">timestamp</td>
-                    <td>ISO-8601 String</td>
-                    <td>UTC timestamp</td>
-                    <td>When the event occurred on the client. Normalized against clock drift.</td>
-                  </tr>
-                  <tr>
-                    <td className="dash-code">attributes</td>
-                    <td>JSON Object</td>
-                    <td>Max 32 KB</td>
-                    <td>Flexible JSON dictionary for UTM tags, custom telemetry, and business metrics.</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section className="dash-card">
-            <h2 className="dash-card__title">Hard Quotas &amp; Ingress Limits</h2>
-            <div className="dash-table-wrap" style={{ marginTop: '1rem' }}>
-              <table className="dash-table">
+        {/* Request Parameters Table */}
+        {activeSection.params && activeSection.params.length > 0 && (
+          <section style={{ marginBottom: '2rem' }}>
+            <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: '0 0 0.75rem 0' }}>Request Parameters</h2>
+            <div className="fuma-table-wrap">
+              <table className="fuma-table">
                 <thead>
                   <tr>
                     <th>Parameter</th>
-                    <th>Threshold</th>
-                    <th>Enforcement Action</th>
+                    <th>Type</th>
+                    <th>Description</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr>
-                    <td>Max Compressed Request Body</td>
-                    <td className="dash-code">512 KB</td>
-                    <td>HTTP 413 Payload Too Large</td>
-                  </tr>
-                  <tr>
-                    <td>Max Decompressed Payload</td>
-                    <td className="dash-code">2.0 MB</td>
-                    <td>Anti-Zipbomb LimitReader terminates stream</td>
-                  </tr>
-                  <tr>
-                    <td>Max Items per Batch</td>
-                    <td className="dash-code">500 items</td>
-                    <td>HTTP 400 Bad Request</td>
-                  </tr>
-                  <tr>
-                    <td>Max Attributes Size per Item</td>
-                    <td className="dash-code">32 KB</td>
-                    <td>Truncated with <code>__truncated: true</code> marker</td>
-                  </tr>
-                  <tr>
-                    <td>Rate Limit (Default)</td>
-                    <td className="dash-code">120 RPS / 1,200 EPS</td>
-                    <td>HTTP 429 Too Many Requests (Token Bucket)</td>
-                  </tr>
+                  {activeSection.params.map((p) => (
+                    <tr key={p.name}>
+                      <td>
+                        <span className="fuma-param-name">{p.name}</span>
+                        {p.required ? (
+                          <span className="fuma-param-req">required</span>
+                        ) : (
+                          <span className="fuma-param-opt">optional</span>
+                        )}
+                      </td>
+                      <td>
+                        <span className="fuma-param-type">{p.type}</span>
+                      </td>
+                      <td>
+                        <div>{renderInline(p.desc)}</div>
+                        {p.children && p.children.length > 0 && (
+                          <div style={{ marginTop: '0.75rem' }}>
+                            <table className="fuma-table" style={{ background: 'var(--color-paper-2)' }}>
+                              <tbody>
+                                {p.children.map((ch) => (
+                                  <tr key={ch.name}>
+                                    <td style={{ width: '40%' }}>
+                                      <span className="fuma-param-name" style={{ fontSize: '0.75rem' }}>
+                                        {ch.name}
+                                      </span>
+                                      {ch.required ? (
+                                        <span className="fuma-param-req">required</span>
+                                      ) : (
+                                        <span className="fuma-param-opt">optional</span>
+                                      )}
+                                    </td>
+                                    <td>
+                                      <span className="fuma-param-type">{ch.type}</span>
+                                      <div style={{ fontSize: '0.75rem', marginTop: '0.15rem' }}>
+                                        {renderInline(ch.desc)}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
           </section>
-        </div>
-      )}
+        )}
 
-      {/* ========================================================= */}
-      {/* SECTION 3: ARCHITECTURE OVERVIEW                          */}
-      {/* ========================================================= */}
-      {activeTab === 'architecture' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          <section className="dash-card">
-            <h2 className="dash-card__title">Pipeline Architecture (&lt;25ms Non-Blocking Write SLA)</h2>
-            <p className="dash-card__desc">
-              How ARTracker achieves extreme ingestion throughput for 1,000,000+ daily active users without dropping telemetry.
-            </p>
-
-            <div
+        {/* Response Sample */}
+        {activeSection.responseSample && (
+          <section style={{ marginBottom: '2rem' }}>
+            <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: '0 0 0.75rem 0' }}>Response Sample</h2>
+            <pre
               style={{
-                marginTop: '1.25rem',
-                padding: '1.5rem',
                 background: 'var(--color-paper-2)',
-                borderRadius: 'var(--cut-m)',
                 border: 'var(--rule-hair) solid var(--color-rule)',
-                fontFamily: 'var(--font-mono)',
+                padding: '0.875rem',
+                borderRadius: 'var(--radius-input)',
                 fontSize: '0.8125rem',
-                lineHeight: 1.6,
+                fontFamily: 'var(--font-outlier)',
+                margin: 0,
                 overflowX: 'auto',
               }}
             >
-              <pre style={{ margin: 0 }}>
-{`[Client SDK] ──(HTTP/2 + Gzip)──> [Go Fiber Ingest API]
-                                         │
-               ┌─────────────────────────┴─────────────────────────┐
-               │ 1. Header & Magic Bytes Check                     │
-               │ 2. Sharded LRU Key Cache (<0.1ms lookup)          │
-               │ 3. Per-Project Token Bucket Rate Limiter          │
-               │ 4. sync.Pool Gzip Decompressor (Zero-Alloc)       │
-               │ 5. Enqueue to Buffered Channel                    │
-               └─────────────────────────┬─────────────────────────┘
-                                         │
-                    HTTP 202 Accepted (<15ms SLA achieved!)
-                                         │
-                                         ▼
-                            [Async Ingest Worker Pool]
-                                         │
-                   ┌─────────────────────┴─────────────────────┐
-                   │ • Schema sanitization & attribute capping │
-                   │ • Clock-skew timestamp normalization      │
-                   │ • UUIDv7 time-ordered ID generation       │
-                   └─────────────────────┬─────────────────────┘
-                                         │
-                     Dual Trigger: N=500 items OR T=250ms
-                                         │
-                                         ▼
-                     [Binary pgx.CopyFrom Bulk Protocol]
-                                         │
-                                         ▼
-                 [PostgreSQL Partitioned Table: telemetry_events]`}
+              {activeSection.responseSample}
+            </pre>
+          </section>
+        )}
+      </article>
+
+      {/* COLUMN 3: RIGHT CONSOLE (DARK CHARCOAL) */}
+      <aside className="fuma-col-right">
+        {/* Header & Mode Switcher */}
+        <div className="fuma-console-head">
+          <div className="fuma-console-tabs">
+            <button
+              type="button"
+              className={`fuma-tab-btn${consoleMode === 'playground' ? ' is-active' : ''}`}
+              onClick={() => setConsoleMode('playground')}
+            >
+              Playground
+            </button>
+            <button
+              type="button"
+              className={`fuma-tab-btn${consoleMode === 'code' ? ' is-active' : ''}`}
+              onClick={() => setConsoleMode('code')}
+            >
+              Code Snippets
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            {consoleMode === 'code' ? (
+              <div className="fuma-console-tabs">
+                {(['curl', 'node', 'go', 'python'] as const).map((lang) => (
+                  <button
+                    key={lang}
+                    type="button"
+                    className={`fuma-tab-btn${codeLang === lang ? ' is-active' : ''}`}
+                    onClick={() => setCodeLang(lang)}
+                    style={{ textTransform: 'uppercase', fontSize: '0.6875rem' }}
+                  >
+                    {lang === 'node' ? 'JS' : lang}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <span style={{ fontSize: '0.6875rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Live Client
+              </span>
+            )}
+
+            <button
+              type="button"
+              className="fuma-close-btn"
+              onClick={onTogglePlayground}
+              title="Close Playground"
+              aria-label="Close Playground"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {consoleMode === 'code' ? (
+          /* Code Snippet View */
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <div className="fuma-editor-box" style={{ flex: 1 }}>
+              <div className="fuma-editor-bar">
+                <span>{codeLang.toUpperCase()} SDK Client</span>
+                <button
+                  type="button"
+                  onClick={copyCode}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#94a3b8',
+                    cursor: 'pointer',
+                    fontSize: '0.6875rem',
+                  }}
+                >
+                  {copiedCode ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+              <pre className="fuma-code-block" style={{ minHeight: 320 }}>
+                {generatedCode}
               </pre>
             </div>
-          </section>
+          </div>
+        ) : (
+          /* Interactive Playground View */
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+            {/* Presets and Key Configuration */}
+            {activeSection.presets && activeSection.presets.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0.5rem 0' }}>
+                <span style={{ fontSize: '0.6875rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Payload Preset
+                </span>
+                <select
+                  style={{
+                    background: 'rgba(255,255,255,0.06)',
+                    color: '#f8fafc',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    borderRadius: '4px',
+                    padding: '0.25rem 0.5rem',
+                    fontSize: '0.75rem',
+                    outline: 'none',
+                  }}
+                  onChange={(e) => {
+                    const pr = activeSection.presets?.find((x) => x.name === e.target.value)
+                    if (pr) setRequestBody(pr.body)
+                  }}
+                >
+                  {activeSection.presets.map((pr) => (
+                    <option key={pr.name} value={pr.name} style={{ background: '#090d16', color: '#fff' }}>
+                      {pr.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
-          <section className="dash-card">
-            <h2 className="dash-card__title">HTTP Status Code Reference</h2>
-            <div className="dash-table-wrap" style={{ marginTop: '1rem' }}>
-              <table className="dash-table">
-                <thead>
-                  <tr>
-                    <th>Status</th>
-                    <th>Title</th>
-                    <th>Meaning &amp; Client Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td><span className="badge badge--active">202 Accepted</span></td>
-                    <td>Enqueued Successfully</td>
-                    <td>Payload passed validation and is queued for bulk persistence. SLA &lt;25ms.</td>
-                  </tr>
-                  <tr>
-                    <td><span className="badge badge--exception">400 Bad Request</span></td>
-                    <td>Malformed JSON / Empty Batch</td>
-                    <td>Envelope contains syntax error or zero items. Check payload formatting.</td>
-                  </tr>
-                  <tr>
-                    <td><span className="badge badge--exception">401 Unauthorized</span></td>
-                    <td>Invalid API Key</td>
-                    <td>Missing or unrecognized <code>X-Artracker-Key</code> header.</td>
-                  </tr>
-                  <tr>
-                    <td><span className="badge badge--exception">403 Forbidden</span></td>
-                    <td>Revoked Key</td>
-                    <td>API key has been revoked by workspace admin in Settings.</td>
-                  </tr>
-                  <tr>
-                    <td><span className="badge badge--exception">413 Payload Too Large</span></td>
-                    <td>Exceeded 512KB gzip / 2MB raw</td>
-                    <td>Batch envelope exceeds maximum size limits. Split into smaller batches.</td>
-                  </tr>
-                  <tr>
-                    <td><span className="badge badge--console">429 Too Many Requests</span></td>
-                    <td>Rate Limited</td>
-                    <td>Exceeded project RPS or EPS tokens. Backoff using exponential jitter.</td>
-                  </tr>
-                  <tr>
-                    <td><span className="badge badge--exception">503 Service Unavailable</span></td>
-                    <td>Queue Backpressure</td>
-                    <td>Ingest buffer is full. SDK should retry via local disk/memory cache.</td>
-                  </tr>
-                </tbody>
-              </table>
+            {/* API Key Selector if applicable */}
+            {activeSection.headers?.some((h) => h.name === 'X-Artracker-Key') && (
+              <div style={{ margin: '0.5rem 0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                  <span style={{ fontSize: '0.6875rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    X-Artracker-Key
+                  </span>
+                  {projectKeys.length > 0 && (
+                    <span style={{ fontSize: '0.6875rem', color: '#64748b' }}>
+                      Active Project #{projectId}
+                    </span>
+                  )}
+                </div>
+                <div
+                  style={{
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: '4px',
+                    padding: '0.35rem 0.6rem',
+                  }}
+                >
+                  <input
+                    type="text"
+                    placeholder="art_live_..."
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#f8fafc',
+                      fontFamily: 'var(--font-outlier)',
+                      fontSize: '0.75rem',
+                      width: '100%',
+                      outline: 'none',
+                    }}
+                    value={activeKey}
+                    onChange={(e) => setActiveKey(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Request Body / Query for endpoints */}
+            {activeSection.method && activeSection.method !== 'GET' && (
+              <div style={{ margin: '0.5rem 0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                  <span style={{ fontSize: '0.6875rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    JSON Body
+                  </span>
+                  <label style={{ fontSize: '0.6875rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={useGzip}
+                      onChange={(e) => setUseGzip(e.target.checked)}
+                    />
+                    <span>Gzip Compress</span>
+                  </label>
+                </div>
+                <div className="fuma-editor-box">
+                  <textarea
+                    rows={8}
+                    className="fuma-textarea"
+                    value={requestBody}
+                    onChange={(e) => setRequestBody(e.target.value)}
+                    placeholder="{ ... }"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Action Button */}
+            {activeSection.method ? (
+              <button
+                type="button"
+                className="fuma-run-btn"
+                onClick={handleExecute}
+                disabled={executing}
+              >
+                {executing ? 'Sending request...' : `Execute ${activeSection.method} Request`}
+              </button>
+            ) : (
+              <div style={{ padding: '0.75rem', color: '#94a3b8', fontSize: '0.75rem', textAlign: 'center' }}>
+                Select an API endpoint from the sidebar to execute live calls.
+              </div>
+            )}
+
+            {/* Response Inspector */}
+            <div className="fuma-resp-card" style={{ flex: 1 }}>
+              <div className="fuma-resp-card__head">
+                <span style={{ fontSize: '0.6875rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Response
+                </span>
+                {respStatus !== null && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span
+                      style={{
+                        fontFamily: 'var(--font-outlier)',
+                        fontSize: '0.6875rem',
+                        fontWeight: 700,
+                        padding: '0.125rem 0.4rem',
+                        borderRadius: '3px',
+                        background:
+                          respStatus >= 200 && respStatus < 300
+                            ? 'rgba(16, 185, 129, 0.2)'
+                            : respStatus === 429
+                              ? 'rgba(245, 158, 11, 0.2)'
+                              : 'rgba(239, 68, 68, 0.2)',
+                        color:
+                          respStatus >= 200 && respStatus < 300
+                            ? '#34d399'
+                            : respStatus === 429
+                              ? '#fbbf24'
+                              : '#f87171',
+                      }}
+                    >
+                      {respStatus} {respStatusText}
+                    </span>
+                    {respLatencyMs !== null && (
+                      <span style={{ fontFamily: 'var(--font-outlier)', fontSize: '0.6875rem', color: '#94a3b8' }}>
+                        {respLatencyMs} ms
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <pre className="fuma-resp-card__body">
+                {respStatus === null && !executing
+                  ? '// Response status and JSON output will appear here'
+                  : executing
+                    ? '// Transmitting...'
+                    : respBody}
+              </pre>
             </div>
-          </section>
-        </div>
-      )}
+          </div>
+        )}
+      </aside>
     </div>
   )
 }
