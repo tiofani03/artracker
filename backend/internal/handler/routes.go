@@ -15,6 +15,7 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Delete("/artworks/:id", h.DeleteArtwork)
 
 	api.Post("/ingest", h.VerifyIngestKey, h.RateLimitIngest, h.Ingest)
+	api.Post("/events", h.VerifyIngestKey, h.RateLimitAnalytics, h.IngestEvents)
 	api.Post("/replay/chunk-url", h.VerifyIngestKey, h.RateLimitIngest, h.GenerateChunkUploadURL)
 	api.Post("/replay/chunk-ack", h.VerifyIngestKey, h.RateLimitIngest, h.AcknowledgeChunk)
 
@@ -54,6 +55,14 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Get("/projects/:projectID/sessions/:sessionID", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetProjectSession)
 	api.Post("/projects/:projectID/seed-mock", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.SeedProjectMockData)
 	api.Post("/projects/:projectID/test-event", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.SendProjectTestEvent)
+
+	// Growth Analytics (Funnel & Cohort Retention)
+	api.Get("/projects/:projectID/analytics/catalog", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetAnalyticsCatalog)
+	api.Post("/projects/:projectID/analytics/funnel", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.CalculateFunnel)
+	api.Get("/projects/:projectID/analytics/retention", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.CalculateCohort)
+	api.Get("/projects/:projectID/analytics/funnels", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListSavedFunnels)
+	api.Post("/projects/:projectID/analytics/funnels", h.RequireAuth, h.RequireProjectRole(auth.RoleMember), h.CreateSavedFunnel)
+	api.Delete("/projects/:projectID/analytics/funnels/:funnelID", h.RequireAuth, h.RequireProjectRole(auth.RoleMember), h.DeleteSavedFunnel)
 
 	// Error tracking & crash diagnostics
 	api.Get("/projects/:projectID/issues", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListIssues)

@@ -1780,3 +1780,517 @@
   overflow-wrap: anywhere;
 }
 
+/* ==================== Growth Analytics: Funnel & Cohort ==================== */
+.growth-analytics-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.growth-header-card {
+  padding: var(--space-md) var(--space-lg);
+}
+
+.growth-header-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+.growth-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.growth-empty-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  background: var(--color-accent-wash);
+  border: var(--rule-hair) solid var(--color-rule-2);
+  border-radius: var(--radius-card);
+  flex-wrap: wrap;
+}
+
+.growth-empty-banner__text strong {
+  display: block;
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  margin-bottom: 2px;
+}
+
+.growth-empty-banner__text p {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-ink-2);
+}
+
+.growth-funnels-layout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+/* ---------- Funnel Builder Controls ---------- */
+.funnel-builder-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--color-paper-2);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-card);
+}
+
+.funnel-builder-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.funnel-builder-presets {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+.funnel-builder-quick-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.funnel-ctrl-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+.funnel-ctrl-label {
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.funnel-step-cards {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-2xs) 0;
+}
+
+.funnel-step-input-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-2xs) var(--space-xs);
+  background: var(--color-paper);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  transition: border-color var(--dur-short), box-shadow var(--dur-short);
+}
+
+.funnel-step-input-card.is-dragging {
+  opacity: 0.5;
+  border-style: dashed;
+}
+
+.funnel-step-input-card__drag-handle {
+  cursor: grab;
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+  user-select: none;
+}
+
+.funnel-step-input-card__badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-accent);
+  background: var(--color-accent-wash);
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.funnel-step-input-card__input-wrap {
+  min-width: 140px;
+  max-width: 220px;
+}
+
+.funnel-step-input {
+  height: 30px;
+  padding: 0 8px;
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+}
+
+.funnel-step-input-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.funnel-add-step-btn {
+  height: 34px;
+  padding: 0 12px;
+  border: 1px dashed var(--color-rule-2);
+  background: transparent;
+  border-radius: var(--radius-input);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--color-accent);
+  cursor: pointer;
+  transition: background var(--dur-micro), border-color var(--dur-micro);
+  white-space: nowrap;
+}
+
+.funnel-add-step-btn:hover {
+  background: var(--color-accent-wash);
+  border-color: var(--color-accent);
+}
+
+.funnel-builder-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: var(--space-xs);
+  border-top: var(--rule-hair) solid var(--color-rule);
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.funnel-step-count-hint {
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+}
+
+/* ---------- Funnel Chart & Drop-off Visualization ---------- */
+.funnel-chart-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-sm) 0;
+}
+
+.funnel-summary-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-lg);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-paper-2);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+}
+
+.funnel-summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.funnel-summary-label {
+  font-size: 11px;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+.funnel-summary-value {
+  font-size: var(--text-md);
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+}
+
+.funnel-summary-value--highlight {
+  color: var(--color-accent);
+  font-size: var(--text-lg);
+}
+
+.funnel-summary-item--speed {
+  margin-left: auto;
+}
+
+.funnel-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.funnel-step-block {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.funnel-bar-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-paper-2);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+}
+
+.funnel-bar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.funnel-bar-title-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.funnel-step-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-accent);
+  background: var(--color-accent-wash);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.funnel-step-name {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+}
+
+.funnel-bar-counts {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+}
+
+.funnel-bar-count-num {
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  color: var(--color-ink);
+}
+
+.funnel-bar-count-unit {
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+}
+
+.funnel-bar-pct-pill {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-accent);
+  background: var(--color-accent-wash);
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.funnel-bar-track {
+  height: 12px;
+  background: var(--color-paper-3);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.funnel-bar-fill {
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: 6px;
+  transition: width var(--dur-long) var(--ease-out);
+}
+
+.funnel-bar-fill--final {
+  background: var(--color-success);
+}
+
+.funnel-dropoff-connector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  padding: 6px 0;
+}
+
+.funnel-dropoff-line {
+  flex: 1;
+  height: 1px;
+  background: var(--color-rule);
+}
+
+.funnel-dropoff-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  background: var(--color-paper);
+  border: 1px solid var(--color-rule);
+  border-radius: 12px;
+  font-size: 11px;
+  color: var(--color-ink-2);
+}
+
+.funnel-dropoff-arrow {
+  color: var(--color-error);
+  font-weight: 700;
+}
+
+.funnel-dropoff-loss {
+  color: var(--color-error);
+  font-weight: 500;
+}
+
+.funnel-dropoff-sep {
+  color: var(--color-muted);
+}
+
+.funnel-dropoff-time {
+  color: var(--color-muted);
+}
+
+.funnel-breakdown-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding-top: var(--space-md);
+  border-top: var(--rule-hair) solid var(--color-rule);
+}
+
+.funnel-breakdown-title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.funnel-breakdown-desc {
+  margin: 2px 0 0 0;
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+}
+
+/* ---------- Cohort Retention Heatmap ---------- */
+.cohort-heatmap-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.cohort-controls-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.cohort-controls-left {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.cohort-event-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cohort-controls-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.cohort-table-wrapper {
+  overflow-x: auto;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-card);
+}
+
+.cohort-matrix-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+}
+
+.cohort-matrix-table th,
+.cohort-matrix-table td {
+  padding: 8px 10px;
+  text-align: center;
+  border: var(--rule-hair) solid var(--color-rule);
+  white-space: nowrap;
+}
+
+.cohort-th-sticky,
+.cohort-td-sticky {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--color-paper);
+  text-align: left !important;
+  font-weight: 600;
+  min-width: 120px;
+}
+
+.cohort-th-size,
+.cohort-td-size {
+  min-width: 70px;
+  text-align: right !important;
+  font-family: var(--font-mono);
+}
+
+.cohort-th-period {
+  min-width: 64px;
+}
+
+.cohort-row-average td {
+  border-bottom: 2px solid var(--color-rule-2);
+}
+
+.cohort-cell {
+  min-width: 64px;
+  font-variant-numeric: tabular-nums;
+  transition: background-color var(--dur-micro);
+}
+
+.cohort-cell-pct {
+  display: block;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.cohort-cell-sub {
+  display: block;
+  font-size: 10px;
+  opacity: 0.8;
+  font-family: var(--font-mono);
+}
+
+.cohort-cell--future {
+  background: var(--color-paper-2) !important;
+}
+
+.cohort-dash {
+  font-size: 14px;
+  color: var(--color-muted);
+  opacity: 0.4;
+}
+
