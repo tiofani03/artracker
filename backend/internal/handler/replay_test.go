@@ -262,7 +262,7 @@ func TestReplayDatabaseIntegration(t *testing.T) {
 	e.addMember(t, orgID, uid, "owner")
 	pid := e.addProject(t, orgID, "replay-app")
 
-	key := e.createKey(t, pid, "client", authHdr)
+	key := e.createKey(t, pid, "public_client", authHdr)
 	keyHdr := map[string]string{
 		"X-Artracker-Key": key.Secret,
 		"Content-Type":    "application/json",
