@@ -526,7 +526,7 @@ export default function App() {
               }}
               className="site-nav__link"
             >
-              API Docs &amp; Playground
+              Documentation
             </a>
             <a
               href="https://github.com/tiofani03/artracker"
@@ -563,8 +563,15 @@ export default function App() {
                 >
                   {user ? 'Open Dashboard' : 'Login'}
                 </button>
-                <a href="#sdks" className="key">
-                  Explore SDKs
+                <a
+                  href="/docs"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    navigate('/docs')
+                  }}
+                  className="key"
+                >
+                  API Docs &amp; Playground
                 </a>
               </div>
             </div>
@@ -669,6 +676,19 @@ export default function App() {
                       </li>
                     ))}
                   </ul>
+                  <p style={{ marginTop: '1.25rem', fontSize: '0.8125rem' }}>
+                    Need raw HTTP/2 ingest or custom language SDK?{' '}
+                    <a
+                      href="/docs"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        navigate('/docs')
+                      }}
+                      style={{ color: 'var(--color-accent)', fontWeight: 600 }}
+                    >
+                      Explore the Ingestion API Documentation &rarr;
+                    </a>
+                  </p>
                 </div>
 
                 <div key={activeSdk} className="graphite-pane">
@@ -707,8 +727,15 @@ export default function App() {
                 >
                   {user ? 'Open Dashboard' : 'Login'}
                 </button>
-                <a href="#sdks" className="key">
-                  Explore SDKs
+                <a
+                  href="/docs"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    navigate('/docs')
+                  }}
+                  className="key"
+                >
+                  API Documentation
                 </a>
               </div>
             </div>
@@ -723,6 +750,15 @@ export default function App() {
           <div className="footer-links">
             <a href="#features">Features</a>
             <a href="#sdks">Native SDKs</a>
+            <a
+              href="/docs"
+              onClick={(e) => {
+                e.preventDefault()
+                navigate('/docs')
+              }}
+            >
+              Documentation
+            </a>
             <a href="https://github.com/tiofani03/artracker" target="_blank" rel="noreferrer">
               GitHub
             </a>

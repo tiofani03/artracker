@@ -120,9 +120,9 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
     heading: 'Developers',
     items: [
       {
-        to: '/dashboard/docs',
-        label: 'API Docs & Playground',
-        icon: 'M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2Zm3 5 4 3-4 3m6 0h4',
+        to: '/docs',
+        label: 'API Documentation',
+        icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Zm-1 2 5 5h-5V4ZM8 12h8v2H8v-2Zm0 4h8v2H8v-2Zm0-8h4v2H8V8Z',
         demoAllowed: true,
       },
     ],
