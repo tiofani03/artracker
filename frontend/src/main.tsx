@@ -9,11 +9,14 @@ import DashboardPage from './pages/DashboardPage'
 import DocsPage from './pages/DocsPage'
 import LoginPage from './pages/LoginPage'
 import SettingsPage from './pages/SettingsPage'
+import IssuesPage from './pages/IssuesPage'
+import IssueDetailPage from './pages/IssueDetailPage'
 import { useLocation } from './router'
 
 function Routes() {
-  const path = useLocation()
-  switch (path.replace(/\/+$/, '') || '/') {
+  const path = useLocation().replace(/\/+$/, '') || '/'
+  if (path.startsWith('/dashboard/issues/')) return <IssueDetailPage />
+  switch (path) {
     case '/login':
       return <LoginPage />
     case '/docs':
@@ -29,6 +32,8 @@ function Routes() {
       return <DashboardPage section="campaigns" />
     case '/dashboard/alerts':
       return <DashboardPage section="alerts" />
+    case '/dashboard/issues':
+      return <IssuesPage />
     case '/dashboard/settings':
       return <SettingsPage />
     default:

@@ -8,23 +8,25 @@ import (
 )
 
 type WorkerPool struct {
-	queue         chan BatchJob
-	sink          StorageSink
-	sanitizer     *Sanitizer
-	metrics       *Metrics
-	batchSize     int
-	flushInterval time.Duration
-	numWorkers    int
-	wg            sync.WaitGroup
-	stopOnce      sync.Once
-	closed        bool
-	mu            sync.Mutex
+	queue          chan BatchJob
+	sink           StorageSink
+	sanitizer      *Sanitizer
+	metrics        *Metrics
+	issueProcessor IssueProcessor
+	batchSize      int
+	flushInterval  time.Duration
+	numWorkers     int
+	wg             sync.WaitGroup
+	stopOnce       sync.Once
+	closed         bool
+	mu             sync.Mutex
 }
 
 func NewWorkerPool(
 	queueSize, numWorkers, batchSize, flushIntervalMs int,
 	sink StorageSink,
 	metrics *Metrics,
+	processors ...IssueProcessor,
 ) *WorkerPool {
 	if queueSize <= 0 {
 		queueSize = 2048
@@ -47,6 +49,9 @@ func NewWorkerPool(
 		batchSize:     batchSize,
 		flushInterval: time.Duration(flushIntervalMs) * time.Millisecond,
 		numWorkers:    numWorkers,
+	}
+	if len(processors) > 0 {
+		wp.issueProcessor = processors[0]
 	}
 
 	wp.start()
@@ -86,6 +91,13 @@ func (wp *WorkerPool) workerLoop(workerID int) {
 		} else {
 			wp.metrics.AddEventsFlushed(len(rows))
 			wp.metrics.IncBatchesFlushed()
+			if wp.issueProcessor != nil {
+				pctx, pcancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if perr := wp.issueProcessor.ProcessRows(pctx, rows); perr != nil {
+					slog.Error("issue grouping failed", "worker", workerID, "err", perr)
+				}
+				pcancel()
+			}
 		}
 
 		rows = rows[:0]

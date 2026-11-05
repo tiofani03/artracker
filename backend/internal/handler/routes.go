@@ -55,6 +55,13 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Post("/projects/:projectID/seed-mock", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.SeedProjectMockData)
 	api.Post("/projects/:projectID/test-event", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.SendProjectTestEvent)
 
+	// Error tracking & crash diagnostics
+	api.Get("/projects/:projectID/issues", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListIssues)
+	api.Get("/projects/:projectID/issues/:issueID", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetIssue)
+	api.Patch("/projects/:projectID/issues/:issueID", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.UpdateIssueStatus)
+	api.Post("/projects/:projectID/issues/:issueID/assign", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.AssignIssue)
+	api.Post("/projects/:projectID/releases/:version/sourcemaps", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.UploadSourceMap)
+
 	api.Get("/sdk/validate", h.sdkValidate(false))
 	api.Get("/sdk/validate-admin", h.sdkValidate(true))
 
