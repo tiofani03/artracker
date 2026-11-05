@@ -519,6 +519,16 @@ export default function App() {
               Native SDKs
             </a>
             <a
+              href="/docs"
+              onClick={(e) => {
+                e.preventDefault()
+                navigate('/docs')
+              }}
+              className="site-nav__link"
+            >
+              API Docs &amp; Playground
+            </a>
+            <a
               href="https://github.com/tiofani03/artracker"
               target="_blank"
               rel="noreferrer"
