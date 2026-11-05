@@ -20,6 +20,7 @@ import (
 	"github.com/tiofani03/artracker/backend/internal/db"
 	"github.com/tiofani03/artracker/backend/internal/handler"
 	"github.com/tiofani03/artracker/backend/internal/ingest"
+	"github.com/tiofani03/artracker/backend/internal/storage"
 )
 
 func main() {
@@ -79,6 +80,11 @@ func main() {
 		AllowHeaders: "Origin, Content-Type, Content-Encoding, Accept, X-Artracker-Key",
 		AllowMethods: "POST, OPTIONS",
 	}))
+	app.Use("/api/v1/replay", cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowHeaders: "Origin, Content-Type, Content-Encoding, Accept, X-Artracker-Key",
+		AllowMethods: "POST, OPTIONS",
+	}))
 	app.Use("/api/v1/sdk", cors.New(cors.Config{
 		AllowOrigins: "*",
 		AllowHeaders: "Origin, Content-Type, Accept, X-Artracker-Key",
@@ -94,12 +100,34 @@ func main() {
 		}))
 	}
 
+	var replayStore storage.ReplayStore
+	if cfg.R2BucketName != "" {
+		store, err := storage.NewR2(storage.Config{
+			AccountID:       cfg.R2AccountID,
+			AccessKeyID:     cfg.R2AccessKeyID,
+			AccessKeySecret: cfg.R2AccessKeySecret,
+			BucketName:      cfg.R2BucketName,
+			Endpoint:        cfg.R2Endpoint,
+			Region:          cfg.R2Region,
+		})
+		if err != nil {
+			log.Warn("r2 storage init failed", "err", err)
+		} else {
+			replayStore = store
+			log.Info("session replay storage configured", "bucket", cfg.R2BucketName)
+		}
+	} else {
+		log.Warn("r2 storage not configured (R2_BUCKET_NAME is empty)")
+	}
+
 	providers := map[string]handler.OAuthProvider{}
 	if cfg.GoogleClientID != "" && cfg.GoogleClientSecret != "" {
 		providers["google"] = handler.NewGoogleProvider(cfg.GoogleClientID, cfg.GoogleClientSecret)
 	}
 
-	h := handler.New(pool, cfg, auth.NewIssuer(cfg.JWTSecret, 15*time.Minute), providers).WithIngest(ingestSvc)
+	h := handler.New(pool, cfg, auth.NewIssuer(cfg.JWTSecret, 15*time.Minute), providers).
+		WithIngest(ingestSvc).
+		WithReplayStore(replayStore)
 	app.Get("/healthz", h.Health)
 	app.Get("/auth/callback/:provider", h.OAuthCallback)
 	h.Routes(app.Group("/api/v1"))
