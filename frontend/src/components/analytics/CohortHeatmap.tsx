@@ -1,4 +1,7 @@
+import { useMemo } from 'react'
 import type { CohortResponse, EventCatalog } from '../../api'
+import CustomSelect, { type CustomSelectOption } from '../CustomSelect'
+import { formatEventName } from './friendlyNames'
 
 type Props = {
   data: CohortResponse | null
@@ -26,21 +29,93 @@ export default function CohortHeatmap({
   const periodLabel = granularity === 'day' ? 'Day' : 'Week'
   const timezone = data?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 
+  // Summary retention numbers
+  const retentionStats = useMemo(() => {
+    if (!data || !data.weighted_averages || data.weighted_averages.length === 0) {
+      return null
+    }
+    const week1Avg = data.weighted_averages[1] ?? 0
+    const week4Avg =
+      data.weighted_averages[4] ??
+      (data.weighted_averages[data.weighted_averages.length - 1] ?? 0)
+    const totalTrackedUsers = data.cohorts.reduce((sum, c) => sum + c.cohort_size, 0)
+
+    return {
+      week1Avg,
+      week4Avg,
+      totalTrackedUsers,
+      totalCohorts: data.cohorts.length,
+    }
+  }, [data])
+
   if (!data || data.cohorts.length === 0) {
     return (
       <div className="dash-empty-state">
-        <p>No cohort retention records found for this period. Try sending events or seeding data.</p>
+        <p>No cohort retention records found for this period. Send events or seed data to compute.</p>
       </div>
     )
   }
 
   const periodsCount = data.weighted_averages.length
 
+  const startEventOptions: CustomSelectOption<string>[] = [
+    { value: '', label: 'First Seen (Any Event)', meta: 'All new users' },
+    ...(catalog?.event_names?.map((en) => ({
+      value: en.name,
+      label: `${formatEventName(en.name)} (${en.name})`,
+      badge: `${en.count.toLocaleString()} occurrences`,
+    })) || []),
+  ]
+
+  const returnEventOptions: CustomSelectOption<string>[] = [
+    { value: '', label: 'Any Active Return Event', meta: 'Any subsequent user activity' },
+    ...(catalog?.event_names?.map((en) => ({
+      value: en.name,
+      label: `${formatEventName(en.name)} (${en.name})`,
+      badge: `${en.count.toLocaleString()} occurrences`,
+    })) || []),
+  ]
+
   return (
-    <div className="cohort-heatmap-panel">
-      {/* Top Filter & Control Row */}
-      <div className="cohort-controls-bar">
-        <div className="cohort-controls-left">
+    <div className="amplitude-cohort-container">
+      {/* MoEngage / Amplitude KPI Scorecards */}
+      {retentionStats && (
+        <div className="amplitude-kpi-grid">
+          <div className="amplitude-kpi-card amplitude-kpi-card--primary">
+            <span className="amplitude-kpi-label">{periodLabel} 1 Retention</span>
+            <div className="amplitude-kpi-value">
+              {retentionStats.week1Avg.toFixed(1)}%
+            </div>
+            <span className="amplitude-kpi-sub">
+              Weighted average return rate across all cohorts in {periodLabel.toLowerCase()} 1
+            </span>
+          </div>
+
+          <div className="amplitude-kpi-card">
+            <span className="amplitude-kpi-label">Day 30+ Retention</span>
+            <div className="amplitude-kpi-value">
+              {retentionStats.week4Avg.toFixed(1)}%
+            </div>
+            <span className="amplitude-kpi-sub">
+              Long-term retained active user baseline
+            </span>
+          </div>
+
+          <div className="amplitude-kpi-card">
+            <span className="amplitude-kpi-label">Tracked User Cohorts</span>
+            <div className="amplitude-kpi-value">
+              {retentionStats.totalTrackedUsers.toLocaleString()}
+            </div>
+            <span className="amplitude-kpi-sub">
+              Across {retentionStats.totalCohorts} {granularity}ly cohorts
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Query Bar (MoEngage Style) */}
+      <div className="amplitude-cohort-query-bar">
+        <div className="amplitude-cohort-query-left">
           {/* Granularity Toggle */}
           <div className="dash-seg" role="group" aria-label="Cohort time granularity">
             <button
@@ -48,73 +123,55 @@ export default function CohortHeatmap({
               className={`dash-seg__btn${granularity === 'week' ? ' is-active' : ''}`}
               onClick={() => onGranularityChange('week')}
             >
-              Weekly Retention
+              Weekly Cohorts
             </button>
             <button
               type="button"
               className={`dash-seg__btn${granularity === 'day' ? ' is-active' : ''}`}
               onClick={() => onGranularityChange('day')}
             >
-              Daily Retention
+              Daily Cohorts
             </button>
           </div>
 
-          {/* Start Event */}
-          <div className="cohort-event-filter">
-            <label htmlFor="cohort-start-event" className="funnel-ctrl-label">
-              Anchor:
-            </label>
-            <input
-              id="cohort-start-event"
-              type="text"
-              className="dash-input dash-input--sm"
-              placeholder="First seen (any event)"
+          {/* Anchor Event */}
+          <div className="amplitude-query-item">
+            <span className="amplitude-query-label">First Performed:</span>
+            <CustomSelect
+              size="sm"
+              searchable
+              options={startEventOptions}
               value={startEvent}
-              onChange={(e) => onStartEventChange(e.target.value)}
-              list="cohort-start-events-list"
+              onChange={onStartEventChange}
+              placeholder="First seen event"
+              ariaLabel="Select anchor event"
             />
-            <datalist id="cohort-start-events-list">
-              {catalog?.event_names?.map((en) => (
-                <option key={'start-' + en.name} value={en.name}>
-                  {en.name}
-                </option>
-              ))}
-            </datalist>
           </div>
 
           {/* Return Event */}
-          <div className="cohort-event-filter">
-            <label htmlFor="cohort-return-event" className="funnel-ctrl-label">
-              Return:
-            </label>
-            <input
-              id="cohort-return-event"
-              type="text"
-              className="dash-input dash-input--sm"
-              placeholder="Any active event"
+          <div className="amplitude-query-item">
+            <span className="amplitude-query-label">Then Returned:</span>
+            <CustomSelect
+              size="sm"
+              searchable
+              options={returnEventOptions}
               value={returnEvent}
-              onChange={(e) => onReturnEventChange(e.target.value)}
-              list="cohort-return-events-list"
+              onChange={onReturnEventChange}
+              placeholder="Any return event"
+              ariaLabel="Select return event"
             />
-            <datalist id="cohort-return-events-list">
-              {catalog?.event_names?.map((en) => (
-                <option key={'return-' + en.name} value={en.name}>
-                  {en.name}
-                </option>
-              ))}
-            </datalist>
           </div>
         </div>
 
-        <div className="cohort-controls-right">
-          <span className="badge badge--preview" title="Cohort boundary cutoffs align to local midnight">
-            🌐 {timezone}
+        <div className="amplitude-cohort-query-right">
+          <span className="badge badge--preview">
+            Timezone: {timezone}
           </span>
-          {loading && <span className="dash-code">Calculating...</span>}
+          {loading && <span className="dash-code">Evaluating...</span>}
         </div>
       </div>
 
-      {/* Cohort Matrix Table with OKLCH Gradient Shading */}
+      {/* Cohort Retention Heatmap Table */}
       <div className="cohort-table-wrapper">
         <table className="cohort-matrix-table">
           <thead>
@@ -178,7 +235,6 @@ export default function CohortHeatmap({
                   }
 
                   const pct = cell.percentage ?? 0
-                  // High contrast: switch to white text if background saturation/lightness is high
                   const textColor = pct > 52 ? 'var(--color-paper-hi)' : 'var(--color-ink)'
                   const bgOpacity = Math.min(Math.max(pct * 0.85, 3), 90)
 

@@ -11,10 +11,11 @@ import {
 } from '../api'
 import DashboardShell from '../components/DashboardShell'
 import GrowthAnalyticsView from '../components/analytics/GrowthAnalyticsView'
+import CampaignsView from '../components/campaigns/CampaignsView'
 import { Link, navigate } from '../router'
 import '../dashboard.css'
 
-export type ConsoleSection = 'overview' | 'replays' | 'logs' | 'campaigns' | 'alerts'
+export type ConsoleSection = 'overview' | 'replays' | 'logs' | 'campaigns' | 'funnels' | 'alerts'
 type RangeKey = '24h' | '7d' | '30d'
 type LogKind = 'all' | 'exception' | 'network' | 'console'
 
@@ -22,7 +23,8 @@ const SECTION_TITLES: Record<ConsoleSection, string> = {
   overview: 'Overview',
   replays: 'Session Replay',
   logs: 'Event Log',
-  campaigns: 'Growth Analytics',
+  campaigns: 'Marketing Campaigns',
+  funnels: 'Funnel & Retention',
   alerts: 'Custom Alerts',
 }
 
@@ -841,7 +843,7 @@ function DashboardInner({
                         <p className="dash-card__desc">UTM acquisition and checkout conversion.</p>
                       </div>
                       <button type="button" className="dash-btn" onClick={() => goSection('/dashboard/campaigns')}>
-                        Funnel →
+                        Campaigns →
                       </button>
                     </div>
 
@@ -1123,8 +1125,13 @@ function DashboardInner({
               </section>
             )}
 
-            {/* ==================== GROWTH ANALYTICS ==================== */}
+            {/* ==================== MARKETING CAMPAIGNS ==================== */}
             {section === 'campaigns' && (
+              <CampaignsView project={project} isDemo={isDemo} />
+            )}
+
+            {/* ==================== FUNNEL & RETENTION ==================== */}
+            {section === 'funnels' && (
               <GrowthAnalyticsView project={project} isDemo={isDemo} />
             )}
 
