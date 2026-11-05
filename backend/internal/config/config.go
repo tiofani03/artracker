@@ -27,6 +27,14 @@ type Config struct {
 	IngestProjectEventsPerSec float64
 	IngestKeyCacheTTLSec   int
 
+	// Analytics Pipeline configuration
+	AnalyticsWorkers             int
+	AnalyticsQueueSize           int
+	AnalyticsBatchSize           int
+	AnalyticsFlushIntervalMs     int
+	AnalyticsProjectRPS          float64
+	AnalyticsProjectEventsPerSec float64
+
 	// Auth. JWTSecret has a development-only default; production must set it.
 	JWTSecret          string
 	PublicURL          string // frontend base URL, post-login redirect target
@@ -67,6 +75,13 @@ func Load() Config {
 		IngestProjectRPS:          envFloat("INGEST_PROJECT_RPS", 50.0),
 		IngestProjectEventsPerSec: envFloat("INGEST_PROJECT_EVENTS_PER_SEC", 1000.0),
 		IngestKeyCacheTTLSec:      envInt("INGEST_KEY_CACHE_TTL_SEC", 60),
+
+		AnalyticsWorkers:             envInt("ANALYTICS_WORKERS", 4),
+		AnalyticsQueueSize:           envInt("ANALYTICS_QUEUE_SIZE", 2048),
+		AnalyticsBatchSize:           envInt("ANALYTICS_BATCH_SIZE", 500),
+		AnalyticsFlushIntervalMs:     envInt("ANALYTICS_FLUSH_INTERVAL_MS", 250),
+		AnalyticsProjectRPS:          envFloat("ANALYTICS_PROJECT_RPS", 50.0),
+		AnalyticsProjectEventsPerSec: envFloat("ANALYTICS_PROJECT_EVENTS_PER_SEC", 1000.0),
 
 		JWTSecret:          env("JWT_SECRET", ""),
 		PublicURL:          strings.TrimRight(env("PUBLIC_URL", "http://localhost:5173"), "/"),

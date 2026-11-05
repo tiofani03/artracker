@@ -29,6 +29,7 @@ function Routes() {
     case '/dashboard/logs':
       return <DashboardPage section="logs" />
     case '/dashboard/campaigns':
+    case '/dashboard/analytics':
       return <DashboardPage section="campaigns" />
     case '/dashboard/alerts':
       return <DashboardPage section="alerts" />

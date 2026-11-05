@@ -9,6 +9,7 @@ import {
   type TelemetryEvent,
 } from '../api'
 import DashboardShell from '../components/DashboardShell'
+import GrowthAnalyticsView from '../components/analytics/GrowthAnalyticsView'
 import { Link, navigate } from '../router'
 import '../dashboard.css'
 
@@ -20,7 +21,7 @@ const SECTION_TITLES: Record<ConsoleSection, string> = {
   overview: 'Overview',
   replays: 'Session Replay',
   logs: 'Event Log',
-  campaigns: 'Campaigns',
+  campaigns: 'Growth Analytics',
   alerts: 'Custom Alerts',
 }
 
@@ -215,13 +216,6 @@ const CAMPAIGNS = [
   { name: 'utm_github_readme', source: 'github / referral', visitors: '2,910', signups: '328', checkouts: '96', conv: '3.30%' },
   { name: 'utm_ig_reels', source: 'instagram / paid', visitors: '3,440', signups: '219', checkouts: '44', conv: '1.28%' },
   { name: 'utm_newsletter_nov', source: 'email / ops-digest', visitors: '1,180', signups: '104', checkouts: '26', conv: '2.20%' },
-]
-
-const FUNNEL_STEPS = [
-  { step: 'Landing View ($pageview)', count: '12,350', pct: 100 },
-  { step: 'Clicked Login / Signup', count: '3,480', pct: 28 },
-  { step: 'Workspace & Project Created', count: '1,063', pct: 9 },
-  { step: 'Checkout Completed', count: '314', pct: 3 },
 ]
 
 type AlertRule = {
@@ -1090,76 +1084,9 @@ function DashboardInner({
               </section>
             )}
 
-            {/* ==================== CAMPAIGNS ==================== */}
+            {/* ==================== GROWTH ANALYTICS ==================== */}
             {section === 'campaigns' && (
-              <div className="dash-panel-stack">
-                <section className="dash-card dash-card--compact">
-                  <div className="dash-card__head">
-                    <div>
-                      <h2 className="dash-card__title">Acquisition &amp; Checkout Funnel</h2>
-                      <p className="dash-card__desc">End-to-end conversion from landing view to paid activation.</p>
-                    </div>
-                  </div>
-
-                  <div className="dash-funnel">
-                    {FUNNEL_STEPS.map((f) => (
-                      <div key={f.step} className="dash-funnel__row">
-                        <div className="dash-funnel__meta">
-                          <span>{f.step}</span>
-                          <span className="dash-code">
-                            {f.count} · {f.pct}%
-                          </span>
-                        </div>
-                        <div className="dash-funnel__track">
-                          <div className="dash-funnel__fill" style={{ width: `${Math.max(f.pct, 4)}%` }} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-
-                <section className="dash-card dash-card--compact">
-                  <div className="dash-card__head">
-                    <div>
-                      <h2 className="dash-card__title">UTM Campaign Performance</h2>
-                      <p className="dash-card__desc">
-                        Auto-captured UTM tags combined with custom <code>artracker.track()</code> events.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="dash-table-wrap">
-                    <table className="dash-table">
-                      <thead>
-                        <tr>
-                          <th>Campaign</th>
-                          <th>Source / Medium</th>
-                          <th>Visitors</th>
-                          <th>Signups</th>
-                          <th>Checkouts</th>
-                          <th>Conv. Rate</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {CAMPAIGNS.map((c) => (
-                          <tr key={c.name}>
-                            <td data-label="Campaign" className="dash-code">
-                              {c.name}
-                            </td>
-                            <td data-label="Source / Medium">{c.source}</td>
-                            <td data-label="Visitors">{c.visitors}</td>
-                            <td data-label="Signups">{c.signups}</td>
-                            <td data-label="Checkouts">{c.checkouts}</td>
-                            <td data-label="Conv. Rate">
-                              <span className="badge badge--role">{c.conv}</span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
-              </div>
+              <GrowthAnalyticsView project={project} isDemo={isDemo} />
             )}
 
             {/* ==================== ALERTS ==================== */}
