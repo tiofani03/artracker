@@ -192,4 +192,6 @@ export const telemetryApi = {
     request<{ items: TelemetryEvent[] }>(`/projects/${projectId}/events?kind=${kind}&limit=${limit}`),
   seedMock: (projectId: number) =>
     post<{ status: string; seeded: number }>(`/projects/${projectId}/seed-mock`),
+  sendTestEvent: (projectId: number) =>
+    post<{ status: string; event_id: string }>(`/projects/${projectId}/test-event`),
 }
