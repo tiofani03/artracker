@@ -11,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 
+	"github.com/tiofani03/artracker/backend/internal/analytics"
 	"github.com/tiofani03/artracker/backend/internal/ingest"
 )
 
@@ -397,6 +398,91 @@ func (h *Handler) SeedProjectMockData(c *fiber.Ctx) error {
 
 	if err := h.ingestSvc.Sink().WriteBatch(ctx, rows); err != nil {
 		return err
+	}
+
+	// Also seed Growth Analytics events & cohort history if analytics service is enabled
+	if h.analyticsSvc != nil {
+		analyticsRows := make([]analytics.EventRow, 0, 150)
+		sources := []string{"google", "meta_ads", "twitter", "email", "organic"}
+		browsers := []string{"Chrome", "Safari", "Firefox"}
+
+		// Generate multi-week funnel conversions
+		for w := 3; w >= 0; w-- {
+			weekBase := now.Add(-time.Duration(w*7*24) * time.Hour)
+			for u := 1; u <= 30; u++ {
+				uID := fmt.Sprintf("usr_%d_%d", w, u)
+				dID := fmt.Sprintf("dev_%d_%d", w, u)
+				utm := sources[(w+u)%len(sources)]
+				browser := browsers[u%len(browsers)]
+				userStart := weekBase.Add(time.Duration(u*45) * time.Minute)
+
+				rID1, _ := uuid.NewV7()
+				analyticsRows = append(analyticsRows, analytics.EventRow{
+					ID: rID1, ProjectID: projectID, SessionID: fmt.Sprintf("ses_%d_%d", w, u),
+					UserID: uID, DeviceID: dID, ActorID: "u:" + uID, EventName: "landing_view",
+					Properties: []byte(`{"plan":"pro"}`), UTMSource: utm, Browser: browser, OS: "Web",
+					Timestamp: userStart,
+				})
+
+				// 75% view product
+				if u%4 != 0 {
+					rID2, _ := uuid.NewV7()
+					analyticsRows = append(analyticsRows, analytics.EventRow{
+						ID: rID2, ProjectID: projectID, SessionID: fmt.Sprintf("ses_%d_%d", w, u),
+						UserID: uID, DeviceID: dID, ActorID: "u:" + uID, EventName: "view_product",
+						Properties: []byte(`{"plan":"pro"}`), UTMSource: utm, Browser: browser, OS: "Web",
+						Timestamp: userStart.Add(3 * time.Minute),
+					})
+				}
+
+				// 45% add to cart
+				if u%2 == 0 {
+					rID3, _ := uuid.NewV7()
+					analyticsRows = append(analyticsRows, analytics.EventRow{
+						ID: rID3, ProjectID: projectID, SessionID: fmt.Sprintf("ses_%d_%d", w, u),
+						UserID: uID, DeviceID: dID, ActorID: "u:" + uID, EventName: "add_to_cart",
+						Properties: []byte(`{"plan":"pro"}`), UTMSource: utm, Browser: browser, OS: "Web",
+						Timestamp: userStart.Add(7 * time.Minute),
+					})
+				}
+
+				// 25% checkout
+				if u%4 == 1 {
+					rID4, _ := uuid.NewV7()
+					analyticsRows = append(analyticsRows, analytics.EventRow{
+						ID: rID4, ProjectID: projectID, SessionID: fmt.Sprintf("ses_%d_%d", w, u),
+						UserID: uID, DeviceID: dID, ActorID: "u:" + uID, EventName: "checkout_start",
+						Properties: []byte(`{"plan":"pro"}`), UTMSource: utm, Browser: browser, OS: "Web",
+						Timestamp: userStart.Add(11 * time.Minute),
+					})
+
+					// 15% complete purchase
+					if u%8 == 1 {
+						rID5, _ := uuid.NewV7()
+						analyticsRows = append(analyticsRows, analytics.EventRow{
+							ID: rID5, ProjectID: projectID, SessionID: fmt.Sprintf("ses_%d_%d", w, u),
+							UserID: uID, DeviceID: dID, ActorID: "u:" + uID, EventName: "purchase_completed",
+							Properties: []byte(`{"plan":"pro","revenue":250000}`), UTMSource: utm, Browser: browser, OS: "Web",
+							Timestamp: userStart.Add(15 * time.Minute),
+						})
+					}
+				}
+			}
+		}
+
+		_ = h.analyticsSvc.Sink().WriteBatch(ctx, analyticsRows, nil)
+
+		// Seed a default saved funnel if none exists
+		existingFunnels, _ := h.analyticsSvc.ListSavedFunnels(ctx, projectID)
+		if len(existingFunnels) == 0 {
+			_, _ = h.analyticsSvc.CreateSavedFunnel(ctx, projectID, nil, analytics.SaveFunnelInput{
+				Name:          "Acquisition & Checkout Funnel",
+				Steps:         []string{"landing_view", "view_product", "add_to_cart", "checkout_start", "purchase_completed"},
+				WindowSeconds: 86400,
+				CountingMode:  "users",
+				BreakdownBy:   "utm_source",
+			})
+		}
 	}
 
 	return c.JSON(fiber.Map{

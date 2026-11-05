@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/tiofani03/artracker/backend/internal/analytics"
 	"github.com/tiofani03/artracker/backend/internal/auth"
 	"github.com/tiofani03/artracker/backend/internal/config"
 	"github.com/tiofani03/artracker/backend/internal/ingest"
@@ -16,12 +17,13 @@ import (
 
 // Handler carries the dependencies every route needs.
 type Handler struct {
-	db          *pgxpool.Pool
-	cfg         config.Config
-	issuer      *auth.Issuer
-	providers   map[string]OAuthProvider
-	ingestSvc   *ingest.Service
-	replayStore storage.ReplayStore
+	db           *pgxpool.Pool
+	cfg          config.Config
+	issuer       *auth.Issuer
+	providers    map[string]OAuthProvider
+	ingestSvc    *ingest.Service
+	analyticsSvc *analytics.Service
+	replayStore  storage.ReplayStore
 
 	// in-memory artwork store, used only when the database is disabled (SKIP_DB)
 	mu     sync.RWMutex
@@ -44,6 +46,14 @@ func New(pool *pgxpool.Pool, cfg config.Config, issuer *auth.Issuer, providers m
 			ProjectEventsPS: cfg.IngestProjectEventsPerSec,
 			KeyCacheTTLSec:  cfg.IngestKeyCacheTTLSec,
 		}, pool),
+		analyticsSvc: analytics.NewService(analytics.Config{
+			Workers:         cfg.AnalyticsWorkers,
+			QueueSize:       cfg.AnalyticsQueueSize,
+			BatchSize:       cfg.AnalyticsBatchSize,
+			FlushIntervalMs: cfg.AnalyticsFlushIntervalMs,
+			ProjectRPS:      cfg.AnalyticsProjectRPS,
+			ProjectEventsPS: cfg.AnalyticsProjectEventsPerSec,
+		}, pool),
 	}
 }
 
@@ -53,13 +63,24 @@ func (h *Handler) WithIngest(svc *ingest.Service) *Handler {
 	return h
 }
 
+// WithAnalytics replaces the analytics service (useful for custom sinks or test mocks).
+func (h *Handler) WithAnalytics(svc *analytics.Service) *Handler {
+	h.analyticsSvc = svc
+	return h
+}
+
 // WithReplayStore injects the object storage provider for session replays.
 func (h *Handler) WithReplayStore(s storage.ReplayStore) *Handler {
 	h.replayStore = s
 	return h
 }
 
-// Health reports liveness plus database reachability and ingest buffer health.
+// AnalyticsService returns the analytics service.
+func (h *Handler) AnalyticsService() *analytics.Service {
+	return h.analyticsSvc
+}
+
+// Health reports liveness plus database reachability and ingest/analytics buffer health.
 func (h *Handler) Health(c *fiber.Ctx) error {
 	var ingestStats any
 	isOverloaded := false
@@ -71,11 +92,21 @@ func (h *Handler) Health(c *fiber.Ctx) error {
 		}
 	}
 
+	var analyticsStats any
+	if h.analyticsSvc != nil {
+		stats := h.analyticsSvc.WorkerPool().Stats()
+		analyticsStats = stats
+		if stats.UtilizationPct >= 95.0 {
+			isOverloaded = true
+		}
+	}
+
 	if h.db == nil {
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{
-			"status": "ok",
-			"db":     "disabled",
-			"ingest": ingestStats,
+			"status":    "ok",
+			"db":        "disabled",
+			"ingest":    ingestStats,
+			"analytics": analyticsStats,
 		})
 	}
 
@@ -92,8 +123,9 @@ func (h *Handler) Health(c *fiber.Ctx) error {
 	}
 
 	return c.Status(status).JSON(fiber.Map{
-		"status": map[bool]string{true: "ok", false: "degraded"}[status == fiber.StatusOK],
-		"db":     dbStatus,
-		"ingest": ingestStats,
+		"status":    map[bool]string{true: "ok", false: "degraded"}[status == fiber.StatusOK],
+		"db":        dbStatus,
+		"ingest":    ingestStats,
+		"analytics": analyticsStats,
 	})
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 
+	"github.com/tiofani03/artracker/backend/internal/analytics"
 	"github.com/tiofani03/artracker/backend/internal/auth"
 	"github.com/tiofani03/artracker/backend/internal/config"
 	"github.com/tiofani03/artracker/backend/internal/db"
@@ -60,6 +61,15 @@ func main() {
 		KeyCacheTTLSec:  cfg.IngestKeyCacheTTLSec,
 	}, pool)
 
+	analyticsSvc := analytics.NewService(analytics.Config{
+		Workers:         cfg.AnalyticsWorkers,
+		QueueSize:       cfg.AnalyticsQueueSize,
+		BatchSize:       cfg.AnalyticsBatchSize,
+		FlushIntervalMs: cfg.AnalyticsFlushIntervalMs,
+		ProjectRPS:      cfg.AnalyticsProjectRPS,
+		ProjectEventsPS: cfg.AnalyticsProjectEventsPerSec,
+	}, pool)
+
 	app := fiber.New(fiber.Config{
 		AppName:               "artracker-api",
 		ReadTimeout:           10 * time.Second,
@@ -76,6 +86,11 @@ func main() {
 
 	// SDK-specific CORS (allows client SDKs from any origin)
 	app.Use("/api/v1/ingest", cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowHeaders: "Origin, Content-Type, Content-Encoding, Accept, X-Artracker-Key",
+		AllowMethods: "POST, OPTIONS",
+	}))
+	app.Use("/api/v1/events", cors.New(cors.Config{
 		AllowOrigins: "*",
 		AllowHeaders: "Origin, Content-Type, Content-Encoding, Accept, X-Artracker-Key",
 		AllowMethods: "POST, OPTIONS",
@@ -127,6 +142,7 @@ func main() {
 
 	h := handler.New(pool, cfg, auth.NewIssuer(cfg.JWTSecret, 15*time.Minute), providers).
 		WithIngest(ingestSvc).
+		WithAnalytics(analyticsSvc).
 		WithReplayStore(replayStore)
 	ingestSvc.WithIssueProcessor(h.IssueService())
 	app.Get("/healthz", h.Health)
@@ -151,6 +167,9 @@ func main() {
 	}
 	if err := ingestSvc.Shutdown(shutdownCtx); err != nil {
 		log.Error("ingest drain failed", "err", err)
+	}
+	if err := analyticsSvc.Shutdown(shutdownCtx); err != nil {
+		log.Error("analytics drain failed", "err", err)
 	}
 	log.Info("bye")
 }

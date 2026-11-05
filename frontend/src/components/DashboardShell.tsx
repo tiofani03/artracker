@@ -108,7 +108,7 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
     items: [
       {
         to: '/dashboard/campaigns',
-        label: 'Campaigns',
+        label: 'Growth Analytics',
         icon: 'M4 19 9 9l4 5 3-4 4 9H4Z',
         demoAllowed: true,
       },
