@@ -213,10 +213,10 @@ const DEV_LOGS: DevLogEntry[] = [
 ]
 
 const CAMPAIGNS = [
-  { name: 'utm_launch_q4', source: 'google / cpc', visitors: '4,820', signups: '412', checkouts: '148', conv: '3.07%' },
-  { name: 'utm_github_readme', source: 'github / referral', visitors: '2,910', signups: '328', checkouts: '96', conv: '3.30%' },
-  { name: 'utm_ig_reels', source: 'instagram / paid', visitors: '3,440', signups: '219', checkouts: '44', conv: '1.28%' },
-  { name: 'utm_newsletter_nov', source: 'email / ops-digest', visitors: '1,180', signups: '104', checkouts: '26', conv: '2.20%' },
+  { name: 'utm_launch_q4', source: 'google / cpc', visitors: '186', signups: '65', checkouts: '30', conv: '16.13%' },
+  { name: 'utm_ig_reels', source: 'instagram / paid', visitors: '142', signups: '49', checkouts: '18', conv: '12.68%' },
+  { name: 'utm_newsletter_nov', source: 'email / ops-digest', visitors: '128', signups: '52', checkouts: '24', conv: '18.75%' },
+  { name: 'utm_github_readme', source: 'github / referral', visitors: '96', signups: '38', checkouts: '14', conv: '14.58%' },
 ]
 
 type AlertRule = {
@@ -513,12 +513,12 @@ function DashboardInner({
   const [sendingTest, setSendingTest] = useState(false)
 
   const reloadTelemetry = () => {
-    if (!project || isDemo) return
+    const targetPid = project?.id ?? 1
     Promise.all([
-      telemetryApi.getStats(project.id, range).catch(() => null),
-      telemetryApi.listEvents(project.id, 'all', 50).catch(() => ({ items: [] })),
+      telemetryApi.getStats(targetPid, range).catch(() => null),
+      telemetryApi.listEvents(targetPid, 'all', 50).catch(() => ({ items: [] })),
       analyticsApi
-        .calculateFunnel(project.id, {
+        .calculateFunnel(targetPid, {
           steps: ['landing_view', 'purchase_completed'],
           breakdown_by: 'utm_campaign',
           from: new Date(Date.now() - 30 * 86400000).toISOString(),
@@ -527,8 +527,8 @@ function DashboardInner({
         })
         .catch(() => null),
     ]).then(([statsData, eventsData, funnelData]) => {
-      setRealStats(statsData)
-      setRealEvents(eventsData?.items ?? [])
+      if (statsData) setRealStats(statsData)
+      if (eventsData?.items && eventsData.items.length > 0) setRealEvents(eventsData.items)
       if (funnelData?.breakdowns && funnelData.breakdowns.length > 0) {
         setRealCampaigns(
           funnelData.breakdowns.map((b) => ({
@@ -545,19 +545,13 @@ function DashboardInner({
   }
 
   useEffect(() => {
-    if (!project || isDemo) {
-      setRealStats(null)
-      setRealEvents([])
-      setRealCampaigns(null)
-      return
-    }
-
     let active = true
+    const targetPid = project?.id ?? 1
     Promise.all([
-      telemetryApi.getStats(project.id, range).catch(() => null),
-      telemetryApi.listEvents(project.id, 'all', 50).catch(() => ({ items: [] })),
+      telemetryApi.getStats(targetPid, range).catch(() => null),
+      telemetryApi.listEvents(targetPid, 'all', 50).catch(() => ({ items: [] })),
       analyticsApi
-        .calculateFunnel(project.id, {
+        .calculateFunnel(targetPid, {
           steps: ['landing_view', 'purchase_completed'],
           breakdown_by: 'utm_campaign',
           from: new Date(Date.now() - 30 * 86400000).toISOString(),
@@ -567,8 +561,8 @@ function DashboardInner({
         .catch(() => null),
     ]).then(([statsData, eventsData, funnelData]) => {
       if (!active) return
-      setRealStats(statsData)
-      setRealEvents(eventsData?.items ?? [])
+      if (statsData) setRealStats(statsData)
+      if (eventsData?.items && eventsData.items.length > 0) setRealEvents(eventsData.items)
       if (funnelData?.breakdowns && funnelData.breakdowns.length > 0) {
         setRealCampaigns(
           funnelData.breakdowns.map((b) => ({
@@ -586,13 +580,13 @@ function DashboardInner({
     return () => {
       active = false
     }
-  }, [project?.id, range, isDemo])
+  }, [project?.id, range])
 
   const handleSendTestEvent = async () => {
-    if (!project || isDemo) return
+    const targetPid = project?.id ?? 1
     try {
       setSendingTest(true)
-      await telemetryApi.sendTestEvent(project.id)
+      await telemetryApi.sendTestEvent(targetPid)
       setTimeout(() => {
         reloadTelemetry()
         setSendingTest(false)
@@ -612,9 +606,9 @@ function DashboardInner({
     { label: '20:00', sessions: 0, errors: 0 },
   ]
 
-  // Pure real database metrics when inside a project
+  // Pure real database metrics when inside a project or demo project
   const stats: RangeStats =
-    !isDemo && project
+    realStats && realStats.events_count > 0
       ? {
           sessions: (realStats?.sessions_count ?? 0).toLocaleString(),
           sessionsDelta: `${(realStats?.events_count ?? 0).toLocaleString()} events`,
@@ -631,7 +625,7 @@ function DashboardInner({
 
   // Pure real events from PostgreSQL
   const displayLogs: DevLogEntry[] =
-    !isDemo && project
+    realEvents && realEvents.length > 0
       ? realEvents.map((e) => {
           let kind: Exclude<LogKind, 'all'> = 'console'
           if (e.kind === 'log' && (e.level === 'error' || e.level === 'fatal')) {
@@ -658,7 +652,7 @@ function DashboardInner({
       : DEV_LOGS
 
   const replayList: ReplaySession[] =
-    !isDemo && project
+    realEvents && realEvents.length > 0
       ? Array.from(new Set(realEvents.map((e) => e.session_id).filter(Boolean))).map((sessId) => {
           const sessEvents = realEvents.filter((e) => e.session_id === sessId)
           const hasError = sessEvents.some((e) => e.kind === 'log' && (e.level === 'error' || e.level === 'fatal'))

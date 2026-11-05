@@ -72,7 +72,7 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : { 'X-Demo-Mode': '1' }),
       ...(init.headers ?? {}),
     },
   })
