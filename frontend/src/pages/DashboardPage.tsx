@@ -1,18 +1,23 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   analyticsApi,
   keyApi,
+  replayApi,
   telemetryApi,
   type ApiKey,
   type OrgMembership,
   type Project,
   type ProjectStats,
+  type ReplayChunkDetail,
+  type ReplaySessionItem,
   type TelemetryEvent,
 } from '../api'
 import DashboardShell from '../components/DashboardShell'
+import ReplayPlayer from '../components/ReplayPlayer'
 import GrowthAnalyticsView from '../components/analytics/GrowthAnalyticsView'
 import CampaignsView from '../components/campaigns/CampaignsView'
 import { Link, navigate } from '../router'
+import { startInteractiveCapture, type LiveCaptureResult } from '../utils/liveReplayCapture'
 import '../dashboard.css'
 
 export type ConsoleSection = 'overview' | 'replays' | 'logs' | 'campaigns' | 'funnels' | 'alerts'
@@ -96,74 +101,15 @@ const RANGE_DATA: Record<RangeKey, RangeStats> = {
   },
 }
 
-type ReplaySession = {
-  id: string
-  user: string
-  meta: string
-  duration: string
-  status: 'error' | 'warn' | 'clean'
-  statusLabel: string
-  campaign: string
-  route: string
-  cursorX: number
-  cursorY: number
-  steps: { t: string; pct: number; kind: 'dom' | 'warn' | 'error' | 'net'; text: string }[]
-}
+type ReplayFilter = 'all' | 'error' | 'rage' | 'dead'
+const REPLAY_PAGE_SIZE = 10
 
-const REPLAY_SESSIONS: ReplaySession[] = [
-  {
-    id: 'ses_94k2p8',
-    user: 'nadia.putri@fintech.id',
-    meta: 'Jakarta · Chrome 131 · macOS',
-    duration: '01:42',
-    status: 'error',
-    statusLabel: '502 + Rage click',
-    campaign: 'utm_launch_q4',
-    route: '/checkout/payment',
-    cursorX: 66,
-    cursorY: 72,
-    steps: [
-      { t: '00:12', pct: 12, kind: 'dom', text: 'Navigated /pricing → /checkout/payment (card input masked)' },
-      { t: '00:48', pct: 46, kind: 'warn', text: 'Rage click ×4 on button#pay-submit within 380 ms' },
-      { t: '00:49', pct: 54, kind: 'net', text: 'POST /api/v1/charge → 502 Bad Gateway (1,840 ms)' },
-      { t: '00:50', pct: 62, kind: 'error', text: 'TypeError: Cannot read properties of undefined (PaymentForm.tsx:142)' },
-    ],
-  },
-  {
-    id: 'ses_71m9x3',
-    user: 'rian.wijaya@commerce.co',
-    meta: 'Bandung · Safari 18 · iOS',
-    duration: '02:18',
-    status: 'warn',
-    statusLabel: 'Slow API 2.4s',
-    campaign: 'utm_ig_reels',
-    route: '/onboarding/workspace',
-    cursorX: 44,
-    cursorY: 56,
-    steps: [
-      { t: '00:08', pct: 10, kind: 'dom', text: 'Landed via ?utm_source=instagram&utm_campaign=utm_ig_reels' },
-      { t: '01:04', pct: 50, kind: 'net', text: 'GET /api/v1/orgs/templates → 200 OK (2,410 ms)' },
-      { t: '01:52', pct: 84, kind: 'dom', text: 'Event tracked: workspace_created { plan: "team" }' },
-    ],
-  },
-  {
-    id: 'ses_58c4v1',
-    user: 'kevin.tan@saas.sg',
-    meta: 'Singapore · Firefox 133 · Linux',
-    duration: '03:05',
-    status: 'clean',
-    statusLabel: 'Converted',
-    campaign: 'utm_github_readme',
-    route: '/dashboard/settings',
-    cursorX: 74,
-    cursorY: 42,
-    steps: [
-      { t: '00:19', pct: 14, kind: 'dom', text: 'Authenticated via Google OAuth (/auth/callback/google)' },
-      { t: '01:28', pct: 48, kind: 'dom', text: 'Event tracked: project_created { platform: "web" }' },
-      { t: '02:40', pct: 88, kind: 'dom', text: 'Generated public_client SDK key art_live_…' },
-    ],
-  },
-]
+function formatDurationMs(ms: number): string {
+  const totalSec = Math.max(0, Math.round(ms / 1000))
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
 
 type DevLogEntry = {
   id: string
@@ -505,14 +451,169 @@ function DashboardInner({
   isDemo: boolean
   error: string | null
 }) {
-  const [selectedSessionId, setSelectedSessionId] = useState<string>(REPLAY_SESSIONS[0].id)
-  const [scrubPct, setScrubPct] = useState<number>(54)
+  const [selectedSessionId, setSelectedSessionId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return new URLSearchParams(window.location.search).get('session') ?? ''
+    }
+    return ''
+  })
+  const [replaySessions, setReplaySessions] = useState<ReplaySessionItem[]>([])
+  const [replayTotal, setReplayTotal] = useState<number>(0)
+  const [replayOffset, setReplayOffset] = useState<number>(0)
+  const [replayFilter, setReplayFilter] = useState<ReplayFilter>('all')
+  const [replayLoading, setReplayLoading] = useState<boolean>(true)
+  const [replayError, setReplayError] = useState<string | null>(null)
+
+  const [sessionDetail, setSessionDetail] = useState<{
+    session: ReplaySessionItem
+    chunks: ReplayChunkDetail[]
+    timelineEvents: TelemetryEvent[]
+  } | null>(null)
+  const [detailLoading, setDetailLoading] = useState<boolean>(false)
+  const [liveCapture, setLiveCapture] = useState<LiveCaptureResult | null>(null)
+  const [isCapturingLive, setIsCapturingLive] = useState<boolean>(false)
+  const [seedingSessions, setSeedingSessions] = useState<boolean>(false)
+
   const [logFilter, setLogFilter] = useState<LogKind>('all')
   const [alerts, setAlerts] = useState<AlertRule[]>(INITIAL_ALERTS)
   const [realStats, setRealStats] = useState<ProjectStats | null>(null)
   const [realEvents, setRealEvents] = useState<TelemetryEvent[]>([])
   const [realCampaigns, setRealCampaigns] = useState<typeof CAMPAIGNS | null>(null)
   const [sendingTest, setSendingTest] = useState(false)
+
+  const targetPid = project?.id ?? 1
+
+  const loadReplaySessions = useCallback(
+    async (offsetArg = replayOffset, filterArg = replayFilter) => {
+      setReplayLoading(true)
+      setReplayError(null)
+      try {
+        const res = await replayApi.listSessions(targetPid, {
+          limit: REPLAY_PAGE_SIZE,
+          offset: offsetArg,
+          ...(filterArg === 'error' ? { has_error: true } : {}),
+          ...(filterArg === 'rage' ? { has_rage_click: true } : {}),
+          ...(filterArg === 'dead' ? { has_dead_click: true } : {}),
+        })
+        setReplaySessions(res.items)
+        setReplayTotal(res.total)
+        setSelectedSessionId((cur) => {
+          if (cur && res.items.some((s) => s.id === cur)) return cur
+          return res.items[0]?.id ?? ''
+        })
+      } catch (err) {
+        setReplayError(err instanceof Error ? err.message : 'Failed to fetch replay sessions')
+        setReplaySessions([])
+        setReplayTotal(0)
+      } finally {
+        setReplayLoading(false)
+      }
+    },
+    [targetPid, replayOffset, replayFilter],
+  )
+
+  useEffect(() => {
+    void loadReplaySessions(replayOffset, replayFilter)
+  }, [loadReplaySessions, replayOffset, replayFilter])
+
+  useEffect(() => {
+    if (!selectedSessionId) {
+      setSessionDetail(null)
+      return
+    }
+    if (liveCapture && liveCapture.sessionId === selectedSessionId && !liveCapture.uploadedToR2) {
+      return
+    }
+
+    let cancelled = false
+    setDetailLoading(true)
+    replayApi
+      .getSessionDetail(targetPid, selectedSessionId)
+      .then((res) => {
+        if (cancelled) return
+        setSessionDetail({
+          session: res.session,
+          chunks: res.chunks,
+          timelineEvents: res.timeline_events,
+        })
+        setDetailLoading(false)
+      })
+      .catch(() => {
+        if (cancelled) return
+        const fallback = replaySessions.find((s) => s.id === selectedSessionId)
+        if (fallback) {
+          setSessionDetail({
+            session: fallback,
+            chunks: [],
+            timelineEvents: [],
+          })
+        } else {
+          setSessionDetail(null)
+        }
+        setDetailLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [targetPid, selectedSessionId, replaySessions, liveCapture])
+
+  const handleStartLiveCapture = () => {
+    if (isCapturingLive) return
+    setIsCapturingLive(true)
+    const recorder = startInteractiveCapture({
+      userId: 'operator@artracker.dev',
+      environment: 'production',
+    })
+    setTimeout(() => {
+      void recorder.stop().then((result) => {
+        setIsCapturingLive(false)
+        setLiveCapture(result)
+        const nowIso = new Date().toISOString()
+        const firstTs = result.events[0]?.timestamp ?? Date.now()
+        const lastTs = result.events[result.events.length - 1]?.timestamp ?? firstTs + 5000
+        const syntheticItem: ReplaySessionItem = {
+          id: result.sessionId,
+          project_id: targetPid,
+          user_id: 'operator@artracker.dev',
+          environment: 'production',
+          start_time: new Date(firstTs).toISOString(),
+          end_time: new Date(lastTs).toISOString(),
+          duration_ms: Math.max(1000, lastTs - firstTs),
+          chunk_count: 1,
+          event_count: result.events.length,
+          total_size_bytes: JSON.stringify(result.events).length,
+          has_error: result.hasError,
+          has_rage_click: result.hasRageClick,
+          has_dead_click: result.hasDeadClick,
+          storage_prefix: `projects/${targetPid}/sessions/${result.sessionId}/`,
+          created_at: nowIso,
+          updated_at: nowIso,
+        }
+        setReplaySessions((prev) => [syntheticItem, ...prev.filter((p) => p.id !== syntheticItem.id)])
+        setReplayTotal((prev) => prev + 1)
+        setSelectedSessionId(result.sessionId)
+        setSessionDetail({
+          session: syntheticItem,
+          chunks: [],
+          timelineEvents: result.timelineEvents,
+        })
+      })
+    }, 5000)
+  }
+
+  const handleSeedSessions = async () => {
+    try {
+      setSeedingSessions(true)
+      await telemetryApi.seedMock(targetPid)
+      await loadReplaySessions(0, 'all')
+      reloadTelemetry()
+    } catch (err) {
+      setReplayError(err instanceof Error ? err.message : 'Failed to seed sessions')
+    } finally {
+      setSeedingSessions(false)
+    }
+  }
 
   const reloadTelemetry = () => {
     const targetPid = project?.id ?? 1
@@ -653,40 +754,6 @@ function DashboardInner({
         })
       : DEV_LOGS
 
-  const replayList: ReplaySession[] =
-    realEvents && realEvents.length > 0
-      ? Array.from(new Set(realEvents.map((e) => e.session_id).filter(Boolean))).map((sessId) => {
-          const sessEvents = realEvents.filter((e) => e.session_id === sessId)
-          const hasError = sessEvents.some((e) => e.kind === 'log' && (e.level === 'error' || e.level === 'fatal'))
-          const firstEv = sessEvents[sessEvents.length - 1]
-          return {
-            id: sessId,
-            user: firstEv.user_id || 'anonymous_user',
-            route: '/checkout',
-            campaign: 'direct',
-            duration: formatAgo(firstEv.event_timestamp),
-            status: hasError ? ('error' as const) : ('clean' as const),
-            statusLabel: hasError ? 'Exception' : 'Completed',
-            meta: `${sessEvents.length} events · ${firstEv.environment || 'production'}`,
-            cursorX: 58,
-            cursorY: 64,
-            steps: sessEvents.map((ev, i) => ({
-              t: `00:${String(i * 4).padStart(2, '0')}`,
-              kind:
-                ev.kind === 'log' && (ev.level === 'error' || ev.level === 'fatal')
-                  ? ('error' as const)
-                  : ev.kind === 'log' && ev.level === 'warn'
-                    ? ('warn' as const)
-                    : ('dom' as const),
-              text: ev.name || ev.message || `${ev.kind} captured`,
-              pct: Math.min(100, Math.round(((i + 1) / sessEvents.length) * 100)),
-            })),
-          }
-        })
-      : REPLAY_SESSIONS
-
-  const activeSession: ReplaySession | undefined = replayList.find((s) => s.id === selectedSessionId) ?? replayList[0]
-
   const filteredLogs = logFilter === 'all' ? displayLogs : displayLogs.filter((l) => l.kind === logFilter)
 
   const toggleAlert = (id: string) => {
@@ -698,7 +765,7 @@ function DashboardInner({
   const goSection = (path: string) => navigate(isDemo ? `${path}?demo=1` : path)
   const openReplay = (sessionId: string) => {
     setSelectedSessionId(sessionId)
-    goSection('/dashboard/replays')
+    goSection(`/dashboard/replays?session=${encodeURIComponent(sessionId)}`)
   }
 
   return (
@@ -881,167 +948,219 @@ function DashboardInner({
 
             {/* ==================== SESSION REPLAY ==================== */}
             {section === 'replays' && (
-              !activeSession || replayList.length === 0 ? (
-                <section className="dash-card dash-card--compact" style={{ padding: '3.5rem 1.5rem', textAlign: 'center' }}>
-                  <div style={{ maxWidth: 440, margin: '0 auto' }}>
-                    <div style={{ fontSize: '2.25rem', marginBottom: '0.75rem' }}>📹</div>
-                    <h2 className="dash-card__title" style={{ marginBottom: '0.5rem' }}>No Session Captures Yet</h2>
-                    <p className="dash-card__desc" style={{ marginBottom: '1.5rem' }}>
-                      Telemetry events or sessions ingested via <code>POST /api/v1/ingest</code> will automatically populate replay timelines here.
-                    </p>
+              <div className="dash-replay-container">
+                <div className="dash-replay-toolbar">
+                  <div className="dash-seg" role="group" aria-label="Filter replays">
+                    {(
+                      [
+                        { id: 'all', label: 'All Sessions' },
+                        { id: 'error', label: 'Errors Only' },
+                        { id: 'rage', label: 'Rage Clicks' },
+                        { id: 'dead', label: 'Dead Clicks' },
+                      ] as { id: ReplayFilter; label: string }[]
+                    ).map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        className={`dash-seg__btn${replayFilter === f.id ? ' is-active' : ''}`}
+                        aria-pressed={replayFilter === f.id}
+                        onClick={() => {
+                          setReplayFilter(f.id)
+                          setReplayOffset(0)
+                        }}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="dash-replay-toolbar__actions">
+                    <button
+                      type="button"
+                      className="dash-btn"
+                      onClick={handleStartLiveCapture}
+                      disabled={isCapturingLive}
+                      title="Record a 5-second live DOM session using rrweb with rage & dead click detector"
+                    >
+                      {isCapturingLive ? '● Recording 5s DOM…' : '📹 Record Live DOM'}
+                    </button>
                     {project && !isDemo && (
                       <button
                         type="button"
                         className="dash-btn"
-                        onClick={handleSendTestEvent}
-                        disabled={sendingTest}
+                        onClick={handleSeedSessions}
+                        disabled={seedingSessions}
                       >
-                        {sendingTest ? 'Ingesting...' : '⚡ Send Real Test Event to DB'}
+                        {seedingSessions ? 'Seeding…' : '⚡ Seed Replay Data'}
                       </button>
                     )}
                   </div>
-                </section>
-              ) : (
-                <div className="dash-replay-grid">
-                  <section className="dash-card dash-card--compact" aria-label="Recorded sessions">
-                    <div className="dash-card__head">
-                      <div>
-                        <h2 className="dash-card__title">Session Queue</h2>
-                        <p className="dash-card__desc">{replayList.length} recent captures · PII masked on device</p>
-                      </div>
-                    </div>
-
-                    <div className="dash-session-list">
-                      {replayList.map((s) => {
-                        const selected = s.id === activeSession.id
-                        return (
-                          <button
-                            key={s.id}
-                            type="button"
-                            className={`dash-session-item${selected ? ' is-selected' : ''}`}
-                            onClick={() => {
-                              setSelectedSessionId(s.id)
-                              setScrubPct(s.steps[s.steps.length - 1]?.pct ?? 50)
-                            }}
-                          >
-                            <div className="dash-session-item__top">
-                              <span className="dash-code">{s.id}</span>
-                              <span
-                                className={`badge ${
-                                  s.status === 'error'
-                                    ? 'badge--exception'
-                                    : s.status === 'warn'
-                                      ? 'badge--console'
-                                      : 'badge--active'
-                                }`}
-                              >
-                                {s.statusLabel}
-                              </span>
-                            </div>
-                            <strong className="dash-session-item__user">{s.user}</strong>
-                            <span className="dash-session-item__meta">
-                              {s.meta} · {s.duration}
-                            </span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </section>
-
-                  <section className="dash-card dash-card--compact" aria-label="Session player">
-                    <div className="dash-card__head">
-                      <div>
-                        <h2 className="dash-card__title">
-                          {activeSession.user} · <span className="dash-code">{activeSession.route}</span>
-                        </h2>
-                        <p className="dash-card__desc">
-                          {activeSession.meta} · campaign <code className="dash-code">{activeSession.campaign}</code>
-                        </p>
-                      </div>
-                      <span className="badge badge--role">{activeSession.duration}</span>
-                    </div>
-
-                    <div className="replay-player">
-                      <div className="replay-player__chrome">
-                        <div className="replay-player__dots" aria-hidden="true">
-                          <span />
-                          <span />
-                          <span />
-                        </div>
-                        <span className="replay-player__url">https://app.customer.dev{activeSession.route}</span>
-                        <span className="replay-player__mask">rrweb · PII Masked</span>
-                      </div>
-
-                      <div className="replay-player__viewport">
-                        <div className="replay-wire-card">
-                          <div className="replay-wire-line--title" />
-                          <div className="replay-wire-field">•••• •••• •••• 4242 (masked on client)</div>
-                          <div className="replay-wire-actions">
-                            <span className="replay-wire-btn">Pay Rp 450.000</span>
-                            {activeSession.status === 'error' && scrubPct >= 45 && (
-                              <span className="badge badge--exception">502 Bad Gateway</span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div
-                          className="replay-cursor"
-                          style={{
-                            left: `${Math.min(Math.max((activeSession.cursorX ?? 50) + (scrubPct - 50) * 0.25, 18), 84)}%`,
-                            top: `${activeSession.cursorY ?? 50}%`,
-                          }}
-                          aria-hidden="true"
-                        >
-                          <span className="replay-cursor__ring" />
-                        </div>
-                      </div>
-
-                      <div className="replay-scrubber">
-                        <label htmlFor="replay-range" className="replay-scrubber__time">
-                          {scrubPct}%
-                        </label>
-                        <input
-                          id="replay-range"
-                          type="range"
-                          min={0}
-                          max={100}
-                          value={scrubPct}
-                          onChange={(e) => setScrubPct(Number(e.target.value))}
-                          className="replay-scrubber__input"
-                        />
-                        <span className="replay-scrubber__time">{activeSession.duration}</span>
-                      </div>
-                    </div>
-
-                    <div className="dash-list">
-                      {activeSession.steps.map((st) => (
-                        <button
-                          key={st.t + st.text}
-                          type="button"
-                          className={`dash-step-row${Math.abs(scrubPct - st.pct) <= 12 ? ' is-near' : ''}`}
-                          onClick={() => setScrubPct(st.pct)}
-                        >
-                          <span className="dash-code">{st.t}</span>
-                          <span
-                            className={`badge ${
-                              st.kind === 'error'
-                                ? 'badge--exception'
-                                : st.kind === 'warn'
-                                  ? 'badge--console'
-                                  : st.kind === 'net'
-                                    ? 'badge--network'
-                                    : 'badge--preview'
-                            }`}
-                          >
-                            {st.kind}
-                          </span>
-                          <span className="dash-step-row__text">{st.text}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </section>
                 </div>
-              )
+
+                {replayError && (
+                  <p className="dash-error" role="alert" style={{ marginBottom: '1rem' }}>
+                    {replayError}
+                  </p>
+                )}
+
+                {replayLoading && replaySessions.length === 0 ? (
+                  <section className="dash-card dash-card--compact" style={{ padding: '3.5rem 1.5rem', textAlign: 'center' }}>
+                    <p className="dash-empty">Loading recorded sessions from database…</p>
+                  </section>
+                ) : replaySessions.length === 0 ? (
+                  <section className="dash-card dash-card--compact" style={{ padding: '3.5rem 1.5rem', textAlign: 'center' }}>
+                    <div style={{ maxWidth: 440, margin: '0 auto' }}>
+                      <div style={{ fontSize: '2.25rem', marginBottom: '0.75rem' }}>📹</div>
+                      <h2 className="dash-card__title" style={{ marginBottom: '0.5rem' }}>No Sessions Found</h2>
+                      <p className="dash-card__desc" style={{ marginBottom: '1.5rem' }}>
+                        {replayFilter !== 'all'
+                          ? `No recorded sessions match the "${replayFilter}" filter in PostgreSQL.`
+                          : 'No session replays ingested yet. Record a live DOM interaction or seed mock sessions.'}
+                      </p>
+                      <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+                        <button
+                          type="button"
+                          className="dash-btn"
+                          onClick={handleStartLiveCapture}
+                          disabled={isCapturingLive}
+                        >
+                          {isCapturingLive ? 'Recording…' : 'Record Live Browser Session'}
+                        </button>
+                        {project && !isDemo && (
+                          <button
+                            type="button"
+                            className="dash-btn"
+                            onClick={handleSeedSessions}
+                            disabled={seedingSessions}
+                          >
+                            Seed Replay Sessions
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </section>
+                ) : (
+                  <div className="dash-replay-grid">
+                    {/* Left Column: Session Queue with Pagination */}
+                    <section className="dash-card dash-card--compact" aria-label="Recorded sessions">
+                      <div className="dash-card__head">
+                        <div>
+                          <h2 className="dash-card__title">Session Queue</h2>
+                          <p className="dash-card__desc">
+                            {replayTotal} total · PII masked on client
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="dash-session-list">
+                        {replaySessions.map((s) => {
+                          const selected = s.id === selectedSessionId
+                          const durFormatted = formatDurationMs(s.duration_ms)
+                          return (
+                            <button
+                              key={s.id}
+                              type="button"
+                              className={`dash-session-item${selected ? ' is-selected' : ''}`}
+                              onClick={() => {
+                                setSelectedSessionId(s.id)
+                              }}
+                            >
+                              <div className="dash-session-item__top">
+                                <span className="dash-code">{s.id}</span>
+                                <div style={{ display: 'flex', gap: '4px' }}>
+                                  {s.has_error && (
+                                    <span className="badge badge--exception">error</span>
+                                  )}
+                                  {s.has_rage_click && (
+                                    <span className="badge badge--console">rage click</span>
+                                  )}
+                                  {s.has_dead_click && (
+                                    <span className="badge badge--console">dead click</span>
+                                  )}
+                                  {!s.has_error && !s.has_rage_click && !s.has_dead_click && (
+                                    <span className="badge badge--active">clean</span>
+                                  )}
+                                </div>
+                              </div>
+                              <strong className="dash-session-item__user">
+                                {s.user_id || 'anonymous_user'}
+                              </strong>
+                              <span className="dash-session-item__meta">
+                                {s.chunk_count} chunk{s.chunk_count === 1 ? '' : 's'} · {durFormatted} · {formatAgo(s.start_time)}
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+
+                      {/* Pagination Controls */}
+                      {replayTotal > REPLAY_PAGE_SIZE && (
+                        <div className="dash-replay-pagination">
+                          <button
+                            type="button"
+                            className="dash-btn"
+                            disabled={replayOffset === 0 || replayLoading}
+                            onClick={() => setReplayOffset((prev) => Math.max(0, prev - REPLAY_PAGE_SIZE))}
+                          >
+                            ← Prev
+                          </button>
+                          <span className="dash-replay-pagination__label">
+                            {replayOffset + 1}–{Math.min(replayOffset + REPLAY_PAGE_SIZE, replayTotal)} of {replayTotal}
+                          </span>
+                          <button
+                            type="button"
+                            className="dash-btn"
+                            disabled={replayOffset + REPLAY_PAGE_SIZE >= replayTotal || replayLoading}
+                            onClick={() => setReplayOffset((prev) => prev + REPLAY_PAGE_SIZE)}
+                          >
+                            Next →
+                          </button>
+                        </div>
+                      )}
+                    </section>
+
+                    {/* Right Column: Interactive Visual Player (rrweb-player) & Timeline */}
+                    <section className="dash-card dash-card--compact" aria-label="Session player">
+                      {sessionDetail ? (
+                        <>
+                          <div className="dash-card__head">
+                            <div>
+                              <h2 className="dash-card__title">
+                                {sessionDetail.session.user_id || 'anonymous_user'} ·{' '}
+                                <span className="dash-code">{sessionDetail.session.id}</span>
+                              </h2>
+                              <p className="dash-card__desc">
+                                {sessionDetail.session.environment} · {sessionDetail.chunks.length} R2 chunk(s) · {sessionDetail.session.event_count} events
+                              </p>
+                            </div>
+                            <span className="badge badge--role">
+                              {formatDurationMs(sessionDetail.session.duration_ms)}
+                            </span>
+                          </div>
+
+                          <ReplayPlayer
+                            session={sessionDetail.session}
+                            chunks={sessionDetail.chunks}
+                            timelineEvents={sessionDetail.timelineEvents}
+                            overrideEvents={
+                              liveCapture && liveCapture.sessionId === sessionDetail.session.id
+                                ? liveCapture.events
+                                : null
+                            }
+                            loadingDetail={detailLoading}
+                            onStartLiveCapture={handleStartLiveCapture}
+                            isCapturingLive={isCapturingLive}
+                          />
+                        </>
+                      ) : (
+                        <div style={{ padding: '3rem 1rem', textAlign: 'center' }}>
+                          <p className="dash-empty">Select a session from the queue to start replay.</p>
+                        </div>
+                      )}
+                    </section>
+                  </div>
+                )}
+              </div>
             )}
 
             {/* ==================== EVENT LOG ==================== */}

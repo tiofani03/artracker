@@ -396,3 +396,77 @@ export const analyticsApi = {
   deleteSavedFunnel: (projectId: number, funnelId: number) =>
     request<void>(`/projects/${projectId}/analytics/funnels/${funnelId}`, { method: 'DELETE' }),
 }
+
+export type ReplaySessionItem = {
+  id: string
+  project_id: number
+  user_id: string
+  environment: string
+  start_time: string
+  end_time: string | null
+  duration_ms: number
+  chunk_count: number
+  event_count: number
+  total_size_bytes: number
+  has_error: boolean
+  has_rage_click: boolean
+  has_dead_click: boolean
+  storage_prefix: string
+  created_at: string
+  updated_at: string
+}
+
+export type ReplayChunkDetail = {
+  chunk_seq: number
+  object_key: string
+  size_bytes: number
+  event_count: number
+  created_at: string
+  url?: string
+}
+
+export type ReplaySessionListParams = {
+  limit?: number
+  offset?: number
+  has_error?: boolean
+  has_rage_click?: boolean
+  has_dead_click?: boolean
+  user_id?: string
+  environment?: string
+  from?: string
+  to?: string
+}
+
+export type ReplaySessionListResponse = {
+  items: ReplaySessionItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export type ReplaySessionDetailResponse = {
+  session: ReplaySessionItem
+  chunks: ReplayChunkDetail[]
+  timeline_events: TelemetryEvent[]
+}
+
+export const replayApi = {
+  listSessions: (projectId: number, params: ReplaySessionListParams = {}) => {
+    const qs = new URLSearchParams()
+    if (params.limit !== undefined) qs.set('limit', String(params.limit))
+    if (params.offset !== undefined) qs.set('offset', String(params.offset))
+    if (params.has_error !== undefined) qs.set('has_error', String(params.has_error))
+    if (params.has_rage_click !== undefined) qs.set('has_rage_click', String(params.has_rage_click))
+    if (params.has_dead_click !== undefined) qs.set('has_dead_click', String(params.has_dead_click))
+    if (params.user_id) qs.set('user_id', params.user_id)
+    if (params.environment) qs.set('environment', params.environment)
+    if (params.from) qs.set('from', params.from)
+    if (params.to) qs.set('to', params.to)
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return request<ReplaySessionListResponse>(`/projects/${projectId}/sessions${suffix}`)
+  },
+  getSessionDetail: (projectId: number, sessionId: string) =>
+    request<ReplaySessionDetailResponse>(
+      `/projects/${projectId}/sessions/${encodeURIComponent(sessionId)}`,
+    ),
+}

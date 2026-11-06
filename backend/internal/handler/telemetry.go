@@ -539,11 +539,11 @@ func (h *Handler) SeedProjectMockData(c *fiber.Ctx) error {
 		_ = h.db.QueryRow(ctx, `SELECT count(*) FROM replay_sessions WHERE project_id = $1`, projectID).Scan(&replayCount)
 		if replayCount == 0 {
 			_, _ = h.db.Exec(ctx, `
-				INSERT INTO replay_sessions (id, project_id, user_id, environment, start_time, duration_ms, chunk_count, event_count, total_size_bytes, has_error, has_rage_click, storage_prefix, created_at, updated_at)
+				INSERT INTO replay_sessions (id, project_id, user_id, environment, start_time, duration_ms, chunk_count, event_count, total_size_bytes, has_error, has_rage_click, has_dead_click, storage_prefix, created_at, updated_at)
 				VALUES 
-				('ses_94k2p8', $1, 'nadia.putri@fintech.id', 'production', now() - interval '42 minutes', 102000, 3, 480, 48200, true, true, 'projects/1/sessions/ses_94k2p8/', now(), now()),
-				('ses_71m9x3', $1, 'rian.wijaya@commerce.co', 'production', now() - interval '2 hours', 138000, 4, 620, 52100, false, false, 'projects/1/sessions/ses_71m9x3/', now(), now()),
-				('ses_58c4v1', $1, 'kevin.tan@saas.sg', 'production', now() - interval '5 hours', 185000, 5, 890, 68900, false, false, 'projects/1/sessions/ses_58c4v1/', now(), now())
+				('ses_94k2p8', $1, 'nadia.putri@fintech.id', 'production', now() - interval '42 minutes', 102000, 3, 480, 48200, true, true, false, 'projects/1/sessions/ses_94k2p8/', now(), now()),
+				('ses_71m9x3', $1, 'rian.wijaya@commerce.co', 'production', now() - interval '2 hours', 138000, 4, 620, 52100, false, false, true, 'projects/1/sessions/ses_71m9x3/', now(), now()),
+				('ses_58c4v1', $1, 'kevin.tan@saas.sg', 'production', now() - interval '5 hours', 185000, 5, 890, 68900, false, false, false, 'projects/1/sessions/ses_58c4v1/', now(), now())
 				ON CONFLICT DO NOTHING
 			`, projectID)
 		}

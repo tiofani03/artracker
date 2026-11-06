@@ -37,6 +37,7 @@ type ReplayChunkAckRequest struct {
 	EventCount   int    `json:"event_count"`
 	HasError     bool   `json:"has_error"`
 	HasRageClick bool   `json:"has_rage_click"`
+	HasDeadClick bool   `json:"has_dead_click"`
 }
 
 type ReplayChunkAckResponse struct {
@@ -59,6 +60,7 @@ type ReplaySessionItem struct {
 	TotalSizeBytes int64      `json:"total_size_bytes"`
 	HasError       bool       `json:"has_error"`
 	HasRageClick   bool       `json:"has_rage_click"`
+	HasDeadClick   bool       `json:"has_dead_click"`
 	StoragePrefix  string     `json:"storage_prefix"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
@@ -225,12 +227,13 @@ func (h *Handler) AcknowledgeChunk(c *fiber.Ctx) error {
 			    duration_ms      = GREATEST(replay_sessions.duration_ms, $7),
 			    has_error        = replay_sessions.has_error OR $8,
 			    has_rage_click   = replay_sessions.has_rage_click OR $9,
+			    has_dead_click   = replay_sessions.has_dead_click OR $10,
 			    end_time         = GREATEST(COALESCE(replay_sessions.end_time, now()), now()),
 			    updated_at       = now()
 			WHERE project_id = $1 AND id = $2
 			RETURNING chunk_count`,
 			projectID, req.SessionID, req.ChunkSeq, objectKey, req.SizeBytes, req.EventCount,
-			req.DurationMs, req.HasError, req.HasRageClick).Scan(&currentCount)
+			req.DurationMs, req.HasError, req.HasRageClick, req.HasDeadClick).Scan(&currentCount)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("acknowledge chunk: %w", err)
 		}
@@ -266,6 +269,7 @@ func (h *Handler) ListProjectSessions(c *fiber.Ctx) error {
 
 	hasErrorParam := strings.TrimSpace(c.Query("has_error"))
 	hasRageParam := strings.TrimSpace(c.Query("has_rage_click"))
+	hasDeadParam := strings.TrimSpace(c.Query("has_dead_click"))
 	userIDParam := strings.TrimSpace(c.Query("user_id"))
 	envParam := strings.TrimSpace(c.Query("environment"))
 	fromParam := strings.TrimSpace(c.Query("from"))
@@ -287,7 +291,7 @@ func (h *Handler) ListProjectSessions(c *fiber.Ctx) error {
 		SELECT
 			id, project_id, user_id, environment, start_time, end_time,
 			duration_ms, chunk_count, event_count, total_size_bytes,
-			has_error, has_rage_click, storage_prefix, created_at, updated_at,
+			has_error, has_rage_click, has_dead_click, storage_prefix, created_at, updated_at,
 			COUNT(*) OVER() AS full_count
 		FROM replay_sessions
 		WHERE project_id = $1`
@@ -306,6 +310,13 @@ func (h *Handler) ListProjectSessions(c *fiber.Ctx) error {
 		hasRageBool := hasRageParam == "true" || hasRageParam == "1"
 		query += fmt.Sprintf(" AND has_rage_click = $%d", argIdx)
 		args = append(args, hasRageBool)
+		argIdx++
+	}
+
+	if hasDeadParam != "" {
+		hasDeadBool := hasDeadParam == "true" || hasDeadParam == "1"
+		query += fmt.Sprintf(" AND has_dead_click = $%d", argIdx)
+		args = append(args, hasDeadBool)
 		argIdx++
 	}
 
@@ -356,7 +367,7 @@ func (h *Handler) ListProjectSessions(c *fiber.Ctx) error {
 		if err := rows.Scan(
 			&item.ID, &item.ProjectID, &item.UserID, &item.Environment,
 			&item.StartTime, &item.EndTime, &item.DurationMs, &item.ChunkCount,
-			&item.EventCount, &item.TotalSizeBytes, &item.HasError, &item.HasRageClick,
+			&item.EventCount, &item.TotalSizeBytes, &item.HasError, &item.HasRageClick, &item.HasDeadClick,
 			&item.StoragePrefix, &item.CreatedAt, &item.UpdatedAt, &fullCount,
 		); err != nil {
 			return fmt.Errorf("scan replay session: %w", err)
@@ -399,12 +410,12 @@ func (h *Handler) GetProjectSession(c *fiber.Ctx) error {
 		SELECT
 			id, project_id, user_id, environment, start_time, end_time,
 			duration_ms, chunk_count, event_count, total_size_bytes,
-			has_error, has_rage_click, storage_prefix, created_at, updated_at
+			has_error, has_rage_click, has_dead_click, storage_prefix, created_at, updated_at
 		FROM replay_sessions
 		WHERE project_id = $1 AND id = $2`, projectID, sessionID).Scan(
 		&session.ID, &session.ProjectID, &session.UserID, &session.Environment,
 		&session.StartTime, &session.EndTime, &session.DurationMs, &session.ChunkCount,
-		&session.EventCount, &session.TotalSizeBytes, &session.HasError, &session.HasRageClick,
+		&session.EventCount, &session.TotalSizeBytes, &session.HasError, &session.HasRageClick, &session.HasDeadClick,
 		&session.StoragePrefix, &session.CreatedAt, &session.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {

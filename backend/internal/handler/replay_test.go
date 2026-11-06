@@ -277,7 +277,7 @@ func TestReplayDatabaseIntegration(t *testing.T) {
 	}
 
 	// 2. POST /replay/chunk-ack (chunk 0)
-	ackPayload := fmt.Sprintf(`{"session_id":%q,"chunk_seq":0,"size_bytes":2048,"duration_ms":5000,"event_count":20,"has_error":true}`, sessID)
+	ackPayload := fmt.Sprintf(`{"session_id":%q,"chunk_seq":0,"size_bytes":2048,"duration_ms":5000,"event_count":20,"has_error":true,"has_rage_click":true}`, sessID)
 	resp = e.post(t, "/api/v1/replay/chunk-ack", ackPayload, keyHdr)
 	if resp.StatusCode != fiber.StatusOK {
 		t.Fatalf("chunk-ack status = %d", resp.StatusCode)
@@ -298,8 +298,8 @@ func TestReplayDatabaseIntegration(t *testing.T) {
 		t.Errorf("idempotent retry expected chunk_count 1, got %d", ackRes.ChunkCount)
 	}
 
-	// 4. POST /replay/chunk-ack (chunk 1, has_error: false -> sticky has_error must stay true)
-	ackPayload2 := fmt.Sprintf(`{"session_id":%q,"chunk_seq":1,"size_bytes":4096,"duration_ms":12000,"event_count":40,"has_error":false}`, sessID)
+	// 4. POST /replay/chunk-ack (chunk 1, has_error: false, has_dead_click: true -> sticky flags must hold)
+	ackPayload2 := fmt.Sprintf(`{"session_id":%q,"chunk_seq":1,"size_bytes":4096,"duration_ms":12000,"event_count":40,"has_error":false,"has_dead_click":true}`, sessID)
 	resp = e.post(t, "/api/v1/replay/chunk-ack", ackPayload2, keyHdr)
 	if resp.StatusCode != fiber.StatusOK {
 		t.Fatalf("chunk-ack 1 status = %d", resp.StatusCode)
@@ -310,7 +310,7 @@ func TestReplayDatabaseIntegration(t *testing.T) {
 	}
 
 	// 5. GET /projects/:projectID/sessions
-	listResp := e.do(t, "GET", fmt.Sprintf("/api/v1/projects/%d/sessions?has_error=true", pid), nil, authHdr)
+	listResp := e.do(t, "GET", fmt.Sprintf("/api/v1/projects/%d/sessions?has_error=true&has_dead_click=true", pid), nil, authHdr)
 	if listResp.StatusCode != fiber.StatusOK {
 		t.Fatalf("list sessions status = %d", listResp.StatusCode)
 	}
@@ -322,8 +322,8 @@ func TestReplayDatabaseIntegration(t *testing.T) {
 	if len(listRes.Items) != 1 {
 		t.Fatalf("expected 1 session item, got %d", len(listRes.Items))
 	}
-	if !listRes.Items[0].HasError {
-		t.Errorf("expected session has_error to be sticky true")
+	if !listRes.Items[0].HasError || !listRes.Items[0].HasRageClick || !listRes.Items[0].HasDeadClick {
+		t.Errorf("expected sticky flags true: got err=%v rage=%v dead=%v", listRes.Items[0].HasError, listRes.Items[0].HasRageClick, listRes.Items[0].HasDeadClick)
 	}
 	if listRes.Items[0].ChunkCount != 2 {
 		t.Errorf("expected chunk_count 2, got %d", listRes.Items[0].ChunkCount)
