@@ -384,7 +384,7 @@ func seedProject(ctx context.Context, pool *pgxpool.Pool, projectID int64) error
 	}
 	log.Printf("  -> Seeded 4 crash diagnostic issues and events into 'issues'")
 
-	// 5. Seed Session Replay records (replay_sessions)
+	// 5. Seed Session Replay records (replay_sessions) + correlated timeline telemetry_events
 	replaySessions := []struct {
 		id           string
 		userID       string
@@ -393,11 +393,12 @@ func seedProject(ctx context.Context, pool *pgxpool.Pool, projectID int64) error
 		eventCount   int64
 		hasError     bool
 		hasRageClick bool
+		hasDeadClick bool
 	}{
-		{"ses_94k2p8", "nadia.putri@fintech.id", 102000, 3, 480, true, true},
-		{"ses_71m9x3", "rian.wijaya@commerce.co", 138000, 4, 620, false, false},
-		{"ses_58c4v1", "kevin.tan@saas.sg", 185000, 5, 890, false, false},
-		{"ses_32x8d4", "fani.pratama@startup.id", 94000, 2, 340, true, false},
+		{"ses_94k2p8", "nadia.putri@fintech.id", 102000, 3, 480, true, true, false},
+		{"ses_71m9x3", "rian.wijaya@commerce.co", 138000, 4, 620, false, false, true},
+		{"ses_58c4v1", "kevin.tan@saas.sg", 185000, 5, 890, false, false, false},
+		{"ses_32x8d4", "fani.pratama@startup.id", 94000, 2, 340, true, false, true},
 	}
 
 	for _, rs := range replaySessions {
@@ -407,16 +408,55 @@ func seedProject(ctx context.Context, pool *pgxpool.Pool, projectID int64) error
 			INSERT INTO replay_sessions (
 				id, project_id, user_id, environment, start_time, end_time,
 				duration_ms, chunk_count, event_count, total_size_bytes,
-				has_error, has_rage_click, storage_prefix, created_at, updated_at
+				has_error, has_rage_click, has_dead_click, storage_prefix, created_at, updated_at
 			) VALUES (
-				$1, $2, $3, 'production', $4, $5, $6, $7, $8, 48200, $9, $10,
-				$11, now(), now()
+				$1, $2, $3, 'production', $4, $5, $6, $7, $8, 48200, $9, $10, $11,
+				$12, now(), now()
 			)
-			ON CONFLICT (project_id, id) DO NOTHING
+			ON CONFLICT (project_id, id) DO UPDATE SET
+				has_rage_click = EXCLUDED.has_rage_click,
+				has_dead_click = EXCLUDED.has_dead_click,
+				updated_at = now()
 		`, rs.id, projectID, rs.userID, sStart, sEnd, rs.durationMS, rs.chunkCount, rs.eventCount,
-			rs.hasError, rs.hasRageClick, fmt.Sprintf("projects/%d/sessions/%s/", projectID, rs.id))
+			rs.hasError, rs.hasRageClick, rs.hasDeadClick, fmt.Sprintf("projects/%d/sessions/%s/", projectID, rs.id))
 		if err != nil {
 			log.Printf("  -> Note: replay insert %s: %v", rs.id, err)
+			continue
+		}
+
+		// Seed correlated timeline_events for each replay session
+		type tlEv struct {
+			offsetMS int64
+			kind     string
+			name     string
+			level    string
+			message  string
+		}
+		tl := []tlEv{
+			{8000, "event", "page_view", "info", "Navigated to /checkout/payment"},
+		}
+		if rs.hasRageClick {
+			tl = append(tl, tlEv{46000, "log", "rage_click", "warn", "Rage click ×4 on button#pay-submit within 380ms"})
+		}
+		if rs.hasDeadClick {
+			tl = append(tl, tlEv{52000, "log", "dead_click", "warn", "Dead click on button.apply-coupon (no DOM/network activity in 1.5s)"})
+		}
+		if rs.hasError {
+			tl = append(tl,
+				tlEv{64000, "log", "http_error", "error", "POST /api/v1/charge → 502 Bad Gateway (1,840ms)"},
+				tlEv{66000, "log", "TypeError", "error", "TypeError: Cannot read properties of undefined (reading 'charge_id')"},
+			)
+		} else {
+			tl = append(tl, tlEv{rs.durationMS - 12000, "event", "purchase_completed", "info", "Order confirmed"})
+		}
+		for _, item := range tl {
+			evID, _ := uuid.NewV7()
+			evTS := sStart.Add(time.Duration(item.offsetMS) * time.Millisecond)
+			_, _ = pool.Exec(ctx, telemetryInsertSQL,
+				evID, projectID, item.kind, item.name, item.level, item.message,
+				rs.id, rs.userID, "production", "2.4.1", evTS, evTS, evTS,
+				[]byte(`{"source":"replay_timeline"}`), []byte(`{"name":"artracker-web","version":"1.2.0"}`),
+			)
 		}
 	}
 	log.Printf("  -> Seeded 4 session replay records into 'replay_sessions'")

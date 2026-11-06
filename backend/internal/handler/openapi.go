@@ -309,6 +309,7 @@ var openAPISpecBytes = []byte(`{
           { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer", "default": 0 } },
           { "name": "has_error", "in": "query", "required": false, "schema": { "type": "boolean" } },
           { "name": "has_rage_click", "in": "query", "required": false, "schema": { "type": "boolean" } },
+          { "name": "has_dead_click", "in": "query", "required": false, "schema": { "type": "boolean" } },
           { "name": "user_id", "in": "query", "required": false, "schema": { "type": "string" } },
           { "name": "environment", "in": "query", "required": false, "schema": { "type": "string" } },
           { "name": "from", "in": "query", "required": false, "schema": { "type": "string", "format": "date-time" } },
@@ -622,7 +623,8 @@ var openAPISpecBytes = []byte(`{
           "duration_ms": { "type": "integer", "example": 15000 },
           "event_count": { "type": "integer", "example": 128 },
           "has_error": { "type": "boolean", "example": true },
-          "has_rage_click": { "type": "boolean", "example": false }
+          "has_rage_click": { "type": "boolean", "example": false },
+          "has_dead_click": { "type": "boolean", "example": false }
         }
       },
       "ReplayChunkAckResponse": {
@@ -649,6 +651,7 @@ var openAPISpecBytes = []byte(`{
           "total_size_bytes": { "type": "integer", "example": 135000 },
           "has_error": { "type": "boolean", "example": true },
           "has_rage_click": { "type": "boolean", "example": false },
+          "has_dead_click": { "type": "boolean", "example": false },
           "storage_prefix": { "type": "string", "example": "projects/1/sessions/sess_01j8xyz9abc123/" },
           "created_at": { "type": "string", "format": "date-time" },
           "updated_at": { "type": "string", "format": "date-time" }
