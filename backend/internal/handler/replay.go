@@ -1,10 +1,16 @@
 package handler
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +27,7 @@ type ReplayChunkURLRequest struct {
 	UserID      string     `json:"user_id,omitempty"`
 	Environment string     `json:"environment,omitempty"`
 	StartTime   *time.Time `json:"start_time,omitempty"`
+	Direct      *bool      `json:"direct,omitempty"`
 }
 
 type ReplayChunkURLResponse struct {
@@ -152,9 +159,24 @@ func (h *Handler) GenerateChunkUploadURL(c *fiber.Ctx) error {
 	}
 
 	expires := 5 * time.Minute
-	uploadURL, err := h.replayStore.GeneratePresignedPut(ctx, objectKey, req.SizeBytes, expires)
-	if err != nil {
-		return fmt.Errorf("generate presigned put: %w", err)
+	var uploadURL string
+
+	useProxy := h.cfg.ReplayProxyUpload
+	if req.Direct != nil {
+		useProxy = !*req.Direct
+	}
+
+	if useProxy {
+		exp := time.Now().Add(expires).Unix()
+		sig := computeChunkUploadSignature(h.replaySecret(), objectKey, exp)
+		uploadURL = fmt.Sprintf("%s/api/v1/replay/upload-chunk?key=%s&exp=%d&sig=%s",
+			getBaseURL(c), url.QueryEscape(objectKey), exp, sig)
+	} else {
+		presignedURL, err := h.replayStore.GeneratePresignedPut(ctx, objectKey, req.SizeBytes, expires)
+		if err != nil {
+			return fmt.Errorf("generate presigned put: %w", err)
+		}
+		uploadURL = presignedURL
 	}
 
 	return c.JSON(ReplayChunkURLResponse{
@@ -162,6 +184,99 @@ func (h *Handler) GenerateChunkUploadURL(c *fiber.Ctx) error {
 		ObjectKey: objectKey,
 		ExpiresIn: int(expires.Seconds()),
 	})
+}
+
+// UploadChunkProxy handles PUT /api/v1/replay/upload-chunk.
+// It proxies the binary upload directly to Cloudflare R2 / S3, avoiding browser CORS preflight restrictions.
+func (h *Handler) UploadChunkProxy(c *fiber.Ctx) error {
+	if h.replayStore == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "session replay storage is not configured")
+	}
+
+	objectKey := c.Query("key")
+	if objectKey == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "missing key parameter")
+	}
+
+	expStr := c.Query("exp")
+	sig := c.Query("sig")
+	if expStr == "" || sig == "" {
+		return fiber.NewError(fiber.StatusUnauthorized, "missing exp or sig authorization parameters")
+	}
+
+	exp, err := strconv.ParseInt(expStr, 10, 64)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid exp parameter")
+	}
+
+	if !verifyChunkUploadSignature(h.replaySecret(), objectKey, exp, sig) {
+		return fiber.NewError(fiber.StatusUnauthorized, "invalid or expired upload signature")
+	}
+
+	body := c.Body()
+	if len(body) == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "empty chunk body")
+	}
+
+	maxChunk := h.cfg.ReplayMaxChunkBytes
+	if maxChunk <= 0 {
+		maxChunk = 5 * 1024 * 1024
+	}
+	if int64(len(body)) > maxChunk {
+		return fiber.NewError(fiber.StatusRequestEntityTooLarge, fmt.Sprintf("chunk size exceeds maximum limit of %d bytes", maxChunk))
+	}
+
+	ctx, cancel := context.WithTimeout(c.Context(), 15*time.Second)
+	defer cancel()
+
+	if err := h.replayStore.PutObject(ctx, objectKey, bytes.NewReader(body), int64(len(body))); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("upload chunk to storage: %v", err))
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"status": "ok",
+		"key":    objectKey,
+		"size":   len(body),
+	})
+}
+
+func (h *Handler) replaySecret() string {
+	if h.cfg.JWTSecret != "" {
+		return h.cfg.JWTSecret
+	}
+	if h.cfg.R2AccessKeySecret != "" {
+		return h.cfg.R2AccessKeySecret
+	}
+	return "artracker-replay-fallback-secret-2026"
+}
+
+func computeChunkUploadSignature(secret, objectKey string, expiresAt int64) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(fmt.Sprintf("%s:%d", objectKey, expiresAt)))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func verifyChunkUploadSignature(secret, objectKey string, expiresAt int64, signature string) bool {
+	if time.Now().Unix() > expiresAt {
+		return false
+	}
+	expected := computeChunkUploadSignature(secret, objectKey, expiresAt)
+	return hmac.Equal([]byte(expected), []byte(signature))
+}
+
+func getBaseURL(c *fiber.Ctx) string {
+	host := c.Get("X-Forwarded-Host")
+	if host == "" {
+		host = c.Get("Host")
+	}
+	if host == "" {
+		host = c.Hostname()
+	}
+	proto := c.Get("X-Forwarded-Proto")
+	if proto == "" {
+		proto = c.Protocol()
+	}
+	return fmt.Sprintf("%s://%s", proto, host)
 }
 
 // AcknowledgeChunk handles POST /api/v1/replay/chunk-ack.

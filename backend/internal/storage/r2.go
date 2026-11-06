@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 type ReplayStore interface {
 	GeneratePresignedPut(ctx context.Context, objectKey string, sizeBytes int64, expires time.Duration) (string, error)
 	GeneratePresignedGet(ctx context.Context, objectKey string, expires time.Duration) (string, error)
+	PutObject(ctx context.Context, objectKey string, data io.Reader, sizeBytes int64) error
 	Bucket() string
 }
 
@@ -110,6 +112,7 @@ func (s *R2Storage) GeneratePresignedPut(ctx context.Context, objectKey string, 
 	return req.URL, nil
 }
 
+
 // GeneratePresignedGet generates a presigned GET URL for downloading a replay chunk.
 func (s *R2Storage) GeneratePresignedGet(ctx context.Context, objectKey string, expires time.Duration) (string, error) {
 	if objectKey == "" {
@@ -131,3 +134,28 @@ func (s *R2Storage) GeneratePresignedGet(ctx context.Context, objectKey string, 
 
 	return req.URL, nil
 }
+
+// PutObject uploads an object directly to Cloudflare R2 bucket.
+func (s *R2Storage) PutObject(ctx context.Context, objectKey string, data io.Reader, sizeBytes int64) error {
+	if objectKey == "" {
+		return errors.New("storage: object key cannot be empty")
+	}
+
+	input := &s3.PutObjectInput{
+		Bucket:      aws.String(s.bucket),
+		Key:         aws.String(objectKey),
+		Body:        data,
+		ContentType: aws.String("application/gzip"),
+	}
+	if sizeBytes > 0 {
+		input.ContentLength = aws.Int64(sizeBytes)
+	}
+
+	_, err := s.client.PutObject(ctx, input)
+	if err != nil {
+		return fmt.Errorf("storage: put object: %w", err)
+	}
+
+	return nil
+}
+

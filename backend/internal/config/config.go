@@ -49,6 +49,7 @@ type Config struct {
 	R2Endpoint          string
 	R2Region            string
 	ReplayMaxChunkBytes int64
+	ReplayProxyUpload   bool
 }
 
 // Placeholders shipped in .env.example / used as the dev default; never valid in production.
@@ -95,6 +96,7 @@ func Load() Config {
 		R2Endpoint:          env("R2_ENDPOINT", ""),
 		R2Region:            env("R2_REGION", "auto"),
 		ReplayMaxChunkBytes: int64(envInt("REPLAY_MAX_CHUNK_BYTES", 5242880)),
+		ReplayProxyUpload:   parseBool(env("REPLAY_PROXY_UPLOAD", "true")),
 	}
 
 	if cfg.R2Endpoint == "" && cfg.R2AccountID != "" {

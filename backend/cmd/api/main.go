@@ -98,7 +98,7 @@ func main() {
 	app.Use("/api/v1/replay", cors.New(cors.Config{
 		AllowOrigins: "*",
 		AllowHeaders: "Origin, Content-Type, Content-Encoding, Accept, X-Artracker-Key",
-		AllowMethods: "POST, OPTIONS",
+		AllowMethods: "GET, POST, PUT, OPTIONS",
 	}))
 	app.Use("/api/v1/sdk", cors.New(cors.Config{
 		AllowOrigins: "*",

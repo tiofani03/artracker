@@ -17,6 +17,7 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Post("/ingest", h.VerifyIngestKey, h.RateLimitIngest, h.Ingest)
 	api.Post("/events", h.VerifyIngestKey, h.RateLimitAnalytics, h.IngestEvents)
 	api.Post("/replay/chunk-url", h.VerifyIngestKey, h.RateLimitIngest, h.GenerateChunkUploadURL)
+	api.Put("/replay/upload-chunk", h.UploadChunkProxy)
 	api.Post("/replay/chunk-ack", h.VerifyIngestKey, h.RateLimitIngest, h.AcknowledgeChunk)
 
 	if h.db == nil {

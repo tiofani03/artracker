@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -44,6 +45,10 @@ func (m *mockReplayStore) Bucket() string {
 	return "test-bucket"
 }
 
+func (m *mockReplayStore) PutObject(ctx context.Context, objectKey string, data io.Reader, sizeBytes int64) error {
+	return nil
+}
+
 func setupReplayTestApp(t *testing.T, withStore bool) (*fiber.App, string) {
 	t.Helper()
 
@@ -66,6 +71,7 @@ func setupReplayTestApp(t *testing.T, withStore bool) (*fiber.App, string) {
 	appCfg := config.Config{
 		Env:                 "development",
 		ReplayMaxChunkBytes: 5 * 1024 * 1024,
+		ReplayProxyUpload:   true,
 	}
 
 	h := New(nil, appCfg, auth.NewIssuer("test-jwt-secret-min-32-chars-long!", time.Hour), map[string]OAuthProvider{}).
@@ -349,3 +355,44 @@ func TestReplayDatabaseIntegration(t *testing.T) {
 		t.Errorf("expected presigned URLs on chunks")
 	}
 }
+
+func TestReplayProxyUpload(t *testing.T) {
+	appWithStore, validKey := setupReplayTestApp(t, true)
+
+	// 1. Request chunk-url with proxy upload (default)
+	payload := `{"session_id":"sess_proxy_test_123","chunk_seq":0,"size_bytes":100}`
+	req := httptest.NewRequest("POST", "/api/v1/replay/chunk-url", bytes.NewReader([]byte(payload)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Artracker-Key", validKey)
+	resp, err := appWithStore.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", resp.StatusCode)
+	}
+
+	var urlRes ReplayChunkURLResponse
+	if err := json.NewDecoder(resp.Body).Decode(&urlRes); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. PUT binary chunk to the upload URL (extract relative path)
+	parsedURL, err := url.Parse(urlRes.UploadURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploadPath := parsedURL.Path + "?" + parsedURL.RawQuery
+
+	putReq := httptest.NewRequest("PUT", uploadPath, bytes.NewReader([]byte("dummy-gzipped-chunk-bytes")))
+	putReq.Header.Set("Content-Type", "application/gzip")
+	putResp, err := appWithStore.Test(putReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if putResp.StatusCode != fiber.StatusOK {
+		body, _ := io.ReadAll(putResp.Body)
+		t.Fatalf("expected 200 OK from upload-chunk proxy, got %d: %s", putResp.StatusCode, string(body))
+	}
+}
+
