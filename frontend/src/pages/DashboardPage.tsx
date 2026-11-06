@@ -1072,7 +1072,7 @@ function DashboardInner({
                                     <span className="badge badge--exception">error</span>
                                   )}
                                   {s.has_rage_click && (
-                                    <span className="badge badge--console">rage click</span>
+                                    <span className="badge badge--console">rage tap/click</span>
                                   )}
                                   {s.has_dead_click && (
                                     <span className="badge badge--console">dead click</span>

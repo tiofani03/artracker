@@ -64,6 +64,15 @@ func TestErrorTypeAndTitle(t *testing.T) {
 	if got := ErrorType("TypeError: Cannot read properties of undefined"); got != "TypeError" {
 		t.Fatalf("ErrorType = %q, want TypeError", got)
 	}
+	if got := ErrorType("java.lang.NullPointerException: attempt to invoke virtual method"); got != "NullPointerException" {
+		t.Fatalf("ErrorType = %q, want NullPointerException", got)
+	}
+	if got := ErrorType("SIGSEGV: segmentation fault"); got != "SIGSEGV" {
+		t.Fatalf("ErrorType = %q, want SIGSEGV", got)
+	}
+	if got := ErrorType("ANRError: Main thread blocked for 5000ms"); got != "ANRError" {
+		t.Fatalf("ErrorType = %q, want ANRError", got)
+	}
 	if got := ErrorType("something went wrong"); got != "error" {
 		t.Fatalf("ErrorType fallback = %q, want error", got)
 	}

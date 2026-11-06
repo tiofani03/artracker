@@ -509,6 +509,60 @@ var openAPISpecBytes = []byte(`{
           "204": { "description": "Funnel deleted" }
         }
       }
+    },
+    "/projects/{projectID}/releases/{version}/dsyms": {
+      "post": {
+        "summary": "Upload iOS dSYM Binary or Zip Archive",
+        "description": "Uploads iOS Mach-O debug symbols (dSYM bundle zip or raw DWARF binary) for server-side crash symbolication.",
+        "operationId": "uploadDSYM",
+        "tags": ["Crash Diagnostics"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "version", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "file", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "201": { "description": "dSYM artifact stored" },
+          "400": { "description": "Invalid dSYM archive or missing version" },
+          "401": { "description": "Unauthorized" }
+        }
+      }
+    },
+    "/projects/{projectID}/releases/{version}/proguard": {
+      "post": {
+        "summary": "Upload Android ProGuard / R8 Mapping File",
+        "description": "Uploads mapping.txt for de-obfuscating Android Kotlin/Java stack traces.",
+        "operationId": "uploadProguard",
+        "tags": ["Crash Diagnostics"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "version", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "file", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "201": { "description": "ProGuard mapping stored" },
+          "400": { "description": "Invalid ProGuard mapping syntax" },
+          "401": { "description": "Unauthorized" }
+        }
+      }
+    },
+    "/projects/{projectID}/releases/{version}/artifacts": {
+      "get": {
+        "summary": "List Release Debug Artifacts",
+        "description": "Lists all dSYMs, ProGuard mappings, and Source Maps uploaded for a specific project release version.",
+        "operationId": "listReleaseArtifacts",
+        "tags": ["Crash Diagnostics"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "version", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "List of artifacts for the release" }
+        }
+      }
     }
   },
   "components": {

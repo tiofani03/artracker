@@ -547,3 +547,47 @@ export const teamApi = {
   acceptInvite: (token: string) =>
     post<AcceptInviteResult>(`/invites/${encodeURIComponent(token)}/accept`),
 }
+
+export type ReleaseArtifactItem = {
+  id: number
+  project_id: number
+  version: string
+  build_number: string
+  artifact_type: 'dsym' | 'proguard_mapping' | 'sourcemap'
+  file_name: string
+  storage_path: string
+  checksum_sha256: string
+  cpu_arch?: string
+  debug_uuid?: string
+  size_bytes: number
+  created_at: string
+}
+
+export const artifactsApi = {
+  listArtifacts: (projectId: number, version: string) =>
+    request<{ project_id: number; version: string; artifacts: ReleaseArtifactItem[] }>(
+      `/projects/${projectId}/releases/${encodeURIComponent(version)}/artifacts`,
+    ),
+  uploadDSYM: (projectId: number, version: string, file: File | Blob, fileName?: string) => {
+    const qs = fileName ? `?file=${encodeURIComponent(fileName)}` : ''
+    return request<{ status: string; id: number; debug_uuid: string; cpu_arch: string }>(
+      `/projects/${projectId}/releases/${encodeURIComponent(version)}/dsyms${qs}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: file,
+      },
+    )
+  },
+  uploadProguard: (projectId: number, version: string, file: File | Blob | string, fileName?: string) => {
+    const qs = fileName ? `?file=${encodeURIComponent(fileName)}` : ''
+    return request<{ status: string; id: number; file_name: string }>(
+      `/projects/${projectId}/releases/${encodeURIComponent(version)}/proguard${qs}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: file,
+      },
+    )
+  },
+}
