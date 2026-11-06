@@ -49,6 +49,10 @@ func (m *mockReplayStore) PutObject(ctx context.Context, objectKey string, data 
 	return nil
 }
 
+func (m *mockReplayStore) GetObject(ctx context.Context, objectKey string) (io.ReadCloser, int64, string, error) {
+	return io.NopCloser(bytes.NewReader([]byte("mock-gzip-data"))), 14, "application/gzip", nil
+}
+
 func setupReplayTestApp(t *testing.T, withStore bool) (*fiber.App, string) {
 	t.Helper()
 
@@ -393,6 +397,21 @@ func TestReplayProxyUpload(t *testing.T) {
 	if putResp.StatusCode != fiber.StatusOK {
 		body, _ := io.ReadAll(putResp.Body)
 		t.Fatalf("expected 200 OK from upload-chunk proxy, got %d: %s", putResp.StatusCode, string(body))
+	}
+
+	// 3. GET binary chunk from the download URL
+	downloadPath := fmt.Sprintf("/api/v1/replay/download-chunk?%s", parsedURL.RawQuery)
+	getReq := httptest.NewRequest("GET", downloadPath, nil)
+	getResp, err := appWithStore.Test(getReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getResp.StatusCode != fiber.StatusOK {
+		body, _ := io.ReadAll(getResp.Body)
+		t.Fatalf("expected 200 OK from download-chunk proxy, got %d: %s", getResp.StatusCode, string(body))
+	}
+	if getResp.Header.Get("Access-Control-Allow-Origin") != "*" {
+		t.Errorf("expected CORS header on download response, got %s", getResp.Header.Get("Access-Control-Allow-Origin"))
 	}
 }
 

@@ -240,6 +240,51 @@ func (h *Handler) UploadChunkProxy(c *fiber.Ctx) error {
 	})
 }
 
+// DownloadChunkProxy handles GET /api/v1/replay/download-chunk.
+// It proxies the binary download directly from Cloudflare R2 / S3 with full CORS support.
+func (h *Handler) DownloadChunkProxy(c *fiber.Ctx) error {
+	if h.replayStore == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "session replay storage is not configured")
+	}
+
+	objectKey := c.Query("key")
+	if objectKey == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "missing key parameter")
+	}
+
+	expStr := c.Query("exp")
+	sig := c.Query("sig")
+	if expStr == "" || sig == "" {
+		return fiber.NewError(fiber.StatusUnauthorized, "missing exp or sig authorization parameters")
+	}
+
+	exp, err := strconv.ParseInt(expStr, 10, 64)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid exp parameter")
+	}
+
+	if !verifyChunkUploadSignature(h.replaySecret(), objectKey, exp, sig) {
+		return fiber.NewError(fiber.StatusUnauthorized, "invalid or expired download signature")
+	}
+
+	ctx, cancel := context.WithTimeout(c.Context(), 15*time.Second)
+	defer cancel()
+
+	body, size, contentType, err := h.replayStore.GetObject(ctx, objectKey)
+	if err != nil {
+		return fiber.NewError(fiber.StatusNotFound, fmt.Sprintf("chunk object not found: %v", err))
+	}
+	defer body.Close()
+
+	c.Set("Content-Type", contentType)
+	if size > 0 {
+		c.Set("Content-Length", strconv.FormatInt(size, 10))
+	}
+	c.Set("Access-Control-Allow-Origin", "*")
+
+	return c.SendStream(body, int(size))
+}
+
 func (h *Handler) replaySecret() string {
 	if h.cfg.JWTSecret != "" {
 		return h.cfg.JWTSecret
@@ -559,9 +604,16 @@ func (h *Handler) GetProjectSession(c *fiber.Ctx) error {
 		}
 
 		if h.replayStore != nil {
-			getURL, err := h.replayStore.GeneratePresignedGet(ctx, chunk.ObjectKey, 15*time.Minute)
-			if err == nil {
-				chunk.URL = getURL
+			if h.cfg.ReplayProxyUpload {
+				exp := time.Now().Add(1 * time.Hour).Unix()
+				sig := computeChunkUploadSignature(h.replaySecret(), chunk.ObjectKey, exp)
+				chunk.URL = fmt.Sprintf("%s/api/v1/replay/download-chunk?key=%s&exp=%d&sig=%s",
+					getBaseURL(c), url.QueryEscape(chunk.ObjectKey), exp, sig)
+			} else {
+				getURL, err := h.replayStore.GeneratePresignedGet(ctx, chunk.ObjectKey, 15*time.Minute)
+				if err == nil {
+					chunk.URL = getURL
+				}
 			}
 		}
 

@@ -18,6 +18,7 @@ type ReplayStore interface {
 	GeneratePresignedPut(ctx context.Context, objectKey string, sizeBytes int64, expires time.Duration) (string, error)
 	GeneratePresignedGet(ctx context.Context, objectKey string, expires time.Duration) (string, error)
 	PutObject(ctx context.Context, objectKey string, data io.Reader, sizeBytes int64) error
+	GetObject(ctx context.Context, objectKey string) (io.ReadCloser, int64, string, error)
 	Bucket() string
 }
 
@@ -158,4 +159,33 @@ func (s *R2Storage) PutObject(ctx context.Context, objectKey string, data io.Rea
 
 	return nil
 }
+
+// GetObject retrieves an object directly from Cloudflare R2 bucket.
+func (s *R2Storage) GetObject(ctx context.Context, objectKey string) (io.ReadCloser, int64, string, error) {
+	if objectKey == "" {
+		return nil, 0, "", errors.New("storage: object key cannot be empty")
+	}
+
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(objectKey),
+	}
+
+	out, err := s.client.GetObject(ctx, input)
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("storage: get object: %w", err)
+	}
+
+	var size int64
+	if out.ContentLength != nil {
+		size = *out.ContentLength
+	}
+	contentType := "application/gzip"
+	if out.ContentType != nil && *out.ContentType != "" {
+		contentType = *out.ContentType
+	}
+
+	return out.Body, size, contentType, nil
+}
+
 
