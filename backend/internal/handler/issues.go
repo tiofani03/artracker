@@ -15,6 +15,7 @@ import (
 
 	"github.com/tiofani03/artracker/backend/internal/ingest"
 	"github.com/tiofani03/artracker/backend/internal/issues"
+	"github.com/tiofani03/artracker/backend/internal/symbolication"
 )
 
 // AssignedUser is the minimal assignee reference surfaced on issues.
@@ -178,8 +179,10 @@ func (h *Handler) GetIssue(c *fiber.Ctx) error {
 	}
 	defer rows.Close()
 
-	// Load source maps once per release version referenced by these events.
+	// Load symbolication maps once per release version referenced by these events.
 	sourceMaps := map[string][]*issues.SourceMap{}
+	proguardMaps := map[string]*symbolication.ProguardRetracer{}
+	iosSymbolicators := map[string]*symbolication.IOSSymbolicator{}
 
 	events := []IssueEvent{}
 	for rows.Next() {
@@ -202,6 +205,7 @@ func (h *Handler) GetIssue(c *fiber.Ctx) error {
 		ev.StackTraceResolved = ev.StackTrace
 
 		if ev.StackTrace != "" {
+			// 1. Web JS Source Maps
 			maps, ok := sourceMaps[ev.ReleaseVersion]
 			if !ok {
 				maps = h.loadSourceMaps(ctx, projectID, ev.ReleaseVersion)
@@ -209,6 +213,26 @@ func (h *Handler) GetIssue(c *fiber.Ctx) error {
 			}
 			for _, sm := range maps {
 				ev.StackTraceResolved = sm.DemangleStackTrace(ev.StackTraceResolved)
+			}
+
+			// 2. Android ProGuard / R8 Mapping
+			pg, ok := proguardMaps[ev.ReleaseVersion]
+			if !ok {
+				pg = h.loadProguardRetracer(ctx, projectID, ev.ReleaseVersion)
+				proguardMaps[ev.ReleaseVersion] = pg
+			}
+			if pg != nil {
+				ev.StackTraceResolved = pg.RetraceStackTrace(ev.StackTraceResolved)
+			}
+
+			// 3. iOS dSYM / DWARF Symbolicator
+			iosSym, ok := iosSymbolicators[ev.ReleaseVersion]
+			if !ok {
+				iosSym = h.loadIOSSymbolicator(ctx, projectID, ev.ReleaseVersion)
+				iosSymbolicators[ev.ReleaseVersion] = iosSym
+			}
+			if iosSym != nil {
+				ev.StackTraceResolved = symbolication.DemangleIOSStackTrace(ev.StackTraceResolved, iosSym, 0)
 			}
 		}
 		events = append(events, ev)
@@ -218,6 +242,46 @@ func (h *Handler) GetIssue(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(IssueDetail{Issue: it, Events: events})
+}
+
+func (h *Handler) loadProguardRetracer(ctx context.Context, projectID int64, releaseVersion string) *symbolication.ProguardRetracer {
+	if releaseVersion == "" {
+		return nil
+	}
+	var content []byte
+	err := h.db.QueryRow(ctx, `
+		SELECT content FROM project_release_artifacts
+		WHERE project_id = $1 AND version = $2 AND artifact_type = 'proguard_mapping'
+		ORDER BY created_at DESC LIMIT 1`, projectID, releaseVersion).Scan(&content)
+	if err != nil || len(content) == 0 {
+		return nil
+	}
+	retracer, err := symbolication.ParseProguardMapping(content)
+	if err != nil {
+		slog.Warn("skipping invalid proguard mapping", "err", err, "version", releaseVersion)
+		return nil
+	}
+	return retracer
+}
+
+func (h *Handler) loadIOSSymbolicator(ctx context.Context, projectID int64, releaseVersion string) *symbolication.IOSSymbolicator {
+	if releaseVersion == "" {
+		return nil
+	}
+	var content []byte
+	err := h.db.QueryRow(ctx, `
+		SELECT content FROM project_release_artifacts
+		WHERE project_id = $1 AND version = $2 AND artifact_type = 'dsym'
+		ORDER BY created_at DESC LIMIT 1`, projectID, releaseVersion).Scan(&content)
+	if err != nil || len(content) == 0 {
+		return nil
+	}
+	sym, err := symbolication.NewIOSSymbolicator(content)
+	if err != nil {
+		slog.Warn("skipping invalid dsym macho binary", "err", err, "version", releaseVersion)
+		return nil
+	}
+	return sym
 }
 
 func (h *Handler) loadSourceMaps(ctx context.Context, projectID int64, releaseVersion string) []*issues.SourceMap {

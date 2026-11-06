@@ -74,12 +74,15 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Post("/projects/:projectID/analytics/funnels", h.RequireAuth, h.RequireProjectRole(auth.RoleMember), h.CreateSavedFunnel)
 	api.Delete("/projects/:projectID/analytics/funnels/:funnelID", h.RequireAuth, h.RequireProjectRole(auth.RoleMember), h.DeleteSavedFunnel)
 
-	// Error tracking & crash diagnostics
+	// Error tracking & crash diagnostics & release artifacts
 	api.Get("/projects/:projectID/issues", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListIssues)
 	api.Get("/projects/:projectID/issues/:issueID", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetIssue)
 	api.Patch("/projects/:projectID/issues/:issueID", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.UpdateIssueStatus)
 	api.Post("/projects/:projectID/issues/:issueID/assign", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.AssignIssue)
 	api.Post("/projects/:projectID/releases/:version/sourcemaps", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.UploadSourceMap)
+	api.Post("/projects/:projectID/releases/:version/dsyms", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.UploadDSYM)
+	api.Post("/projects/:projectID/releases/:version/proguard", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.UploadProguard)
+	api.Get("/projects/:projectID/releases/:version/artifacts", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListReleaseArtifacts)
 
 	api.Get("/sdk/validate", h.sdkValidate(false))
 	api.Get("/sdk/validate-admin", h.sdkValidate(true))
