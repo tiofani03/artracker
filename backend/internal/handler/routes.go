@@ -42,6 +42,16 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Get("/orgs", h.RequireAuth, h.ListOrgs)
 	api.Get("/orgs/:orgID/projects", h.RequireAuth, h.RequireOrgRole(auth.RoleViewer), h.ListProjects)
 	api.Post("/orgs/:orgID/projects", h.RequireAuth, h.RequireOrgRole(auth.RoleAdmin), h.CreateProject)
+	api.Get("/orgs/:orgID/members", h.RequireAuth, h.RequireOrgRole(auth.RoleViewer), h.ListOrgMembers)
+	api.Post("/orgs/:orgID/invites", h.RequireAuth, h.RequireOrgRole(auth.RoleAdmin), h.CreateOrgInvite)
+	api.Delete("/orgs/:orgID/invites/:inviteID", h.RequireAuth, h.RequireOrgRole(auth.RoleAdmin), h.RevokeOrgInvite)
+	api.Patch("/orgs/:orgID/members/:userID", h.RequireAuth, h.RequireOrgRole(auth.RoleOwner), h.UpdateOrgMemberRole)
+	api.Delete("/orgs/:orgID/members/:userID", h.RequireAuth, h.RequireOrgRole(auth.RoleAdmin), h.RemoveOrgMember)
+
+	// Public invitation acceptance
+	api.Get("/invites/:token", h.GetInvitePreview)
+	api.Post("/invites/:token/accept", h.RequireAuth, h.AcceptInvite)
+
 	api.Get("/projects/:projectID", h.RequireAuth, h.GetProject)
 
 	api.Get("/projects/:projectID/keys", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListKeys)
