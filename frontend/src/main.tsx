@@ -11,10 +11,12 @@ import LoginPage from './pages/LoginPage'
 import SettingsPage from './pages/SettingsPage'
 import IssuesPage from './pages/IssuesPage'
 import IssueDetailPage from './pages/IssueDetailPage'
+import InviteAcceptPage from './pages/InviteAcceptPage'
 import { useLocation } from './router'
 
 function Routes() {
   const path = useLocation().replace(/\/+$/, '') || '/'
+  if (path.startsWith('/invite/')) return <InviteAcceptPage />
   if (path.startsWith('/dashboard/issues/')) return <IssueDetailPage />
   switch (path) {
     case '/login':

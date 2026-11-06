@@ -470,3 +470,80 @@ export const replayApi = {
       `/projects/${projectId}/sessions/${encodeURIComponent(sessionId)}`,
     ),
 }
+
+export type OrganizationMember = {
+  user_id: number
+  email: string
+  name: string
+  avatar_url: string
+  role: Role
+  joined_at: string
+}
+
+export type OrganizationInvitation = {
+  id: number
+  org_id: number
+  email: string
+  role: 'admin' | 'member' | 'viewer'
+  invited_by: number
+  invited_by_name?: string
+  expires_at: string
+  accepted_at?: string | null
+  created_at: string
+}
+
+export type CreateInviteInput = {
+  email: string
+  role: 'admin' | 'member' | 'viewer'
+}
+
+export type CreateInviteResult = {
+  id: number
+  org_id: number
+  email: string
+  role: string
+  invite_url: string
+  token: string
+  expires_at: string
+}
+
+export type InvitePreview = {
+  org_id: number
+  org_name: string
+  org_slug: string
+  email: string
+  role: string
+  invited_by_name: string
+  expires_at: string
+  is_expired: boolean
+  is_accepted: boolean
+}
+
+export type AcceptInviteResult = {
+  org_id: number
+  org_name: string
+  org_slug: string
+  role: string
+}
+
+export const teamApi = {
+  listMembers: (orgId: number) =>
+    request<{ members: OrganizationMember[]; invitations: OrganizationInvitation[] }>(
+      `/orgs/${orgId}/members`,
+    ),
+  createInvite: (orgId: number, input: CreateInviteInput) =>
+    post<CreateInviteResult>(`/orgs/${orgId}/invites`, input),
+  revokeInvite: (orgId: number, inviteId: number) =>
+    request<void>(`/orgs/${orgId}/invites/${inviteId}`, { method: 'DELETE' }),
+  updateMemberRole: (orgId: number, userId: number, role: 'admin' | 'member' | 'viewer') =>
+    request<{ org_id: number; user_id: number; role: string }>(`/orgs/${orgId}/members/${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    }),
+  removeMember: (orgId: number, userId: number) =>
+    request<void>(`/orgs/${orgId}/members/${userId}`, { method: 'DELETE' }),
+  getInvitePreview: (token: string) =>
+    request<InvitePreview>(`/invites/${encodeURIComponent(token)}`),
+  acceptInvite: (token: string) =>
+    post<AcceptInviteResult>(`/invites/${encodeURIComponent(token)}/accept`),
+}
