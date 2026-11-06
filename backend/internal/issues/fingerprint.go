@@ -100,13 +100,19 @@ func NormalizeMessage(message string) string {
 	return message
 }
 
-// ErrorType extracts the exception class (e.g. "TypeError") from a message, or
-// falls back to "error".
+// ErrorType extracts the exception class (e.g. "TypeError", "NullPointerException", "SIGSEGV")
+// from a message, or falls back to "error".
 func ErrorType(message string) string {
 	m := strings.TrimSpace(message)
 	if i := strings.Index(m, ":"); i > 0 {
 		head := strings.TrimSpace(m[:i])
-		if matched, _ := regexp.MatchString(`^[A-Za-z][A-Za-z0-9_]*Error$`, head); matched {
+		if lastDot := strings.LastIndex(head, "."); lastDot != -1 && lastDot < len(head)-1 {
+			head = head[lastDot+1:]
+		}
+		if matched, _ := regexp.MatchString(`^[A-Za-z][A-Za-z0-9_]*(?:Error|Exception|Signal|Hang|ANR)$`, head); matched {
+			return head
+		}
+		if strings.HasPrefix(head, "SIG") || strings.HasPrefix(head, "EXC_") {
 			return head
 		}
 	}

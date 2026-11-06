@@ -32,11 +32,24 @@ function classifyMarker(ev: TelemetryEvent): { tone: 'error' | 'warn'; badgeLabe
     lvl === 'fatal' ||
     name.includes('error') ||
     name.includes('exception') ||
+    name.includes('anr') ||
+    name.includes('hang') ||
+    msg.includes('anr') ||
+    msg.includes('hang') ||
     msg.includes('typeerror') ||
     msg.includes('502') ||
     msg.includes('500')
   ) {
+    if (name.includes('anr') || msg.includes('anr')) {
+      return { tone: 'error', badgeLabel: 'anr' }
+    }
+    if (name.includes('hang') || msg.includes('hang')) {
+      return { tone: 'error', badgeLabel: 'ui hang' }
+    }
     return { tone: 'error', badgeLabel: 'error' }
+  }
+  if (name === 'rage_tap' || msg.includes('rage tap')) {
+    return { tone: 'warn', badgeLabel: 'rage tap' }
   }
   if (name === 'rage_click' || msg.includes('rage click')) {
     return { tone: 'warn', badgeLabel: 'rage click' }
