@@ -4959,3 +4959,18 @@
 
 
 
+
+/* Replay fallback: explain why no visual replay is available */
+.or-telemetry-canvas__notice {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  border-left: 2px solid var(--color-warn);
+  background: var(--color-warn-wash);
+  color: var(--color-warn);
+}
+
+.or-res-chip--warn {
+  background: var(--color-warn-wash);
+  color: var(--color-warn);
+}
