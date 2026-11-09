@@ -10,6 +10,7 @@ export type NodeKind =
   | 'text'
   | 'button'
   | 'image'
+  | 'input'
   | 'separator'
 
 /**
@@ -28,7 +29,8 @@ const CONTAINER_KINDS: Array<[NodeKind, RegExp]> = [
 
 /** Leaf kinds describe what a node is, regardless of its ancestors. */
 const LEAF_KINDS: Array<[NodeKind, (cls: string) => boolean]> = [
-  ['text', (c) => /(Label|TextView|Text)$/.test(c) && !/TextField/.test(c)],
+  ['text', (c) => /(Label|TextView|Text)$/.test(c) && !/TextField|EditText/.test(c)],
+  ['input', (c) => /TextField|EditText|TextInput|SearchField/.test(c)],
   ['button', (c) => /Button|Clickable/.test(c)],
   ['image', (c) => /ImageView|Icon$|Image$/.test(c)],
   ['separator', (c) => /Separator/.test(c)],

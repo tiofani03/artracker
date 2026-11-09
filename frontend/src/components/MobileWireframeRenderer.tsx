@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useState } from 'react'
 import type { MobileFrame, TouchPoint, ViewNode } from '../replay/model'
 import { activeFrameAt, activeTouchAt } from '../replay/playback'
 import { displayScreenName, fitScale, hasCapturedContent, nodeKinds, type NodeKind } from '../replay/wireframe'
@@ -26,6 +26,17 @@ export function parseFrame(frame: unknown): ParsedFrame | null {
   return null
 }
 
+const WIREFRAME_THEME_KEY = 'artracker.wireframeTheme'
+
+/** Native apps default to light UI; the SDK sends no colors, so light is the closer default. */
+function readWireframeTheme(): 'light' | 'dark' {
+  try {
+    return localStorage.getItem(WIREFRAME_THEME_KEY) === 'dark' ? 'dark' : 'light'
+  } catch {
+    return 'light'
+  }
+}
+
 interface MobileWireframeRendererProps {
   frames: MobileFrame[]
   touches: TouchPoint[]
@@ -45,6 +56,17 @@ export const MobileWireframeRenderer: React.FC<MobileWireframeRendererProps> = (
   containerWidth = 308,
   maxHeight = 492,
 }) => {
+  const [theme, setTheme] = useState<'light' | 'dark'>(readWireframeTheme)
+  const toggleTheme = () => {
+    const next = theme === 'light' ? 'dark' : 'light'
+    setTheme(next)
+    try {
+      localStorage.setItem(WIREFRAME_THEME_KEY, next)
+    } catch {
+      // storage unavailable: theme only lasts for this view
+    }
+  }
+
   const activeFrame = useMemo(() => activeFrameAt(frames, currentTs), [frames, currentTs])
   const activeTouch = useMemo(() => activeTouchAt(touches, currentTs), [touches, currentTs])
 
@@ -154,7 +176,7 @@ export const MobileWireframeRenderer: React.FC<MobileWireframeRendererProps> = (
   }
 
   return (
-    <div className="mw-viewport-container" style={{ width: `${containerWidth}px` }}>
+    <div className={`mw-viewport-container mw-theme--${theme}`} style={{ width: `${containerWidth}px` }}>
       {/* Dynamic Screen Header Banner */}
       <div className="mw-screen-banner">
         <div className="mw-screen-banner__left">
@@ -164,6 +186,15 @@ export const MobileWireframeRenderer: React.FC<MobileWireframeRendererProps> = (
           </strong>
         </div>
         <div className="mw-screen-banner__right">
+          <button
+            type="button"
+            className="mw-theme-toggle"
+            onClick={toggleTheme}
+            title={theme === 'light' ? 'Switch wireframe to dark' : 'Switch wireframe to light'}
+            aria-label="Toggle wireframe theme"
+          >
+            {theme === 'light' ? '☾' : '☀'}
+          </button>
           {presentation && presentation !== 'push' && (
             <span className="mw-pres-badge">{presentation.toUpperCase()}</span>
           )}

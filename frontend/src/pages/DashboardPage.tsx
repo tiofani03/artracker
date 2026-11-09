@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   analyticsApi,
   replayApi,
@@ -635,9 +635,13 @@ function DashboardInner({
   const [realCampaigns, setRealCampaigns] = useState<typeof CAMPAIGNS | null>(null)
 
   const targetPid = project?.id ?? 1
+  // null while the shell is still resolving the selected project (demo mode supplies its own)
+  const projectReady = project != null
 
   const loadReplaySessions = useCallback(
     async (offsetArg = replayOffset, filterArg = replayFilter) => {
+      // Project still resolving: wait instead of querying the fallback project id.
+      if (!projectReady) return
       setReplayLoading(true)
       setReplayError(null)
       try {
@@ -662,14 +666,21 @@ function DashboardInner({
         setReplayLoading(false)
       }
     },
-    [targetPid, replayOffset, replayFilter],
+    [projectReady, targetPid, replayOffset, replayFilter],
   )
 
   useEffect(() => {
     void loadReplaySessions(replayOffset, replayFilter)
   }, [loadReplaySessions, replayOffset, replayFilter])
 
+  // Read the latest list for the error fallback without refetching detail on every list change.
+  const replaySessionsRef = useRef(replaySessions)
   useEffect(() => {
+    replaySessionsRef.current = replaySessions
+  }, [replaySessions])
+
+  useEffect(() => {
+    if (!projectReady) return
     if (!selectedSessionId) {
       setSessionDetail(null)
       return
@@ -693,7 +704,7 @@ function DashboardInner({
       })
       .catch(() => {
         if (cancelled) return
-        const fallback = replaySessions.find((s) => s.id === selectedSessionId)
+        const fallback = replaySessionsRef.current.find((s) => s.id === selectedSessionId)
         if (fallback) {
           setSessionDetail({
             session: fallback,
@@ -709,7 +720,7 @@ function DashboardInner({
     return () => {
       cancelled = true
     }
-  }, [targetPid, selectedSessionId, replaySessions, liveCapture])
+  }, [projectReady, targetPid, selectedSessionId, liveCapture])
 
   const handleStartLiveCapture = () => {
     if (isCapturingLive) return
@@ -800,9 +811,11 @@ function DashboardInner({
     })
   }
 
+  const projectId = project?.id ?? null
   useEffect(() => {
+    if (projectId == null) return
     let active = true
-    const targetPid = project?.id ?? 1
+    const targetPid = projectId
     Promise.all([
       telemetryApi.getStats(targetPid, range).catch(() => null),
       telemetryApi.listEvents(targetPid, 'all', 50).catch(() => ({ items: [] })),
@@ -836,7 +849,7 @@ function DashboardInner({
     return () => {
       active = false
     }
-  }, [project?.id, range])
+  }, [projectId, range])
 
   const emptyBuckets: BucketPoint[] = [
     { label: '00:00', sessions: 0, errors: 0 },

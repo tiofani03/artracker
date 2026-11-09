@@ -1,3 +1,4 @@
+import { displayScreenName } from './wireframe'
 import type { MobileFrame, ReplayModel, TouchPoint } from './model'
 
 /** A touch ripple is shown while the playhead is within this many ms of the touch. */
@@ -29,4 +30,33 @@ export function fallbackNotice(model: ReplayModel): string | null {
     case 'load-error':
       return model.detail || 'Replay chunks could not be loaded.'
   }
+}
+
+/** Playback offset (ms) for a pointer at `clientX` over a track box; clamped to [0, durationMs]. */
+export function offsetFromPointer(
+  clientX: number,
+  track: { left: number; width: number },
+  durationMs: number,
+): number {
+  if (track.width <= 0) return 0
+  const ratio = Math.min(1, Math.max(0, (clientX - track.left) / track.width))
+  return Math.round(ratio * durationMs)
+}
+
+/** Recorded wall-clock time for the device status bar (HH:MM, viewer's local time zone). */
+export function deviceClock(ts: number): string | null {
+  if (!Number.isFinite(ts)) return null
+  const d = new Date(ts)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+/** The route / screen strip above the player: only recorded values, never placeholders. */
+export function routeStrip(input: {
+  platform: 'web' | 'ios' | 'android'
+  screen: string | null
+  recordedUrl: string | null
+}): { label: string; value: string } {
+  const label = input.platform === 'web' ? 'URL' : input.platform === 'ios' ? 'SCREEN' : 'ACTIVITY'
+  const raw = input.platform === 'web' ? input.recordedUrl : (input.screen ?? input.recordedUrl)
+  return { label, value: raw ? displayScreenName(raw) : 'Not recorded' }
 }

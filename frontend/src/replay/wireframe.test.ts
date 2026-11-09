@@ -109,3 +109,14 @@ describe('hasCapturedContent', () => {
     expect(hasCapturedContent(n('UIView', [n('UIImageView')]))).toBe(true)
   })
 })
+
+describe('nodeKinds input', () => {
+  it('classifies native text inputs so they are drawn', () => {
+    expect(nodeKinds('UISearchBarTextField', new Set()).has('input')).toBe(true)
+    expect(nodeKinds('UITextField', new Set()).has('input')).toBe(true)
+    expect(nodeKinds('androidx.appcompat.widget.AppCompatEditText', new Set()).has('input')).toBe(true)
+  })
+  it('does not treat labels as inputs', () => {
+    expect(nodeKinds('UILabel', new Set()).has('input')).toBe(false)
+  })
+})
