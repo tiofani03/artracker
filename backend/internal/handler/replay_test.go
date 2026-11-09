@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,6 +75,7 @@ func setupReplayTestApp(t *testing.T, withStore bool) (*fiber.App, string) {
 
 	appCfg := config.Config{
 		Env:                 "development",
+		PublicURL:           "https://test.artracker.example.com",
 		ReplayMaxChunkBytes: 5 * 1024 * 1024,
 		ReplayProxyUpload:   true,
 	}
@@ -379,6 +381,12 @@ func TestReplayProxyUpload(t *testing.T) {
 	var urlRes ReplayChunkURLResponse
 	if err := json.NewDecoder(resp.Body).Decode(&urlRes); err != nil {
 		t.Fatal(err)
+	}
+
+	// Verify that upload_url starts with PublicURL when configured, or fallback
+	expectedBase := "https://test.artracker.example.com"
+	if !strings.HasPrefix(urlRes.UploadURL, expectedBase) {
+		t.Fatalf("expected upload_url to start with %q, got %q", expectedBase, urlRes.UploadURL)
 	}
 
 	// 2. PUT binary chunk to the upload URL (extract relative path)

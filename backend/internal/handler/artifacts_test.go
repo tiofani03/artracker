@@ -93,7 +93,7 @@ func TestArtifactsDBRoundtrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx,
-		`INSERT INTO projects(organization_id, name, slug) VALUES ($1, 'Mobile App', 'mobile-app') RETURNING id`, orgID).Scan(&projectID); err != nil {
+		`INSERT INTO projects(org_id, name, slug, platform) VALUES ($1, 'Mobile App', 'mobile-app', 'android') RETURNING id`, orgID).Scan(&projectID); err != nil {
 		t.Fatal(err)
 	}
 
