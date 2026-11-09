@@ -5,6 +5,7 @@ import 'rrweb-player/dist/style.css'
 import type { Platform, ReplayChunkDetail, ReplaySessionItem, TelemetryEvent } from '../api'
 import { loadSessionChunks } from '../utils/replayChunkLoader'
 import { detectSessionPlatform, type DetectedPlatform } from '../utils/platformDetector'
+import { MobileWireframeRenderer } from './MobileWireframeRenderer'
 
 export type TimelineMarker = {
   id: string
@@ -243,6 +244,18 @@ export default function ReplayPlayer({
     }
   }, [recordedUrl, effectivePlatform])
 
+  // Extract mobile native view hierarchy events (iOS & Android UI snapshots)
+  const mobileScreenEvents = useMemo(() => {
+    return timelineEvents
+      .filter((ev) => {
+        const attrs = ev.attributes as Record<string, unknown> | undefined
+        return Boolean(attrs && (attrs.view_tree || attrs.tree))
+      })
+      .sort((a, b) => new Date(a.event_timestamp).getTime() - new Date(b.event_timestamp).getTime())
+  }, [timelineEvents])
+
+  const hasMobileWireframe = mobileScreenEvents.length > 0
+
   // Build timeline markers (red = error, yellow = warn / click / frustration)
   const markers: TimelineMarker[] = useMemo(() => {
     if (timelineEvents.length === 0) return []
@@ -456,11 +469,26 @@ export default function ReplayPlayer({
       )
     }
 
+    // 1. Web DOM Replay (rrweb)
     if (hasFullSnapshot && activeDomEvents.length >= 2) {
       return <div className="replay-rrweb-mount" ref={mountTargetRef} />
     }
 
-    // High-Precision Telemetry Replay Canvas (Real data-driven, Zero AI-Slop)
+    // 2. Mobile Visual Wireframe Replay (Native View Hierarchy from iOS/Android SDK)
+    if (hasMobileWireframe) {
+      return (
+        <MobileWireframeRenderer
+          screenEvents={mobileScreenEvents}
+          currentTimeMs={currentTimeMs}
+          baseTimestampMs={baseTimestampMs}
+          timelineEvents={timelineEvents}
+          platform={effectivePlatform}
+          containerWidth={effectivePlatform === 'ios' ? 308 : 300}
+        />
+      )
+    }
+
+    // 3. Fallback: High-Precision Telemetry Replay Canvas (when no visual snapshots exist)
     return (
       <div className="or-telemetry-canvas">
         {/* Top Screen Breadcrumb & Live Player Ticker */}

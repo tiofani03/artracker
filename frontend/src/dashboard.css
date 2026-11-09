@@ -1985,7 +1985,7 @@
 /* Smartphone Mobile Chassis (iOS / Android) */
 .or-phone-frame {
   width: 320px;
-  height: 520px;
+  height: 560px;
   background: var(--color-paper);
   border-radius: 32px;
   border: 6px solid var(--color-paper-3);
@@ -4703,6 +4703,257 @@
   font-size: var(--text-xs);
   font-weight: 600;
 }
+
+/* ==========================================================================
+   Mobile Wireframe & View Hierarchy Renderer
+   ========================================================================== */
+.mw-viewport-container {
+  display: flex;
+  flex-direction: column;
+  background: #090d16;
+  height: 100%;
+  overflow: hidden;
+  user-select: none;
+}
+
+.mw-screen-banner {
+  height: 28px;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Roboto, sans-serif;
+  font-size: 0.6875rem;
+  z-index: 20;
+}
+
+.mw-screen-banner__left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.mw-screen-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 6px var(--color-accent);
+  flex-shrink: 0;
+}
+
+.mw-screen-title {
+  color: #f1f5f9;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 170px;
+}
+
+.mw-screen-banner__right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mw-pres-badge {
+  font-size: 0.5625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(14, 165, 233, 0.2);
+  color: #38bdf8;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+}
+
+.mw-masked-badge {
+  font-size: 0.5625rem;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(168, 85, 247, 0.2);
+  color: #c084fc;
+}
+
+.mw-canvas-stage {
+  position: relative;
+  overflow: hidden;
+  background: #060911;
+  flex: 1;
+}
+
+.mw-canvas-scalable {
+  position: relative;
+  background: #0a0f1d;
+  box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+/* Recursive node styling */
+.mw-node {
+  box-sizing: border-box;
+  transition: background 0.15s ease;
+  pointer-events: auto;
+}
+
+.mw-node:hover {
+  outline: 1px dashed rgba(59, 130, 246, 0.6);
+  outline-offset: -1px;
+}
+
+.mw-node--modal {
+  background: rgba(15, 23, 42, 0.94) !important;
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.7) !important;
+  z-index: 100 !important;
+}
+
+.mw-node--toolbar {
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  z-index: 20;
+}
+
+.mw-node--scroll {
+  background: rgba(255, 255, 255, 0.01);
+  overflow: hidden;
+}
+
+.mw-node--cell {
+  background: rgba(255, 255, 255, 0.035);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.mw-node--section {
+  background: rgba(255, 255, 255, 0.025);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.mw-node--text {
+  display: flex;
+  align-items: center;
+}
+
+.mw-node--button {
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.28);
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mw-node--button:hover {
+  background: rgba(59, 130, 246, 0.22);
+}
+
+.mw-node--separator {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.mw-node--image {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.25);
+}
+
+.mw-text-label {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Roboto, sans-serif;
+  font-size: 13px;
+  color: #e2e8f0;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mw-skeleton-text {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+}
+
+.mw-skeleton-text--lg {
+  height: 13px;
+  background: rgba(255, 255, 255, 0.24);
+  border-radius: 4px;
+}
+
+.mw-skeleton-btn {
+  width: 50%;
+  height: 6px;
+  background: rgba(59, 130, 246, 0.5);
+  border-radius: 2px;
+}
+
+.mw-empty-screen {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 11px;
+  font-family: var(--font-outlier);
+}
+
+/* Touch Gesture Ripple */
+.mw-touch-ripple {
+  position: absolute;
+  width: 36px;
+  height: 36px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 999;
+}
+
+.mw-touch-ring {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 2px solid #38bdf8;
+  background: rgba(56, 189, 248, 0.2);
+  animation: mw-pulse-ring 0.6s ease-out infinite;
+}
+
+.mw-touch-core {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin-top: -4px;
+  margin-left: -4px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 8px #38bdf8;
+}
+
+@keyframes mw-pulse-ring {
+  0% {
+    transform: scale(0.6);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
 
 
 

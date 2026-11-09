@@ -347,62 +347,126 @@ func (h *Handler) SeedProjectMockData(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(c.Context(), 10*time.Second)
 	defer cancel()
 
-	now := time.Now()
-	sampleEvents := []struct {
-		kind    string
-		name    string
-		level   string
-		message string
-	}{
-		{"event", "page_view", "", ""},
-		{"event", "view_product", "", ""},
-		{"event", "add_to_cart", "", ""},
-		{"event", "checkout_step_1", "", ""},
-		{"event", "checkout_step_2", "", ""},
-		{"event", "purchase_completed", "", ""},
-		{"log", "", "info", "User authentication token refreshed"},
-		{"log", "", "warn", "Slow query execution: latency 1,420ms"},
-		{"log", "", "error", "TypeError: Cannot read properties of undefined (reading 'charge_id')"},
-		{"log", "", "error", "POST /api/v1/charge → 502 Bad Gateway (upstream timeout)"},
+	var projectPlatform string
+	if h.db != nil {
+		_ = h.db.QueryRow(ctx, `SELECT platform FROM projects WHERE id = $1`, projectID).Scan(&projectPlatform)
 	}
+	isMobile := projectPlatform == "ios" || projectPlatform == "android"
 
+	now := time.Now()
 	rows := make([]ingest.TelemetryRow, 0, 50)
-	for i := 0; i < 50; i++ {
-		sample := sampleEvents[i%len(sampleEvents)]
-		eventTime := now.Add(-time.Duration(i*28) * time.Minute)
-		sessionID := fmt.Sprintf("ses_mock_%d", (i%7)+1)
-		userID := fmt.Sprintf("usr_%d", (i%5)+1)
 
-		rowID, err := uuid.NewV7()
-		if err != nil {
-			rowID = uuid.New()
+	if isMobile {
+		// Realistic mobile screen transitions with complete Native View Hierarchy
+		tree1 := `{"cls":"UIView","frame":[0,0,402,874],"children":[{"cls":"UINavigationBar","frame":[0,0,402,88],"text":"Requests","children":[{"cls":"UILabel","frame":[16,48,200,28],"text":"Requests"}]},{"cls":"UITableView","frame":[0,88,402,738],"children":[{"cls":"RequestCell","frame":[0,0,402,76],"children":[{"cls":"UILabel","frame":[16,16,260,20],"text":"GET /api/v1/projects/4/sessions"},{"cls":"UILabel","frame":[16,42,180,16],"text":"200 OK · 38ms"}]},{"cls":"RequestCell","frame":[0,76,402,76],"children":[{"cls":"UILabel","frame":[16,16,260,20],"text":"POST /api/v1/charge"},{"cls":"UILabel","frame":[16,42,180,16],"text":"502 Bad Gateway · Upstream Timeout"}]},{"cls":"RequestCell","frame":[0,152,402,76],"children":[{"cls":"UILabel","frame":[16,16,260,20],"text":"GET /api/v1/artworks"},{"cls":"UILabel","frame":[16,42,180,16],"text":"200 OK · 12ms"}]}]},{"cls":"UIToolbar","frame":[0,826,402,48],"children":[{"cls":"UIButton","frame":[16,6,120,36],"text":"Filter"},{"cls":"UIButton","frame":[266,6,120,36],"text":"Export"}]}]}`
+		tree2 := `{"cls":"UIView","frame":[0,0,402,874],"children":[{"cls":"UINavigationBar","frame":[0,0,402,88],"text":"Request Detail","children":[{"cls":"UILabel","frame":[16,48,220,28],"text":"Request Detail"}]},{"cls":"UITableView","frame":[0,88,402,786],"children":[{"cls":"RequestTitleSectionView","frame":[0,0,402,36],"text":"HTTP OVERVIEW"},{"cls":"TextTableViewCell","frame":[0,36,402,80],"text":"Method: POST /api/v1/charge\nStatus: 502 Bad Gateway\nDuration: 1,420ms"},{"cls":"RequestTitleSectionView","frame":[0,116,402,36],"text":"REQUEST HEADERS"},{"cls":"TextTableViewCell","frame":[0,152,402,90],"text":"Host: api.artracker.dev\nContent-Type: application/json\nAuthorization: Bearer art_live_***"},{"cls":"RequestTitleSectionView","frame":[0,242,402,36],"text":"RESPONSE BODY"},{"cls":"TextTableViewCell","frame":[0,278,402,110],"text":"{\n  \"error\": \"upstream timeout at payment gateway\"\n}"}]}]}`
+		tree3 := `{"cls":"UIView","frame":[0,0,402,874],"children":[{"cls":"_UIAlertControllerPhoneTVMacView","frame":[41,291,320,220],"children":[{"cls":"UILabel","frame":[16,20,288,24],"text":"Transaction Failed"},{"cls":"UILabel","frame":[16,52,288,48],"text":"The payment gateway reported an upstream 502 timeout. Please retry or choose another payment method."},{"cls":"UIButton","frame":[16,144,288,44],"text":"OK"}]}]}`
+
+		mobileSessID := fmt.Sprintf("ses_mob_%s", projectPlatform)
+		sdkName := "artracker-ios"
+		deviceName := "Apple iPhone 16 Pro"
+		if projectPlatform == "android" {
+			sdkName = "artracker-android"
+			deviceName = "Google Pixel 9"
 		}
 
-		attrMap := map[string]any{
-			"page":       "/checkout",
-			"index":      i + 1,
-			"browser":    "Chrome 131",
-			"cart_total": 250000 + (i * 15000),
+		mobileSamples := []struct {
+			kind       string
+			name       string
+			level      string
+			message    string
+			offsetSec  int
+			attributes string
+		}{
+			{"event", "screen.view", "", "", 0, fmt.Sprintf(`{"screen":"RequestsViewController","platform":"%s","device":"%s","view_tree":%s}`, projectPlatform, deviceName, tree1)},
+			{"event", "touch.tap", "", "", 5, `{"x":180,"y":120,"target":"RequestCell"}`},
+			{"event", "screen.view", "", "", 8, fmt.Sprintf(`{"screen":"RequestDetailViewController","platform":"%s","device":"%s","view_tree":%s}`, projectPlatform, deviceName, tree2)},
+			{"log", "", "error", "POST /api/v1/charge → 502 Bad Gateway (upstream timeout)", 15, `{"endpoint":"/api/v1/charge","status":502}`},
+			{"event", "screen.view", "", "", 18, fmt.Sprintf(`{"screen":"UIAlertController","presentation":"modal","platform":"%s","device":"%s","view_tree":%s}`, projectPlatform, deviceName, tree3)},
+			{"event", "touch.tap", "", "", 24, `{"x":200,"y":450,"target":"DismissButton"}`},
 		}
-		attrBytes, _ := json.Marshal(attrMap)
 
-		rows = append(rows, ingest.TelemetryRow{
-			ID:              rowID,
-			ProjectID:       projectID,
-			Kind:            sample.kind,
-			Name:            sample.name,
-			Level:           sample.level,
-			Message:         sample.message,
-			SessionID:       sessionID,
-			UserID:          userID,
-			Environment:     "production",
-			ReleaseVersion:  "2.4.1",
-			ClientTimestamp: &eventTime,
-			EventTimestamp:  eventTime,
-			ReceivedAt:      eventTime,
-			Attributes:      attrBytes,
-			SDKMeta:         []byte(`{"name":"artracker-web","version":"1.2.0"}`),
-		})
+		sessStart := now.Add(-10 * time.Minute)
+		for _, s := range mobileSamples {
+			rowID, err := uuid.NewV7()
+			if err != nil {
+				rowID = uuid.New()
+			}
+			t := sessStart.Add(time.Duration(s.offsetSec) * time.Second)
+			rows = append(rows, ingest.TelemetryRow{
+				ID:              rowID,
+				ProjectID:       projectID,
+				Kind:            s.kind,
+				Name:            s.name,
+				Level:           s.level,
+				Message:         s.message,
+				SessionID:       mobileSessID,
+				UserID:          "mobile_user@artracker.dev",
+				Environment:     "production",
+				ReleaseVersion:  "2.4.1",
+				ClientTimestamp: &t,
+				EventTimestamp:  t,
+				ReceivedAt:      t,
+				Attributes:      json.RawMessage(s.attributes),
+				SDKMeta:         []byte(fmt.Sprintf(`{"name":"%s","version":"1.2.0"}`, sdkName)),
+			})
+		}
+	} else {
+		sampleEvents := []struct {
+			kind    string
+			name    string
+			level   string
+			message string
+		}{
+			{"event", "page_view", "", ""},
+			{"event", "view_product", "", ""},
+			{"event", "add_to_cart", "", ""},
+			{"event", "checkout_step_1", "", ""},
+			{"event", "checkout_step_2", "", ""},
+			{"event", "purchase_completed", "", ""},
+			{"log", "", "info", "User authentication token refreshed"},
+			{"log", "", "warn", "Slow query execution: latency 1,420ms"},
+			{"log", "", "error", "TypeError: Cannot read properties of undefined (reading 'charge_id')"},
+			{"log", "", "error", "POST /api/v1/charge → 502 Bad Gateway (upstream timeout)"},
+		}
+
+		for i := 0; i < 50; i++ {
+			sample := sampleEvents[i%len(sampleEvents)]
+			eventTime := now.Add(-time.Duration(i*28) * time.Minute)
+			sessionID := fmt.Sprintf("ses_mock_%d", (i%7)+1)
+			userID := fmt.Sprintf("usr_%d", (i%5)+1)
+
+			rowID, err := uuid.NewV7()
+			if err != nil {
+				rowID = uuid.New()
+			}
+
+			attrMap := map[string]any{
+				"page":       "/checkout",
+				"index":      i + 1,
+				"browser":    "Chrome 131",
+				"cart_total": 250000 + (i * 15000),
+			}
+			attrBytes, _ := json.Marshal(attrMap)
+
+			rows = append(rows, ingest.TelemetryRow{
+				ID:              rowID,
+				ProjectID:       projectID,
+				Kind:            sample.kind,
+				Name:            sample.name,
+				Level:           sample.level,
+				Message:         sample.message,
+				SessionID:       sessionID,
+				UserID:          userID,
+				Environment:     "production",
+				ReleaseVersion:  "2.4.1",
+				ClientTimestamp: &eventTime,
+				EventTimestamp:  eventTime,
+				ReceivedAt:      eventTime,
+				Attributes:      attrBytes,
+				SDKMeta:         []byte(`{"name":"artracker-web","version":"1.2.0"}`),
+			})
+		}
 	}
 
 	if err := h.ingestSvc.Sink().WriteBatch(ctx, rows); err != nil {
@@ -547,14 +611,24 @@ func (h *Handler) SeedProjectMockData(c *fiber.Ctx) error {
 		var replayCount int64
 		_ = h.db.QueryRow(ctx, `SELECT count(*) FROM replay_sessions WHERE project_id = $1`, projectID).Scan(&replayCount)
 		if replayCount == 0 {
-			_, _ = h.db.Exec(ctx, `
-				INSERT INTO replay_sessions (id, project_id, user_id, environment, start_time, duration_ms, chunk_count, event_count, total_size_bytes, has_error, has_rage_click, has_dead_click, storage_prefix, created_at, updated_at)
-				VALUES 
-				('ses_94k2p8', $1, 'nadia.putri@fintech.id', 'production', now() - interval '42 minutes', 102000, 3, 480, 48200, true, true, false, 'projects/1/sessions/ses_94k2p8/', now(), now()),
-				('ses_71m9x3', $1, 'rian.wijaya@commerce.co', 'production', now() - interval '2 hours', 138000, 4, 620, 52100, false, false, true, 'projects/1/sessions/ses_71m9x3/', now(), now()),
-				('ses_58c4v1', $1, 'kevin.tan@saas.sg', 'production', now() - interval '5 hours', 185000, 5, 890, 68900, false, false, false, 'projects/1/sessions/ses_58c4v1/', now(), now())
-				ON CONFLICT DO NOTHING
-			`, projectID)
+			if isMobile {
+				mobileSessID := fmt.Sprintf("ses_mob_%s", projectPlatform)
+				_, _ = h.db.Exec(ctx, `
+					INSERT INTO replay_sessions (id, project_id, user_id, environment, start_time, duration_ms, chunk_count, event_count, total_size_bytes, has_error, has_rage_click, has_dead_click, storage_prefix, created_at, updated_at)
+					VALUES 
+					($2, $1, 'mobile_user@artracker.dev', 'production', now() - interval '10 minutes', 30000, 0, 6, 4200, true, false, false, 'projects/' || $1 || '/sessions/' || $2 || '/', now(), now())
+					ON CONFLICT DO NOTHING
+				`, projectID, mobileSessID)
+			} else {
+				_, _ = h.db.Exec(ctx, `
+					INSERT INTO replay_sessions (id, project_id, user_id, environment, start_time, duration_ms, chunk_count, event_count, total_size_bytes, has_error, has_rage_click, has_dead_click, storage_prefix, created_at, updated_at)
+					VALUES 
+					('ses_94k2p8', $1, 'nadia.putri@fintech.id', 'production', now() - interval '42 minutes', 102000, 3, 480, 48200, true, true, false, 'projects/1/sessions/ses_94k2p8/', now(), now()),
+					('ses_71m9x3', $1, 'rian.wijaya@commerce.co', 'production', now() - interval '2 hours', 138000, 4, 620, 52100, false, false, true, 'projects/1/sessions/ses_71m9x3/', now(), now()),
+					('ses_58c4v1', $1, 'kevin.tan@saas.sg', 'production', now() - interval '5 hours', 185000, 5, 890, 68900, false, false, false, 'projects/1/sessions/ses_58c4v1/', now(), now())
+					ON CONFLICT DO NOTHING
+				`, projectID)
+			}
 		}
 	}
 
