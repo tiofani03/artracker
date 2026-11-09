@@ -17,6 +17,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/tiofani03/artracker/backend/internal/storage"
 )
 
 var sessionIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,128}$`)
@@ -167,17 +169,19 @@ func (h *Handler) GenerateChunkUploadURL(c *fiber.Ctx) error {
 		useProxy = !*req.Direct
 	}
 
-	if useProxy {
-		exp := time.Now().Add(expires).Unix()
-		sig := computeChunkUploadSignature(h.replaySecret(), objectKey, exp)
-		uploadURL = fmt.Sprintf("%s/api/v1/replay/upload-chunk?key=%s&exp=%d&sig=%s",
-			h.getBaseURL(c), url.QueryEscape(objectKey), exp, sig)
-	} else {
+	if !useProxy {
 		presignedURL, err := h.replayStore.GeneratePresignedPut(ctx, objectKey, req.SizeBytes, expires)
-		if err != nil {
+		switch {
+		case errors.Is(err, storage.ErrPresignUnsupported):
+			useProxy = true // e.g. local filesystem store: only the signed proxy can reach it
+		case err != nil:
 			return fmt.Errorf("generate presigned put: %w", err)
+		default:
+			uploadURL = presignedURL
 		}
-		uploadURL = presignedURL
+	}
+	if useProxy {
+		uploadURL = h.signedChunkURL(c, "upload-chunk", objectKey, expires)
 	}
 
 	return c.JSON(ReplayChunkURLResponse{
@@ -293,6 +297,14 @@ func (h *Handler) DownloadChunkProxy(c *fiber.Ctx) error {
 	}
 
 	return c.Send(data)
+}
+
+// signedChunkURL builds an HMAC-signed URL for the upload-chunk / download-chunk proxy routes.
+func (h *Handler) signedChunkURL(c *fiber.Ctx, route, objectKey string, ttl time.Duration) string {
+	exp := time.Now().Add(ttl).Unix()
+	sig := computeChunkUploadSignature(h.replaySecret(), objectKey, exp)
+	return fmt.Sprintf("%s/api/v1/replay/%s?key=%s&exp=%d&sig=%s",
+		h.getBaseURL(c), route, url.QueryEscape(objectKey), exp, sig)
 }
 
 func (h *Handler) replaySecret() string {
@@ -617,16 +629,14 @@ func (h *Handler) GetProjectSession(c *fiber.Ctx) error {
 		}
 
 		if h.replayStore != nil {
-			if h.cfg.ReplayProxyUpload {
-				exp := time.Now().Add(1 * time.Hour).Unix()
-				sig := computeChunkUploadSignature(h.replaySecret(), chunk.ObjectKey, exp)
-				chunk.URL = fmt.Sprintf("%s/api/v1/replay/download-chunk?key=%s&exp=%d&sig=%s",
-					h.getBaseURL(c), url.QueryEscape(chunk.ObjectKey), exp, sig)
-			} else {
+			if !h.cfg.ReplayProxyUpload {
 				getURL, err := h.replayStore.GeneratePresignedGet(ctx, chunk.ObjectKey, 15*time.Minute)
 				if err == nil {
 					chunk.URL = getURL
 				}
+			}
+			if chunk.URL == "" {
+				chunk.URL = h.signedChunkURL(c, "download-chunk", chunk.ObjectKey, time.Hour)
 			}
 		}
 

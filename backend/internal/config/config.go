@@ -19,13 +19,13 @@ type Config struct {
 	DBMaxConns  int
 
 	// Ingest Pipeline configuration
-	IngestWorkers          int
-	IngestQueueSize        int
-	IngestBatchSize        int
-	IngestFlushIntervalMs  int
-	IngestProjectRPS       float64
+	IngestWorkers             int
+	IngestQueueSize           int
+	IngestBatchSize           int
+	IngestFlushIntervalMs     int
+	IngestProjectRPS          float64
 	IngestProjectEventsPerSec float64
-	IngestKeyCacheTTLSec   int
+	IngestKeyCacheTTLSec      int
 
 	// Analytics Pipeline configuration
 	AnalyticsWorkers             int
@@ -50,6 +50,8 @@ type Config struct {
 	R2Region            string
 	ReplayMaxChunkBytes int64
 	ReplayProxyUpload   bool
+	// ReplayLocalDir stores replay chunks on disk when R2 is not configured (development only).
+	ReplayLocalDir string
 }
 
 // Placeholders shipped in .env.example / used as the dev default; never valid in production.
@@ -97,6 +99,7 @@ func Load() Config {
 		R2Region:            env("R2_REGION", "auto"),
 		ReplayMaxChunkBytes: int64(envInt("REPLAY_MAX_CHUNK_BYTES", 5242880)),
 		ReplayProxyUpload:   parseBool(env("REPLAY_PROXY_UPLOAD", "true")),
+		ReplayLocalDir:      env("REPLAY_LOCAL_DIR", ""),
 	}
 
 	if cfg.R2Endpoint == "" && cfg.R2AccountID != "" {

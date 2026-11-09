@@ -17,6 +17,7 @@ import (
 	"github.com/tiofani03/artracker/backend/internal/auth"
 	"github.com/tiofani03/artracker/backend/internal/config"
 	"github.com/tiofani03/artracker/backend/internal/ingest"
+	"github.com/tiofani03/artracker/backend/internal/storage"
 )
 
 type mockReplayStore struct {
@@ -56,6 +57,15 @@ func (m *mockReplayStore) GetObject(ctx context.Context, objectKey string) (io.R
 
 func setupReplayTestApp(t *testing.T, withStore bool) (*fiber.App, string) {
 	t.Helper()
+	var store storage.ReplayStore
+	if withStore {
+		store = &mockReplayStore{}
+	}
+	return setupReplayTestAppWithStore(t, store)
+}
+
+func setupReplayTestAppWithStore(t *testing.T, store storage.ReplayStore) (*fiber.App, string) {
+	t.Helper()
 
 	cfg := ingest.Config{
 		Workers:         2,
@@ -83,8 +93,8 @@ func setupReplayTestApp(t *testing.T, withStore bool) (*fiber.App, string) {
 	h := New(nil, appCfg, auth.NewIssuer("test-jwt-secret-min-32-chars-long!", time.Hour), map[string]OAuthProvider{}).
 		WithIngest(ingestSvc)
 
-	if withStore {
-		h = h.WithReplayStore(&mockReplayStore{})
+	if store != nil {
+		h = h.WithReplayStore(store)
 	}
 
 	app := fiber.New(fiber.Config{ErrorHandler: ErrorHandler})
@@ -423,3 +433,47 @@ func TestReplayProxyUpload(t *testing.T) {
 	}
 }
 
+// A store without presign support (local filesystem) must fall back to the signed proxy even
+// when the client asks for a direct upload URL.
+func TestReplayChunkURLFallsBackToProxyWithoutPresign(t *testing.T) {
+	local, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, validKey := setupReplayTestAppWithStore(t, local)
+
+	payload := `{"session_id":"sess_local_store_1","chunk_seq":0,"size_bytes":5,"direct":true}`
+	req := httptest.NewRequest("POST", "/api/v1/replay/chunk-url", bytes.NewReader([]byte(payload)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Artracker-Key", validKey)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
+	}
+	var urlRes ReplayChunkURLResponse
+	if err := json.NewDecoder(resp.Body).Decode(&urlRes); err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(urlRes.UploadURL)
+	if err != nil || u.Path != "/api/v1/replay/upload-chunk" {
+		t.Fatalf("expected proxy upload URL, got %q", urlRes.UploadURL)
+	}
+
+	putReq := httptest.NewRequest("PUT", u.Path+"?"+u.RawQuery, bytes.NewReader([]byte("hello")))
+	putResp, err := app.Test(putReq)
+	if err != nil || putResp.StatusCode != fiber.StatusOK {
+		t.Fatalf("upload failed: %v %v", err, putResp.StatusCode)
+	}
+	getResp, err := app.Test(httptest.NewRequest("GET", "/api/v1/replay/download-chunk?"+u.RawQuery, nil))
+	if err != nil || getResp.StatusCode != fiber.StatusOK {
+		t.Fatalf("download failed: %v %v", err, getResp.StatusCode)
+	}
+	body, _ := io.ReadAll(getResp.Body)
+	if string(body) != "hello" {
+		t.Fatalf("round trip body = %q", body)
+	}
+}
