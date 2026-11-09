@@ -234,11 +234,15 @@ export default function ReplayPlayer({
   const sizeRef = useRef({ width: playerWidth, height: playerHeight })
   const durationRef = useRef(durationMs)
   const currentTimeRef = useRef(currentTimeMs)
+  const isPlayingRef = useRef(isPlaying)
+  const speedRef = useRef(playbackSpeed)
   // Layout effects run before passive effects, so the refs are current when the player effects read them
   useLayoutEffect(() => {
     sizeRef.current = { width: playerWidth, height: playerHeight }
     durationRef.current = durationMs
     currentTimeRef.current = currentTimeMs
+    isPlayingRef.current = isPlaying
+    speedRef.current = playbackSpeed
   })
 
   // Dynamically extract real recorded URL / screen from rrweb Meta events or timeline events
@@ -331,12 +335,14 @@ export default function ReplayPlayer({
           autoPlay: false,
           showController: false,
           skipInactive: true,
+          speed: speedRef.current,
           speedOption: [1, 2, 4, 8],
         },
       })
       playerRef.current = instance
+      // A re-created player (device chrome switch, new event set) resumes where the old one was
       const offset = Math.min(currentTimeRef.current, durationRef.current)
-      if (offset > 0) instance.goto(offset, false)
+      if (offset > 0 || isPlayingRef.current) instance.goto(offset, isPlayingRef.current)
 
       instance.getReplayer()?.on('finish', () => {
         setIsPlaying(false)
