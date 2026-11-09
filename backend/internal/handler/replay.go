@@ -283,8 +283,14 @@ func (h *Handler) DownloadChunkProxy(c *fiber.Ctx) error {
 	}
 
 	c.Set("Content-Type", contentType)
-	c.Set("Access-Control-Allow-Origin", "*")
 	c.Set("Content-Length", strconv.Itoa(len(data)))
+	origin := c.Get("Origin")
+	if origin != "" {
+		c.Set("Access-Control-Allow-Origin", origin)
+		c.Set("Access-Control-Allow-Credentials", "true")
+	} else {
+		c.Set("Access-Control-Allow-Origin", "*")
+	}
 
 	return c.Send(data)
 }

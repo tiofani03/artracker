@@ -13,12 +13,13 @@ async function decompressBytes(buf: ArrayBuffer): Promise<string> {
   const bytes = new Uint8Array(buf)
   // Check GZIP magic header (0x1f 0x8b); if CDN/browser already gunzipped via Content-Encoding, decode directly
   if (bytes.byteLength >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
-    const ds = new DecompressionStream('gzip')
-    const writer = ds.writable.getWriter()
-    void writer.write(bytes as unknown as BufferSource)
-    void writer.close()
-    const decompressed = await new Response(ds.readable).arrayBuffer()
-    return new TextDecoder().decode(decompressed)
+    try {
+      const ds = new DecompressionStream('gzip')
+      const decompressedStream = new Response(buf).body!.pipeThrough(ds)
+      return await new Response(decompressedStream).text()
+    } catch {
+      // fallback
+    }
   }
   return new TextDecoder().decode(bytes)
 }
@@ -42,7 +43,16 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
   const { id, urls } = ev.data
   try {
     const chunkEventArrays = await Promise.all(
-      urls.map(async (url) => {
+      urls.map(async (rawUrl) => {
+        let url = rawUrl
+        try {
+          const u = new URL(rawUrl)
+          if (u.pathname.includes('/api/v1/replay/download-chunk')) {
+            url = `${u.pathname}${u.search}`
+          }
+        } catch {
+          // keep original
+        }
         const res = await fetch(url)
         if (!res.ok) {
           throw new Error(`Chunk fetch failed (${res.status} ${res.statusText})`)

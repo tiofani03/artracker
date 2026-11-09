@@ -4,12 +4,13 @@ import type { ReplayChunkDetail } from '../api'
 async function gunzipBufferMainThread(buf: ArrayBuffer): Promise<string> {
   const bytes = new Uint8Array(buf)
   if (bytes.byteLength >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
-    const ds = new DecompressionStream('gzip')
-    const writer = ds.writable.getWriter()
-    void writer.write(bytes as unknown as BufferSource)
-    void writer.close()
-    const out = await new Response(ds.readable).arrayBuffer()
-    return new TextDecoder().decode(out)
+    try {
+      const ds = new DecompressionStream('gzip')
+      const decompressedStream = new Response(buf).body!.pipeThrough(ds)
+      return await new Response(decompressedStream).text()
+    } catch {
+      // fallback
+    }
   }
   return new TextDecoder().decode(bytes)
 }
@@ -19,7 +20,16 @@ async function fetchAndDecompressOnMainThread(
   signal?: AbortSignal,
 ): Promise<eventWithTime[]> {
   const parts = await Promise.all(
-    urls.map(async (url) => {
+    urls.map(async (rawUrl) => {
+      let url = rawUrl
+      try {
+        const u = new URL(rawUrl)
+        if (u.pathname.includes('/api/v1/replay/download-chunk')) {
+          url = `${u.pathname}${u.search}`
+        }
+      } catch {
+        // keep original
+      }
       const res = await fetch(url, { signal })
       if (!res.ok) {
         throw new Error(`Chunk fetch failed (${res.status} ${res.statusText})`)
