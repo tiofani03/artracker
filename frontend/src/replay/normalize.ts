@@ -93,7 +93,8 @@ const TOUCH_NAME = /touch|tap|click|gesture/i
 /**
  * Collects mobile view-tree frames and touches from `artracker-mobile-v1` chunk payloads
  * (primary) and from telemetry `attributes.view_tree` (secondary). Chunk frames win
- * when both describe the same `ts` + `screen`.
+ * when both describe the same `ts` + `screen`, and telemetry frames inside the time span covered
+ * by chunk frames are dropped.
  */
 export function extractMobileFrames(
   payloads: unknown[],
@@ -122,6 +123,14 @@ export function extractMobileFrames(
     }
   }
 
+  // Telemetry timestamps are clock-corrected at ingest, so they never line up exactly with raw
+  // device timestamps in chunks. Chunks are authoritative for the span they cover.
+  const chunkTs = [...frames.values()].map((f) => f.ts)
+  const covered =
+    chunkTs.length > 0
+      ? (ts: number) => ts >= Math.min(...chunkTs) && ts <= Math.max(...chunkTs)
+      : () => false
+
   for (const ev of timeline) {
     const attrs = isRec(ev.attributes) ? ev.attributes : {}
     const ts = new Date(ev.event_timestamp).getTime()
@@ -130,7 +139,7 @@ export function extractMobileFrames(
     if (frame) {
       telemetryPlatform ??= asPlatform(attrs.platform)
       const key = `${frame.ts}|${frame.screen}`
-      if (!frames.has(key)) frames.set(key, frame)
+      if (!covered(frame.ts) && !frames.has(key)) frames.set(key, frame)
       continue
     }
     if (TOUCH_NAME.test(ev.name || '') && attrs.x !== undefined && attrs.y !== undefined) {

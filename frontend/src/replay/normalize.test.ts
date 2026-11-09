@@ -213,3 +213,41 @@ describe('buildReplayModel (mobile)', () => {
     expect(m).toMatchObject({ kind: 'mobile', startMs: 1000, endMs: 4000 })
   })
 })
+
+describe('extractMobileFrames chunk/telemetry overlap (final review #1)', () => {
+  it('drops telemetry frames inside the chunk-covered range even when ts and screen differ', () => {
+    // ingest clock correction shifts telemetry ts away from raw device ts
+    const chunk = mobileChunk({
+      frames: [
+        { ts: 10_000, screen: 'Home', view_tree: tree('home') },
+        { ts: 20_000, view_tree: tree('cart') }, // no screen name in chunk
+      ],
+    })
+    const out = extractMobileFrames(
+      [chunk],
+      [
+        tl('screen.view', 10_350, { screen: 'Home', view_tree: tree('home-tel') }),
+        tl('screen.view', 19_800, { screen: 'Cart', view_tree: tree('cart-tel') }),
+      ],
+    )
+    expect(out.frames.map((f) => f.ts)).toEqual([10_000, 20_000])
+    expect(out.frames.map((f) => f.viewTree)).toEqual([tree('home'), tree('cart')])
+  })
+
+  it('keeps telemetry frames outside the chunk-covered range', () => {
+    const chunk = mobileChunk({ frames: [{ ts: 10_000, screen: 'Home', view_tree: tree('home') }] })
+    const out = extractMobileFrames([chunk], [tl('screen.view', 30_000, { screen: 'Later', view_tree: tree('later') })])
+    expect(out.frames.map((f) => f.screen)).toEqual(['Home', 'Later'])
+  })
+
+  it('uses all telemetry frames when no chunk frames exist', () => {
+    const out = extractMobileFrames(
+      [],
+      [
+        tl('screen.view', 1000, { screen: 'A', view_tree: tree('a') }),
+        tl('screen.view', 1200, { screen: 'B', view_tree: tree('b') }),
+      ],
+    )
+    expect(out.frames).toHaveLength(2)
+  })
+})
