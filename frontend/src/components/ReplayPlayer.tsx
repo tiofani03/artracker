@@ -277,26 +277,10 @@ export default function ReplayPlayer({
     })
   }, [timelineEvents, baseTimestampMs, durationMs])
 
-  // Inject custom events so rrweb-player's internal timeline also paints colored ticks
-  const playerEventsWithTags = useMemo(() => {
-    if (activeDomEvents.length < 2) return activeDomEvents
-    const hasFullSnapshot = activeDomEvents.some((e) => e.type === EventType.FullSnapshot)
-    if (!hasFullSnapshot) return []
-
-    const startTs = activeDomEvents[0].timestamp
-    const syntheticCustom: eventWithTime[] = markers.map((m) => ({
-      type: EventType.Custom,
-      data: {
-        tag: m.tone,
-        payload: { id: m.id, text: m.text },
-      },
-      timestamp: startTs + m.offsetMs,
-    }))
-
-    const combined = [...activeDomEvents, ...syntheticCustom]
-    combined.sort((a, b) => a.timestamp - b.timestamp)
-    return combined
-  }, [activeDomEvents, markers])
+  // Validate that activeDomEvents has a valid initial full snapshot
+  const hasFullSnapshot = useMemo(() => {
+    return activeDomEvents.some((e) => e.type === EventType.FullSnapshot)
+  }, [activeDomEvents])
 
   // Mount / unmount real rrwebPlayer instance
   useEffect(() => {
@@ -305,7 +289,7 @@ export default function ReplayPlayer({
     target.innerHTML = ''
     playerRef.current = null
 
-    if (playerEventsWithTags.length < 2) {
+    if (!hasFullSnapshot || activeDomEvents.length < 2) {
       return
     }
 
@@ -314,40 +298,31 @@ export default function ReplayPlayer({
         ? 520
         : effectivePlatform === 'android'
           ? 500
-          : Math.max(300, Math.min(460, Math.round(stageWidth * 0.56)))
+          : Math.max(340, Math.min(520, Math.round(stageWidth * 0.5625)))
     let instance: rrwebPlayer | null = null
 
     try {
       instance = new rrwebPlayer({
         target,
         props: {
-          events: playerEventsWithTags,
+          events: activeDomEvents,
           width: effectivePlatform === 'ios' ? 322 : effectivePlatform === 'android' ? 312 : stageWidth,
           height: playerHeight,
           autoPlay: false,
-          showController: true,
+          showController: false,
           skipInactive: true,
           speedOption: [1, 2, 4, 8],
-          tags: {
-            error: '#ef4444',
-            warn: '#f59e0b',
-          },
         },
       })
       playerRef.current = instance
 
-      instance.addEventListener('ui-update-current-time', (ev: unknown) => {
-        const payload = ev as { payload?: number } | number
-        const ms =
-          typeof payload === 'number'
-            ? payload
-            : typeof payload?.payload === 'number'
-              ? payload.payload
-              : null
-        if (ms !== null) {
-          setCurrentTimeMs(Math.max(0, ms))
-        }
-      })
+      const replayer = instance.getReplayer()
+      if (replayer) {
+        replayer.on('finish', () => {
+          setIsPlaying(false)
+          setCurrentTimeMs(durationMs)
+        })
+      }
     } catch (err) {
       setChunkError(err instanceof Error ? err.message : 'Failed to initialize rrweb-player')
     }
@@ -364,13 +339,30 @@ export default function ReplayPlayer({
       playerRef.current = null
       target.innerHTML = ''
     }
-  }, [playerEventsWithTags, stageWidth, effectivePlatform])
+  }, [activeDomEvents, hasFullSnapshot, stageWidth, effectivePlatform, durationMs])
 
-  // Simulated interactive playback ticker
+  // Interactive playback ticker synchronized directly to replayer
   useEffect(() => {
     if (!isPlaying) return
     const stepMs = 50
     const timer = setInterval(() => {
+      if (playerRef.current) {
+        try {
+          const replayer = playerRef.current.getReplayer()
+          if (replayer) {
+            const cur = replayer.getCurrentTime()
+            if (typeof cur === 'number' && !Number.isNaN(cur)) {
+              setCurrentTimeMs(Math.min(durationMs, Math.max(0, cur)))
+              if (cur >= durationMs) {
+                setIsPlaying(false)
+              }
+              return
+            }
+          }
+        } catch {
+          // fallback to manual increment
+        }
+      }
       setCurrentTimeMs((prev) => {
         const next = prev + stepMs * playbackSpeed
         if (next >= durationMs) {
@@ -384,10 +376,11 @@ export default function ReplayPlayer({
   }, [isPlaying, playbackSpeed, durationMs])
 
   const seekTo = (offsetMs: number) => {
-    setCurrentTimeMs(Math.max(0, Math.min(offsetMs, durationMs)))
+    const clamped = Math.max(0, Math.min(offsetMs, durationMs))
+    setCurrentTimeMs(clamped)
     if (playerRef.current) {
       try {
-        playerRef.current.goto(offsetMs, false)
+        playerRef.current.goto(clamped, false)
       } catch {
         // ignore if player not ready
       }
@@ -396,7 +389,7 @@ export default function ReplayPlayer({
 
   const togglePlay = () => {
     if (currentTimeMs >= durationMs) {
-      setCurrentTimeMs(0)
+      seekTo(0)
     }
     setIsPlaying((p) => {
       const next = !p
@@ -413,7 +406,15 @@ export default function ReplayPlayer({
   }
 
   const cycleSpeed = () => {
-    setPlaybackSpeed((s) => (s === 1 ? 2 : s === 2 ? 4 : 1))
+    const nextSpeed = playbackSpeed === 1 ? 2 : playbackSpeed === 2 ? 4 : 1
+    setPlaybackSpeed(nextSpeed)
+    if (playerRef.current) {
+      try {
+        playerRef.current.setSpeed(nextSpeed)
+      } catch {
+        // ignore
+      }
+    }
   }
 
   const progressPct =
@@ -455,7 +456,7 @@ export default function ReplayPlayer({
       )
     }
 
-    if (playerEventsWithTags.length >= 2) {
+    if (hasFullSnapshot && activeDomEvents.length >= 2) {
       return <div className="replay-rrweb-mount" ref={mountTargetRef} />
     }
 
