@@ -9,13 +9,14 @@ import (
 
 const (
 	// Size limits for ingress security & zip-bomb protection
-	MaxCompressedBytes   = 512 * 1024       // 512 KB
-	MaxUncompressedBytes = 2 * 1024 * 1024  // 2 MB
-	MaxBatchItems        = 500              // Max items per batch envelope
-	MaxStringNameLen     = 255              // Max length for event name
-	MaxStringMsgLen      = 4096             // Max length for log message
-	MaxStringIDLen       = 128              // Max length for session/user IDs
-	MaxAttributeBytes    = 32 * 1024        // 32 KB attribute threshold before sanitization/truncation
+	MaxCompressedBytes         = 512 * 1024      // 512 KB
+	MaxUncompressedBytes       = 2 * 1024 * 1024 // 2 MB
+	MaxBatchItems              = 500             // Max items per batch envelope
+	MaxStringNameLen           = 255             // Max length for event name
+	MaxStringMsgLen            = 4096            // Max length for log message
+	MaxStringIDLen             = 128             // Max length for session/user IDs
+	MaxAttributeBytes          = 32 * 1024       // 32 KB attribute threshold before sanitization/truncation
+	MaxKeptAttributeValueBytes = 1024            // when truncating, top-level values up to 1 KB are kept
 )
 
 // IngestEnvelope represents the incoming payload from client SDKs.

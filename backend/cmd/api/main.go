@@ -131,8 +131,18 @@ func main() {
 			replayStore = store
 			log.Info("session replay storage configured", "bucket", cfg.R2BucketName)
 		}
+	} else if cfg.ReplayLocalDir != "" {
+		store, err := storage.NewLocal(cfg.ReplayLocalDir)
+		if err != nil {
+			log.Warn("local replay storage init failed", "err", err)
+		} else {
+			replayStore = store
+			// Local files are only reachable through the API's signed upload/download proxy.
+			cfg.ReplayProxyUpload = true
+			log.Info("session replay storage configured (local filesystem)", "dir", cfg.ReplayLocalDir)
+		}
 	} else {
-		log.Warn("r2 storage not configured (R2_BUCKET_NAME is empty)")
+		log.Warn("replay storage not configured (set R2_BUCKET_NAME, or REPLAY_LOCAL_DIR for development)")
 	}
 
 	providers := map[string]handler.OAuthProvider{}

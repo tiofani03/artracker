@@ -48,3 +48,15 @@ func TestLoadAcceptsStrongJWTSecretInProduction(t *testing.T) {
 		t.Fatal("secret dropped")
 	}
 }
+
+func TestLoadReplayLocalDir(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("REPLAY_LOCAL_DIR", "./.replay-data")
+	if got := Load().ReplayLocalDir; got != "./.replay-data" {
+		t.Fatalf("ReplayLocalDir = %q", got)
+	}
+	t.Setenv("REPLAY_LOCAL_DIR", "")
+	if got := Load().ReplayLocalDir; got != "" {
+		t.Fatalf("ReplayLocalDir default = %q, want empty", got)
+	}
+}

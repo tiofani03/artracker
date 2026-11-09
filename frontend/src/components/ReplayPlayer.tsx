@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { EventType, type eventWithTime } from 'rrweb'
 import rrwebPlayer from 'rrweb-player'
 import 'rrweb-player/dist/style.css'
 import type { Platform, ReplayChunkDetail, ReplaySessionItem, TelemetryEvent } from '../api'
-import { loadSessionChunks } from '../utils/replayChunkLoader'
+import { loadChunkPayloads } from '../utils/replayChunkLoader'
+import { buildReplayModel } from '../replay/normalize'
+import type { ReplayModel } from '../replay/model'
+import { fallbackNotice } from '../replay/playback'
 import { detectSessionPlatform, type DetectedPlatform } from '../utils/platformDetector'
 import { MobileWireframeRenderer } from './MobileWireframeRenderer'
 
@@ -18,6 +21,9 @@ export type TimelineMarker = {
 }
 
 export type DeviceMode = 'auto' | 'web' | 'ios' | 'android'
+
+/** rrweb-player is a Svelte component; its typings omit the Svelte instance API. */
+type SvelteHandle = { $set?: (props: Record<string, unknown>) => void; $destroy?: () => void }
 
 function formatDurationMs(ms: number): string {
   const totalSec = Math.max(0, Math.round(ms / 1000))
@@ -101,18 +107,18 @@ export default function ReplayPlayer({
   onDeviceModeChange?: (mode: DeviceMode) => void
 }) {
   const stageWrapRef = useRef<HTMLDivElement | null>(null)
-  const mountTargetRef = useRef<HTMLDivElement | null>(null)
   const playerRef = useRef<rrwebPlayer | null>(null)
+  // Callback-ref state: the rrweb mount node can unmount/remount (loading state, device chrome switch)
+  const [mountEl, setMountEl] = useState<HTMLDivElement | null>(null)
 
-  // OpenReplay-style dynamic platform detection
+  // OpenReplay-style dynamic platform detection (used only when the replay model has no platform)
   const detection = useMemo(
     () => detectSessionPlatform(session, timelineEvents, projectPlatform),
     [session, timelineEvents, projectPlatform],
   )
-  const effectivePlatform: DetectedPlatform =
-    deviceMode === 'auto' ? detection.platform : deviceMode
 
-  const [fetchedEvents, setFetchedEvents] = useState<eventWithTime[]>([])
+  const [payloads, setPayloads] = useState<unknown[]>([])
+  const [failedChunks, setFailedChunks] = useState(0)
   const [chunkLoading, setChunkLoading] = useState(false)
   const [chunkError, setChunkError] = useState<string | null>(null)
   const [currentTimeMs, setCurrentTimeMs] = useState(0)
@@ -124,38 +130,15 @@ export default function ReplayPlayer({
     () => chunks.filter((c) => Boolean(c.url && c.url.trim())).length,
     [chunks],
   )
+  const hasOverride = Boolean(overrideEvents && overrideEvents.length > 0)
 
-  // Observe player container width for responsive pixel-perfect scaling
+  // Fetch & gunzip chunks; interpretation happens in buildReplayModel
   useEffect(() => {
-    const el = stageWrapRef.current
-    if (!el || typeof ResizeObserver === 'undefined') return
-    const updateWidth = () => {
-      const w = Math.floor(el.clientWidth)
-      if (effectivePlatform === 'ios') {
-        setStageWidth(322)
-      } else if (effectivePlatform === 'android') {
-        setStageWidth(312)
-      } else if (w > 240) {
-        setStageWidth(Math.min(w, 880))
-      }
-    }
-    updateWidth()
-    const ro = new ResizeObserver(updateWidth)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [effectivePlatform])
-
-  // Fetch & gunzip R2 chunks when session chunks update
-  useEffect(() => {
-    if (overrideEvents && overrideEvents.length > 0) {
-      setFetchedEvents([])
-      setChunkError(null)
-      setChunkLoading(false)
-      return
-    }
-
-    if (presignedChunkCount === 0) {
-      setFetchedEvents([])
+    setCurrentTimeMs(0)
+    setIsPlaying(false)
+    if (hasOverride || presignedChunkCount === 0) {
+      setPayloads([])
+      setFailedChunks(0)
       setChunkError(null)
       setChunkLoading(false)
       return
@@ -164,53 +147,111 @@ export default function ReplayPlayer({
     const controller = new AbortController()
     setChunkLoading(true)
     setChunkError(null)
-    setCurrentTimeMs(0)
 
-    loadSessionChunks(chunks, controller.signal)
-      .then((loaded) => {
+    loadChunkPayloads(chunks, controller.signal)
+      .then((r) => {
         if (controller.signal.aborted) return
-        setFetchedEvents(loaded)
+        setPayloads(r.payloads)
+        setFailedChunks(r.failed)
         setChunkLoading(false)
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         if (err instanceof DOMException && err.name === 'AbortError') return
-        setChunkError(err instanceof Error ? err.message : 'Failed to fetch R2 chunks')
-        setFetchedEvents([])
+        setChunkError(err instanceof Error ? err.message : 'Failed to fetch replay chunks')
+        setPayloads([])
+        setFailedChunks(0)
         setChunkLoading(false)
       })
 
     return () => controller.abort()
-  }, [session.id, chunks, presignedChunkCount, overrideEvents])
+  }, [session.id, chunks, presignedChunkCount, hasOverride])
 
-  const activeDomEvents = overrideEvents && overrideEvents.length > 0 ? overrideEvents : fetchedEvents
+  // Single source of truth for what can be rendered
+  const model: ReplayModel = useMemo(() => {
+    const built = buildReplayModel({
+      payloads: hasOverride ? [overrideEvents] : payloads,
+      timeline: timelineEvents,
+      projectPlatform,
+    })
+    if (built.kind !== 'none') return built
+    if (chunkError) return { kind: 'none', reason: 'load-error', detail: chunkError }
+    if (!hasOverride && chunks.length > 0 && presignedChunkCount === 0) {
+      return {
+        kind: 'none',
+        reason: 'load-error',
+        detail: `${chunks.length} replay chunk(s) exist but no download URL was issued (replay storage is not configured on the API).`,
+      }
+    }
+    return built
+  }, [hasOverride, overrideEvents, payloads, timelineEvents, projectPlatform, chunkError, chunks.length, presignedChunkCount])
+
+  const webEvents = model.kind === 'web' ? model.events : null
+
+  const effectivePlatform: DetectedPlatform =
+    deviceMode !== 'auto'
+      ? deviceMode
+      : model.kind === 'mobile'
+        ? model.platform
+        : model.kind === 'web'
+          ? 'web'
+          : detection.platform
+
+  // Observe player container width for responsive scaling
+  useEffect(() => {
+    const el = stageWrapRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const updateWidth = () => {
+      const w = Math.floor(el.clientWidth)
+      if (w > 240) setStageWidth(Math.min(w, 880))
+    }
+    updateWidth()
+    const ro = new ResizeObserver(updateWidth)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const playerWidth = effectivePlatform === 'ios' ? 322 : effectivePlatform === 'android' ? 312 : stageWidth
+  const playerHeight =
+    effectivePlatform === 'ios'
+      ? 520
+      : effectivePlatform === 'android'
+        ? 500
+        : Math.max(340, Math.min(520, Math.round(stageWidth * 0.5625)))
 
   const durationMs = useMemo(() => {
-    if (activeDomEvents.length >= 2) {
-      const span =
-        activeDomEvents[activeDomEvents.length - 1].timestamp - activeDomEvents[0].timestamp
-      if (span > 0) return span
-    }
+    if (model.kind !== 'none') return Math.max(1000, model.endMs - model.startMs)
     return Math.max(session.duration_ms || 0, 1000)
-  }, [activeDomEvents, session.duration_ms])
+  }, [model, session.duration_ms])
 
   const baseTimestampMs = useMemo(() => {
-    if (activeDomEvents.length > 0) {
-      return activeDomEvents[0].timestamp
-    }
+    if (model.kind !== 'none') return model.startMs
     const parsed = new Date(session.start_time).getTime()
     return Number.isNaN(parsed) ? Date.now() : parsed
-  }, [activeDomEvents, session.start_time])
+  }, [model, session.start_time])
+
+  // Values read inside long-lived callbacks without re-creating the rrweb player
+  const sizeRef = useRef({ width: playerWidth, height: playerHeight })
+  const durationRef = useRef(durationMs)
+  const currentTimeRef = useRef(currentTimeMs)
+  const isPlayingRef = useRef(isPlaying)
+  const speedRef = useRef(playbackSpeed)
+  // Layout effects run before passive effects, so the refs are current when the player effects read them
+  useLayoutEffect(() => {
+    sizeRef.current = { width: playerWidth, height: playerHeight }
+    durationRef.current = durationMs
+    currentTimeRef.current = currentTimeMs
+    isPlayingRef.current = isPlaying
+    speedRef.current = playbackSpeed
+  })
 
   // Dynamically extract real recorded URL / screen from rrweb Meta events or timeline events
   const recordedUrl = useMemo(() => {
-    // 1. From rrweb meta events (type 4 has data.href)
-    for (const ev of activeDomEvents) {
-      if (ev.type === 4 && (ev.data as { href?: string })?.href) {
+    for (const ev of webEvents ?? []) {
+      if (ev.type === EventType.Meta && (ev.data as { href?: string })?.href) {
         return (ev.data as { href?: string }).href!
       }
     }
-    // 2. From timeline telemetry events attributes (url, path, screen, or route)
     for (const ev of timelineEvents) {
       const attrs = ev.attributes as Record<string, unknown> | undefined
       if (attrs) {
@@ -221,7 +262,7 @@ export default function ReplayPlayer({
       }
     }
     return null
-  }, [activeDomEvents, timelineEvents])
+  }, [webEvents, timelineEvents])
 
   const displayUrl = useMemo(() => {
     if (recordedUrl) return recordedUrl
@@ -243,18 +284,6 @@ export default function ReplayPlayer({
       return recordedUrl
     }
   }, [recordedUrl, effectivePlatform])
-
-  // Extract mobile native view hierarchy events (iOS & Android UI snapshots)
-  const mobileScreenEvents = useMemo(() => {
-    return timelineEvents
-      .filter((ev) => {
-        const attrs = ev.attributes as Record<string, unknown> | undefined
-        return Boolean(attrs && (attrs.view_tree || attrs.tree))
-      })
-      .sort((a, b) => new Date(a.event_timestamp).getTime() - new Date(b.event_timestamp).getTime())
-  }, [timelineEvents])
-
-  const hasMobileWireframe = mobileScreenEvents.length > 0
 
   // Build timeline markers (red = error, yellow = warn / click / frustration)
   const markers: TimelineMarker[] = useMemo(() => {
@@ -290,52 +319,35 @@ export default function ReplayPlayer({
     })
   }, [timelineEvents, baseTimestampMs, durationMs])
 
-  // Validate that activeDomEvents has a valid initial full snapshot
-  const hasFullSnapshot = useMemo(() => {
-    return activeDomEvents.some((e) => e.type === EventType.FullSnapshot)
-  }, [activeDomEvents])
-
-  // Mount / unmount real rrwebPlayer instance
+  // Mount the rrweb player once per web event set; resizes go through $set below (Review Focus #4)
   useEffect(() => {
-    const target = mountTargetRef.current
-    if (!target) return
-    target.innerHTML = ''
-    playerRef.current = null
-
-    if (!hasFullSnapshot || activeDomEvents.length < 2) {
-      return
-    }
-
-    const playerHeight =
-      effectivePlatform === 'ios'
-        ? 520
-        : effectivePlatform === 'android'
-          ? 500
-          : Math.max(340, Math.min(520, Math.round(stageWidth * 0.5625)))
+    const target = mountEl
+    if (!target || !webEvents) return
     let instance: rrwebPlayer | null = null
 
     try {
       instance = new rrwebPlayer({
         target,
         props: {
-          events: activeDomEvents,
-          width: effectivePlatform === 'ios' ? 322 : effectivePlatform === 'android' ? 312 : stageWidth,
-          height: playerHeight,
+          events: webEvents,
+          width: sizeRef.current.width,
+          height: sizeRef.current.height,
           autoPlay: false,
           showController: false,
           skipInactive: true,
+          speed: speedRef.current,
           speedOption: [1, 2, 4, 8],
         },
       })
       playerRef.current = instance
+      // A re-created player (device chrome switch, new event set) resumes where the old one was
+      const offset = Math.min(currentTimeRef.current, durationRef.current)
+      if (offset > 0 || isPlayingRef.current) instance.goto(offset, isPlayingRef.current)
 
-      const replayer = instance.getReplayer()
-      if (replayer) {
-        replayer.on('finish', () => {
-          setIsPlaying(false)
-          setCurrentTimeMs(durationMs)
-        })
-      }
+      instance.getReplayer()?.on('finish', () => {
+        setIsPlaying(false)
+        setCurrentTimeMs(durationRef.current)
+      })
     } catch (err) {
       setChunkError(err instanceof Error ? err.message : 'Failed to initialize rrweb-player')
     }
@@ -344,56 +356,56 @@ export default function ReplayPlayer({
       if (instance) {
         try {
           instance.pause()
-          ;(instance as unknown as { $destroy?: () => void }).$destroy?.()
+          ;(instance as unknown as SvelteHandle).$destroy?.()
         } catch {
           // ignore teardown errors
         }
       }
-      playerRef.current = null
-      target.innerHTML = ''
+      if (playerRef.current === instance) playerRef.current = null
     }
-  }, [activeDomEvents, hasFullSnapshot, stageWidth, effectivePlatform, durationMs])
+  }, [webEvents, mountEl])
 
-  // Interactive playback ticker synchronized directly to replayer
+  // Resize the existing rrweb player in place instead of rebuilding it
+  useEffect(() => {
+    const p = playerRef.current
+    if (!p) return
+    try {
+      ;(p as unknown as SvelteHandle).$set?.({ width: playerWidth, height: playerHeight })
+      p.triggerResize()
+    } catch {
+      // ignore if player not ready
+    }
+  }, [playerWidth, playerHeight])
+
+  // Playback clock: rrweb's replayer drives web; a rAF clock drives mobile / telemetry
   useEffect(() => {
     if (!isPlaying) return
-    const stepMs = 50
-    const timer = setInterval(() => {
-      if (playerRef.current) {
-        try {
-          const replayer = playerRef.current.getReplayer()
-          if (replayer) {
-            const cur = replayer.getCurrentTime()
-            if (typeof cur === 'number' && !Number.isNaN(cur)) {
-              setCurrentTimeMs(Math.min(durationMs, Math.max(0, cur)))
-              if (cur >= durationMs) {
-                setIsPlaying(false)
-              }
-              return
-            }
-          }
-        } catch {
-          // fallback to manual increment
-        }
+    let raf = 0
+    let last = performance.now()
+    const tick = (now: number) => {
+      const dt = now - last
+      last = now
+      const replayer = playerRef.current?.getReplayer()
+      const cur = replayer ? replayer.getCurrentTime() : currentTimeRef.current + dt * playbackSpeed
+      const next = Math.min(durationRef.current, Math.max(0, Number.isNaN(cur) ? 0 : cur))
+      setCurrentTimeMs(next)
+      if (next >= durationRef.current) {
+        setIsPlaying(false)
+        return
       }
-      setCurrentTimeMs((prev) => {
-        const next = prev + stepMs * playbackSpeed
-        if (next >= durationMs) {
-          setIsPlaying(false)
-          return durationMs
-        }
-        return next
-      })
-    }, stepMs)
-    return () => clearInterval(timer)
-  }, [isPlaying, playbackSpeed, durationMs])
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [isPlaying, playbackSpeed])
 
   const seekTo = (offsetMs: number) => {
     const clamped = Math.max(0, Math.min(offsetMs, durationMs))
     setCurrentTimeMs(clamped)
+    currentTimeRef.current = clamped
     if (playerRef.current) {
       try {
-        playerRef.current.goto(clamped, false)
+        playerRef.current.goto(clamped, isPlaying)
       } catch {
         // ignore if player not ready
       }
@@ -440,6 +452,8 @@ export default function ReplayPlayer({
     return past.length > 0 ? past[past.length - 1] : markers[0]
   }, [markers, currentTimeMs])
 
+  const notice = fallbackNotice(model)
+
   const renderViewportContent = () => {
     if (loadingDetail || chunkLoading) {
       return (
@@ -458,32 +472,20 @@ export default function ReplayPlayer({
       )
     }
 
-    if (chunkError) {
-      return (
-        <div className="replay-player__viewport replay-player__state" role="alert">
-          <div className="replay-state-box">
-            <strong className="replay-state-box__title">Unable to stream R2 replay chunks</strong>
-            <p className="replay-state-box__desc">{chunkError}</p>
-          </div>
-        </div>
-      )
-    }
-
     // 1. Web DOM Replay (rrweb)
-    if (hasFullSnapshot && activeDomEvents.length >= 2) {
-      return <div className="replay-rrweb-mount" ref={mountTargetRef} />
+    if (model.kind === 'web') {
+      return <div className="replay-rrweb-mount" ref={setMountEl} />
     }
 
-    // 2. Mobile Visual Wireframe Replay (Native View Hierarchy from iOS/Android SDK)
-    if (hasMobileWireframe) {
+    // 2. Mobile Visual Wireframe Replay (native view hierarchy from chunks or telemetry)
+    if (model.kind === 'mobile') {
       return (
         <MobileWireframeRenderer
-          screenEvents={mobileScreenEvents}
-          currentTimeMs={currentTimeMs}
-          baseTimestampMs={baseTimestampMs}
-          timelineEvents={timelineEvents}
-          platform={effectivePlatform}
-          containerWidth={effectivePlatform === 'ios' ? 308 : 300}
+          frames={model.frames}
+          touches={model.touches}
+          currentTs={model.startMs + currentTimeMs}
+          platform={model.platform}
+          containerWidth={model.platform === 'ios' ? 308 : 300}
         />
       )
     }
@@ -492,6 +494,11 @@ export default function ReplayPlayer({
     return (
       <div className="or-telemetry-canvas">
         {/* Top Screen Breadcrumb & Live Player Ticker */}
+        {notice && (
+          <div className="or-telemetry-canvas__notice" role="status">
+            {notice}
+          </div>
+        )}
         <div className="or-telemetry-canvas__topbar">
           <div className="or-telemetry-canvas__breadcrumb">
             <span className="or-canvas-dot" />
@@ -629,6 +636,12 @@ export default function ReplayPlayer({
                   ? '412 × 915'
                   : '1440 × 900'}
             </span>
+
+            {failedChunks > 0 && (
+              <span className="or-res-chip or-res-chip--warn" title="Some replay chunks could not be downloaded or parsed">
+                {failedChunks} chunk{failedChunks === 1 ? '' : 's'} could not be read
+              </span>
+            )}
 
             <span className="or-unified-header__duration">
               {formatDurationMs(durationMs)}

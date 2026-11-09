@@ -2,6 +2,8 @@ package ingest
 
 import (
 	"encoding/json"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -139,12 +141,7 @@ func (s *Sanitizer) sanitizeAttributes(raw json.RawMessage) ([]byte, bool) {
 	}
 
 	if len(raw) > MaxAttributeBytes {
-		// Truncate oversized attributes to protect DB storage & RAM
-		replacement, _ := json.Marshal(map[string]any{
-			"_truncated":      true,
-			"_original_bytes": len(raw),
-		})
-		return replacement, true
+		return truncateAttributes(raw), true
 	}
 
 	// Validate JSON syntax
@@ -184,4 +181,37 @@ func truncateStr(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen]
+}
+
+// truncateAttributes shrinks an oversized attributes payload. For JSON objects it keeps every
+// top-level key whose encoded value is at most MaxKeptAttributeValueBytes (so small context such
+// as `screen` or `platform` survives) and lists the dropped keys. Anything else is replaced by a
+// bare truncation marker.
+func truncateAttributes(raw json.RawMessage) []byte {
+	kept := map[string]json.RawMessage{}
+	dropped := []string{}
+
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err == nil && obj != nil {
+		for k, v := range obj {
+			if len(v) <= MaxKeptAttributeValueBytes {
+				kept[k] = v
+			} else {
+				dropped = append(dropped, k)
+			}
+		}
+		sort.Strings(dropped)
+		droppedJSON, _ := json.Marshal(dropped)
+		kept["_dropped_keys"] = droppedJSON
+	}
+
+	kept["_truncated"] = json.RawMessage("true")
+	kept["_original_bytes"] = json.RawMessage(strconv.Itoa(len(raw)))
+
+	out, err := json.Marshal(kept)
+	if err != nil || len(out) > MaxAttributeBytes {
+		// Many small keys can still add up; fall back to the bare marker.
+		out, _ = json.Marshal(map[string]any{"_truncated": true, "_original_bytes": len(raw)})
+	}
+	return out
 }

@@ -297,7 +297,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
           { name: 'items[].session_id', type: 'string', required: false, desc: 'Session identifier linking events directly to Session Replay timelines.' },
           { name: 'items[].user_id', type: 'string', required: false, desc: 'User identifier or email.' },
           { name: 'items[].timestamp', type: 'string (ISO-8601)', required: false, desc: 'Client event occurrence timestamp. Normalized on ingest.' },
-          { name: 'items[].attributes', type: 'object', required: false, desc: 'Custom JSON metadata dictionary (UTM parameters, revenue, order details). Max 32 KB.' },
+          { name: 'items[].attributes', type: 'object', required: false, desc: 'Custom JSON metadata dictionary (UTM parameters, revenue, order details). Max 32 KB: larger objects keep only top-level keys whose value is ≤ 1 KB and gain _truncated, _original_bytes and _dropped_keys. Send mobile view trees as replay chunks, not attributes.' },
         ],
       },
     ],
@@ -732,6 +732,18 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
         title: 'Chunk Size Limit',
         content:
           'The maximum allowed chunk size is 5 MB (5,242,880 bytes). Chunks exceeding this limit are rejected with HTTP 413 Payload Too Large.',
+      },
+      {
+        type: 'info',
+        title: 'Chunk Payload Formats',
+        content:
+          'Each chunk is gzipped JSON. Web: an rrweb event array (or { "events": [...] }); the first chunk must contain a Meta (type 4) and FullSnapshot (type 2) event. Mobile: { "format": "artracker-mobile-v1", "platform": "ios" | "android", "frames": [{ "ts", "screen", "view_tree", "presentation"?, "masked_count"? }], "touches": [{ "ts", "x", "y", "name"? }] } with ts in epoch milliseconds and view_tree nodes shaped { "cls", "frame": [x, y, w, h], "text"?, "hidden"?, "children"? }.',
+      },
+      {
+        type: 'tip',
+        title: 'Mobile View Trees Belong in Chunks',
+        content:
+          'Telemetry attributes are capped at 32 KB, which real view hierarchies exceed. Upload screen snapshots as artracker-mobile-v1 chunks; a screen.view event with a small view_tree attribute is only a fallback.',
       },
     ],
     headers: [

@@ -142,3 +142,60 @@ func TestTimestampNormalizationClockSkew(t *testing.T) {
 		t.Fatalf("expected normalized timestamp %v, got %v", expected, rows[0].EventTimestamp)
 	}
 }
+
+func TestSanitizeAttributesKeepsSmallKeysWhenOversized(t *testing.T) {
+	big := strings.Repeat("x", 40*1024)
+	raw, _ := json.Marshal(map[string]any{"screen": "Home", "platform": "ios", "view_tree": big})
+
+	out, changed := NewSanitizer().sanitizeAttributes(raw)
+	if !changed {
+		t.Fatal("expected changed=true for oversized attributes")
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("output is not a JSON object: %v", err)
+	}
+	if got["screen"] != "Home" || got["platform"] != "ios" {
+		t.Fatalf("small keys not preserved: %v", got)
+	}
+	if got["_truncated"] != true {
+		t.Fatalf("_truncated missing: %v", got)
+	}
+	if _, ok := got["view_tree"]; ok {
+		t.Fatal("oversized view_tree should be dropped")
+	}
+	dropped, _ := got["_dropped_keys"].([]any)
+	if len(dropped) != 1 || dropped[0] != "view_tree" {
+		t.Fatalf("_dropped_keys = %v, want [view_tree]", got["_dropped_keys"])
+	}
+	if int(got["_original_bytes"].(float64)) != len(raw) {
+		t.Fatalf("_original_bytes = %v, want %d", got["_original_bytes"], len(raw))
+	}
+	if len(out) > MaxAttributeBytes {
+		t.Fatalf("output still oversized: %d bytes", len(out))
+	}
+}
+
+func TestSanitizeAttributesUnderLimitUnchanged(t *testing.T) {
+	raw := []byte(`{"screen":"Home","pad":"` + strings.Repeat("y", 1000) + `"}`)
+	out, changed := NewSanitizer().sanitizeAttributes(raw)
+	if changed {
+		t.Fatal("expected changed=false")
+	}
+	if string(out) != string(raw) {
+		t.Fatal("expected byte-identical output")
+	}
+}
+
+func TestSanitizeAttributesOversizedNonObjectKeepsMarker(t *testing.T) {
+	raw, _ := json.Marshal([]string{strings.Repeat("z", 40*1024)})
+	out, changed := NewSanitizer().sanitizeAttributes(raw)
+	if !changed {
+		t.Fatal("expected changed=true")
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out, &got); err != nil || got["_truncated"] != true {
+		t.Fatalf("expected truncation marker object, got %s", out)
+	}
+}

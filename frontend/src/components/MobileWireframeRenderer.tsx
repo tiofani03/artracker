@@ -1,15 +1,8 @@
 import React, { useMemo } from 'react'
-import type { TelemetryEvent } from '../api'
+import type { MobileFrame, TouchPoint, ViewNode } from '../replay/model'
+import { activeFrameAt, activeTouchAt } from '../replay/playback'
 
-export type ViewNode = {
-  cls?: string
-  frame?: [number, number, number, number] | { x: number; y: number; width: number; height: number }
-  hidden?: boolean
-  masked?: boolean
-  text?: string
-  children?: ViewNode[]
-  [key: string]: unknown
-}
+export type { ViewNode }
 
 export type ParsedFrame = [number, number, number, number]
 
@@ -33,78 +26,28 @@ export function parseFrame(frame: unknown): ParsedFrame | null {
 }
 
 interface MobileWireframeRendererProps {
-  screenEvents: TelemetryEvent[]
-  currentTimeMs: number
-  baseTimestampMs: number
-  timelineEvents: TelemetryEvent[]
-  platform: 'ios' | 'android' | 'web'
+  frames: MobileFrame[]
+  touches: TouchPoint[]
+  /** Absolute playhead position, epoch milliseconds. */
+  currentTs: number
+  platform: 'ios' | 'android'
   containerWidth?: number
 }
 
 export const MobileWireframeRenderer: React.FC<MobileWireframeRendererProps> = ({
-  screenEvents,
-  currentTimeMs,
-  baseTimestampMs,
-  timelineEvents,
+  frames,
+  touches,
+  currentTs,
   platform,
   containerWidth = 308,
 }) => {
-  // Find current active screen based on scrubber playback timestamp
-  const activeScreenEvent = useMemo(() => {
-    if (screenEvents.length === 0) return null
-    const currentTs = baseTimestampMs + currentTimeMs
+  const activeFrame = useMemo(() => activeFrameAt(frames, currentTs), [frames, currentTs])
+  const activeTouch = useMemo(() => activeTouchAt(touches, currentTs), [touches, currentTs])
 
-    // Find the latest screen event that occurred at or before currentTimeMs
-    const past = screenEvents.filter((ev) => {
-      const ts = new Date(ev.event_timestamp).getTime()
-      return !Number.isNaN(ts) && ts <= currentTs
-    })
-
-    if (past.length > 0) {
-      return past[past.length - 1]
-    }
-    return screenEvents[0]
-  }, [screenEvents, baseTimestampMs, currentTimeMs])
-
-  const { screenName, viewTree, presentation, maskedCount } = useMemo(() => {
-    if (!activeScreenEvent) {
-      return { screenName: 'UnknownScreen', viewTree: null, presentation: 'push', maskedCount: 0 }
-    }
-    const attrs = (activeScreenEvent.attributes || {}) as Record<string, unknown>
-    const name = String(attrs.screen || activeScreenEvent.name || 'MainScreen')
-    const tree = (attrs.view_tree || attrs.tree || null) as ViewNode | null
-    const pres = String(attrs.presentation || 'push')
-    const masked = Number(attrs.masked_count || 0)
-    return { screenName: name, viewTree: tree, presentation: pres, maskedCount: masked }
-  }, [activeScreenEvent])
-
-  // Active touch/gesture ripple within ±600ms of current scrubber time
-  const activeTouch = useMemo(() => {
-    const currentTs = baseTimestampMs + currentTimeMs
-    for (const ev of timelineEvents) {
-      const ts = new Date(ev.event_timestamp).getTime()
-      if (Number.isNaN(ts) || Math.abs(ts - currentTs) > 600) continue
-
-      const kind = (ev.kind || '').toLowerCase()
-      const name = (ev.name || '').toLowerCase()
-      const attrs = (ev.attributes || {}) as Record<string, unknown>
-
-      if (
-        name.includes('touch') ||
-        name.includes('tap') ||
-        name.includes('click') ||
-        kind.includes('gesture') ||
-        attrs.touch ||
-        (attrs.x !== undefined && attrs.y !== undefined)
-      ) {
-        const touchObj = (attrs.touch as Record<string, unknown>) || attrs
-        const x = Number(touchObj.x ?? 0)
-        const y = Number(touchObj.y ?? 0)
-        return { x, y, name: ev.name || 'tap' }
-      }
-    }
-    return null
-  }, [timelineEvents, baseTimestampMs, currentTimeMs])
+  const screenName = activeFrame?.screen ?? 'UnknownScreen'
+  const viewTree = activeFrame?.viewTree ?? null
+  const presentation = activeFrame?.presentation ?? 'push'
+  const maskedCount = activeFrame?.maskedCount ?? 0
 
   // Compute root frame and scaling factor
   const rootFrame = useMemo<ParsedFrame>(() => {
