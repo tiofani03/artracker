@@ -1,6 +1,7 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useState } from 'react'
 import type { MobileFrame, TouchPoint, ViewNode } from '../replay/model'
 import { activeFrameAt, activeTouchAt } from '../replay/playback'
+import { displayScreenName, fitScale, hasCapturedContent, nodeKinds, type NodeKind } from '../replay/wireframe'
 
 export type { ViewNode }
 
@@ -25,6 +26,17 @@ export function parseFrame(frame: unknown): ParsedFrame | null {
   return null
 }
 
+const WIREFRAME_THEME_KEY = 'artracker.wireframeTheme'
+
+/** Native apps default to light UI; the SDK sends no colors, so light is the closer default. */
+function readWireframeTheme(): 'light' | 'dark' {
+  try {
+    return localStorage.getItem(WIREFRAME_THEME_KEY) === 'dark' ? 'dark' : 'light'
+  } catch {
+    return 'light'
+  }
+}
+
 interface MobileWireframeRendererProps {
   frames: MobileFrame[]
   touches: TouchPoint[]
@@ -32,6 +44,8 @@ interface MobileWireframeRendererProps {
   currentTs: number
   platform: 'ios' | 'android'
   containerWidth?: number
+  /** Height available for the device canvas; the screen is scaled to fit both axes. */
+  maxHeight?: number
 }
 
 export const MobileWireframeRenderer: React.FC<MobileWireframeRendererProps> = ({
@@ -40,7 +54,19 @@ export const MobileWireframeRenderer: React.FC<MobileWireframeRendererProps> = (
   currentTs,
   platform,
   containerWidth = 308,
+  maxHeight = 492,
 }) => {
+  const [theme, setTheme] = useState<'light' | 'dark'>(readWireframeTheme)
+  const toggleTheme = () => {
+    const next = theme === 'light' ? 'dark' : 'light'
+    setTheme(next)
+    try {
+      localStorage.setItem(WIREFRAME_THEME_KEY, next)
+    } catch {
+      // storage unavailable: theme only lasts for this view
+    }
+  }
+
   const activeFrame = useMemo(() => activeFrameAt(frames, currentTs), [frames, currentTs])
   const activeTouch = useMemo(() => activeTouchAt(touches, currentTs), [touches, currentTs])
 
@@ -59,11 +85,18 @@ export const MobileWireframeRenderer: React.FC<MobileWireframeRendererProps> = (
   }, [viewTree, platform])
 
   const [, , rootW, rootH] = rootFrame
-  const scale = containerWidth > 0 && rootW > 0 ? containerWidth / rootW : 0.76
+  const scale = fitScale(rootFrame, { width: containerWidth, height: maxHeight })
+  const scaledWidth = Math.round(rootW * scale)
   const scaledHeight = Math.round(rootH * scale)
+  const contentCaptured = viewTree ? hasCapturedContent(viewTree) : true
 
   // Recursive renderer for native view tree nodes
-  const renderNode = (node: ViewNode, key: string, depth = 0): React.ReactNode => {
+  const renderNode = (
+    node: ViewNode,
+    key: string,
+    depth = 0,
+    inherited: ReadonlySet<NodeKind> = new Set(),
+  ): React.ReactNode => {
     if (node.hidden) return null
     const frame = parseFrame(node.frame)
     if (!frame) return null
@@ -75,38 +108,19 @@ export const MobileWireframeRenderer: React.FC<MobileWireframeRendererProps> = (
     }
 
     const cls = node.cls || 'UIView'
-    const isAlertOrModal =
-      cls.includes('Alert') || cls.includes('Modal') || cls.includes('Dialog') || cls.includes('ActionSheet')
-    const isToolbar =
-      cls.includes('Toolbar') || cls.includes('NavigationBar') || cls.includes('AppBar') || cls.includes('Header')
-    const isTableOrCollection =
-      cls.includes('TableView') || cls.includes('CollectionView') || cls.includes('RecyclerView') || cls.includes('ScrollView')
-    const isCellOrRow =
-      cls.includes('Cell') || cls.includes('Item') || cls.includes('Card') || cls.includes('Row')
-    const isSectionHeader =
-      cls.includes('SectionView') || cls.includes('HeaderFooter') || cls.includes('SectionHeader')
-    const isText =
-      cls.includes('Label') || cls.includes('TextView') || cls.includes('Text') || cls.includes('Title')
-    const isButton =
-      cls.includes('Button') || cls.includes('Action') || cls.includes('Clickable')
-    const isSeparator =
-      cls.includes('Separator') || (h <= 2 && w > 20)
-    const isImage =
-      cls.includes('ImageView') || cls.includes('Icon') || cls.includes('Image')
+    const kinds = nodeKinds(cls, inherited)
+    const isText = kinds.has('text')
+    const isButton = kinds.has('button')
+    const isImage = kinds.has('image')
+    const isSeparator = kinds.has('separator') || (h <= 2 && w > 20)
+    const childInherited = new Set<NodeKind>(inherited)
+    for (const k of kinds) childInherited.add(k)
 
-    // Determine custom class styling
     const classNames = [
       'mw-node',
       `mw-depth-${Math.min(depth, 5)}`,
-      isAlertOrModal && 'mw-node--modal',
-      isToolbar && 'mw-node--toolbar',
-      isTableOrCollection && 'mw-node--scroll',
-      isCellOrRow && 'mw-node--cell',
-      isSectionHeader && 'mw-node--section',
-      isText && 'mw-node--text',
-      isButton && 'mw-node--button',
+      ...[...kinds].filter((k) => k !== 'separator').map((k) => `mw-node--${k}`),
       isSeparator && 'mw-node--separator',
-      isImage && 'mw-node--image',
     ]
       .filter(Boolean)
       .join(' ')
@@ -156,22 +170,31 @@ export const MobileWireframeRenderer: React.FC<MobileWireframeRendererProps> = (
         )}
 
         {node.children &&
-          node.children.map((child, idx) => renderNode(child, `${key}-${idx}`, depth + 1))}
+          node.children.map((child, idx) => renderNode(child, `${key}-${idx}`, depth + 1, childInherited))}
       </div>
     )
   }
 
   return (
-    <div className="mw-viewport-container" style={{ width: `${containerWidth}px` }}>
+    <div className={`mw-viewport-container mw-theme--${theme}`} style={{ width: `${containerWidth}px` }}>
       {/* Dynamic Screen Header Banner */}
       <div className="mw-screen-banner">
         <div className="mw-screen-banner__left">
           <span className="mw-screen-dot" />
           <strong className="mw-screen-title" title={screenName}>
-            {screenName}
+            {displayScreenName(screenName)}
           </strong>
         </div>
         <div className="mw-screen-banner__right">
+          <button
+            type="button"
+            className="mw-theme-toggle"
+            onClick={toggleTheme}
+            title={theme === 'light' ? 'Switch wireframe to dark' : 'Switch wireframe to light'}
+            aria-label="Toggle wireframe theme"
+          >
+            {theme === 'light' ? '☾' : '☀'}
+          </button>
           {presentation && presentation !== 'push' && (
             <span className="mw-pres-badge">{presentation.toUpperCase()}</span>
           )}
@@ -188,7 +211,7 @@ export const MobileWireframeRenderer: React.FC<MobileWireframeRendererProps> = (
         className="mw-canvas-stage"
         style={{
           width: `${containerWidth}px`,
-          height: `${Math.min(460, scaledHeight)}px`,
+          height: `${scaledHeight}px`,
         }}
       >
         <div
@@ -198,6 +221,7 @@ export const MobileWireframeRenderer: React.FC<MobileWireframeRendererProps> = (
             height: `${rootH}px`,
             transform: `scale(${scale})`,
             transformOrigin: 'top left',
+            marginLeft: `${Math.max(0, Math.round((containerWidth - scaledWidth) / 2))}px`,
           }}
         >
           {viewTree ? (
@@ -223,6 +247,12 @@ export const MobileWireframeRenderer: React.FC<MobileWireframeRendererProps> = (
             </div>
           )}
         </div>
+        {!contentCaptured && (
+          <div className="mw-capture-note" role="note">
+            Only the native container views were captured for this screen. SwiftUI content inside
+            _UIHostingView is not part of the UIKit view hierarchy the SDK records.
+          </div>
+        )}
       </div>
     </div>
   )

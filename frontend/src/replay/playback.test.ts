@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { MobileFrame, ReplayModel } from './model'
-import { activeFrameAt, activeTouchAt, fallbackNotice, TOUCH_WINDOW_MS } from './playback'
+import {
+  activeFrameAt,
+  activeTouchAt,
+  deviceClock,
+  fallbackNotice,
+  offsetFromPointer,
+  routeStrip,
+  TOUCH_WINDOW_MS,
+} from './playback'
 
 const f = (ts: number, screen: string): MobileFrame => ({ ts, screen, viewTree: { cls: 'UIView' } })
 
@@ -43,5 +51,54 @@ describe('fallbackNotice', () => {
   it('returns null for renderable models', () => {
     const web: ReplayModel = { kind: 'web', events: [], startMs: 0, endMs: 1 }
     expect(fallbackNotice(web)).toBeNull()
+  })
+})
+
+describe('offsetFromPointer (scrubber seek)', () => {
+  it('maps a pointer x inside the track to a playback offset', () => {
+    expect(offsetFromPointer(150, { left: 100, width: 200 }, 10_000)).toBe(2_500)
+  })
+  it('clamps outside the track', () => {
+    expect(offsetFromPointer(50, { left: 100, width: 200 }, 10_000)).toBe(0)
+    expect(offsetFromPointer(999, { left: 100, width: 200 }, 10_000)).toBe(10_000)
+  })
+  it('returns 0 for a zero-width track', () => {
+    expect(offsetFromPointer(150, { left: 100, width: 0 }, 10_000)).toBe(0)
+  })
+})
+
+describe('deviceClock', () => {
+  it('formats the recorded wall-clock time as HH:MM', () => {
+    const ts = new Date(2026, 10, 9, 7, 5, 30).getTime()
+    expect(deviceClock(ts)).toBe('07:05')
+  })
+  it('returns null for an invalid timestamp', () => {
+    expect(deviceClock(Number.NaN)).toBeNull()
+  })
+})
+
+describe('routeStrip', () => {
+  it('shows the active mobile screen, with a readable name', () => {
+    expect(routeStrip({ platform: 'ios', screen: 'UIHostingController<ModifiedContent<AnyView, RootModifier>>', recordedUrl: null })).toEqual({
+      label: 'SCREEN',
+      value: 'SwiftUI view',
+    })
+    expect(routeStrip({ platform: 'android', screen: 'CartActivity', recordedUrl: null })).toEqual({
+      label: 'ACTIVITY',
+      value: 'CartActivity',
+    })
+  })
+  it('shows the recorded web URL', () => {
+    expect(routeStrip({ platform: 'web', screen: null, recordedUrl: 'https://a.test/x' })).toEqual({
+      label: 'URL',
+      value: 'https://a.test/x',
+    })
+  })
+  it('never invents a placeholder when nothing was recorded', () => {
+    expect(routeStrip({ platform: 'web', screen: null, recordedUrl: null }).value).toBe('Not recorded')
+    expect(routeStrip({ platform: 'ios', screen: null, recordedUrl: null }).value).toBe('Not recorded')
+  })
+  it('falls back to a recorded screen attribute for mobile without frames', () => {
+    expect(routeStrip({ platform: 'ios', screen: null, recordedUrl: 'CheckoutScreen' }).value).toBe('CheckoutScreen')
   })
 })

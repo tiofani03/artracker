@@ -4812,14 +4812,12 @@
   border: 1px solid rgba(255, 255, 255, 0.16) !important;
   border-radius: 14px !important;
   box-shadow: 0 24px 48px rgba(0, 0, 0, 0.7) !important;
-  z-index: 100 !important;
 }
 
 .mw-node--toolbar {
   background: rgba(15, 23, 42, 0.88);
   backdrop-filter: blur(12px);
   border-top: 1px solid rgba(255, 255, 255, 0.08);
-  z-index: 20;
 }
 
 .mw-node--scroll {
@@ -4911,6 +4909,21 @@
   font-family: var(--font-outlier);
 }
 
+/* Shown when a frame holds only container views (e.g. SwiftUI inside _UIHostingView) */
+.mw-capture-note {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #fde68a;
+  background: rgba(120, 53, 15, 0.55);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+
 /* Touch Gesture Ripple */
 .mw-touch-ripple {
   position: absolute;
@@ -4973,4 +4986,109 @@
 .or-res-chip--warn {
   background: var(--color-warn-wash);
   color: var(--color-warn);
+}
+
+/* Native text inputs (UITextField, UISearchBarTextField, EditText) */
+.mw-node--input {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+}
+
+.mw-theme-toggle {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.mw-theme-toggle:hover {
+  opacity: 1;
+  background: rgba(127, 127, 127, 0.18);
+}
+
+/* Light wireframe: closer to default iOS / Android chrome (the SDK sends no colors) */
+.mw-theme--light {
+  background: #f2f2f7;
+}
+.mw-theme--light .mw-screen-banner {
+  background: #ffffff;
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+.mw-theme--light .mw-screen-title {
+  color: #111827;
+}
+.mw-theme--light .mw-screen-banner__right {
+  color: #374151;
+}
+.mw-theme--light .mw-canvas-stage {
+  background: #e5e7eb;
+}
+.mw-theme--light .mw-canvas-scalable {
+  background: #ffffff;
+  box-shadow: none;
+}
+.mw-theme--light .mw-node--modal {
+  background: rgba(255, 255, 255, 0.97) !important;
+  border-color: rgba(0, 0, 0, 0.1) !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.25) !important;
+}
+.mw-theme--light .mw-node--toolbar {
+  background: rgba(249, 249, 251, 0.94);
+  border-top-color: rgba(0, 0, 0, 0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+.mw-theme--light .mw-node--scroll {
+  background: #f2f2f7;
+}
+.mw-theme--light .mw-node--cell {
+  background: #ffffff;
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+.mw-theme--light .mw-node--section {
+  background: #f2f2f7;
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+  color: #6b7280;
+}
+.mw-theme--light .mw-node--button {
+  background: rgba(0, 122, 255, 0.08);
+  border-color: rgba(0, 122, 255, 0.28);
+}
+.mw-theme--light .mw-node--button .mw-text-label {
+  color: #007aff;
+}
+.mw-theme--light .mw-node--input {
+  background: rgba(118, 118, 128, 0.12);
+  border-color: transparent;
+}
+.mw-theme--light .mw-node--separator {
+  background: rgba(60, 60, 67, 0.18);
+}
+.mw-theme--light .mw-node--image {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.08);
+  color: rgba(0, 0, 0, 0.3);
+}
+.mw-theme--light .mw-text-label {
+  color: #111827;
+}
+.mw-theme--light .mw-skeleton-text,
+.mw-theme--light .mw-skeleton-text--lg {
+  background: rgba(0, 0, 0, 0.12);
+}
+.mw-theme--light .mw-empty-screen {
+  color: rgba(0, 0, 0, 0.35);
+}
+.mw-theme--light .mw-node:hover {
+  outline-color: rgba(0, 122, 255, 0.55);
+}
+
+/* Route strip when nothing was recorded */
+.or-route-strip__path.is-empty {
+  opacity: 0.55;
+  font-style: italic;
 }

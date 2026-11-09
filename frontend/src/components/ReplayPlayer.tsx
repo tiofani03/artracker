@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { EventType, type eventWithTime } from 'rrweb'
 import rrwebPlayer from 'rrweb-player'
 import 'rrweb-player/dist/style.css'
@@ -6,7 +6,8 @@ import type { Platform, ReplayChunkDetail, ReplaySessionItem, TelemetryEvent } f
 import { loadChunkPayloads } from '../utils/replayChunkLoader'
 import { buildReplayModel } from '../replay/normalize'
 import type { ReplayModel } from '../replay/model'
-import { fallbackNotice } from '../replay/playback'
+import { activeFrameAt, deviceClock, fallbackNotice, offsetFromPointer, routeStrip } from '../replay/playback'
+import { chunkSignature } from '../replay/wireframe'
 import { detectSessionPlatform, type DetectedPlatform } from '../utils/platformDetector'
 import { MobileWireframeRenderer } from './MobileWireframeRenderer'
 
@@ -132,6 +133,14 @@ export default function ReplayPlayer({
   )
   const hasOverride = Boolean(overrideEvents && overrideEvents.length > 0)
 
+  // Session-detail refetches return the same chunks with freshly signed URLs; only a real change
+  // in the chunk set (or session) may reload chunks and reset the playhead.
+  const chunkSig = useMemo(() => chunkSignature(chunks), [chunks])
+  const chunksRef = useRef(chunks)
+  useLayoutEffect(() => {
+    chunksRef.current = chunks
+  })
+
   // Fetch & gunzip chunks; interpretation happens in buildReplayModel
   useEffect(() => {
     setCurrentTimeMs(0)
@@ -148,7 +157,7 @@ export default function ReplayPlayer({
     setChunkLoading(true)
     setChunkError(null)
 
-    loadChunkPayloads(chunks, controller.signal)
+    loadChunkPayloads(chunksRef.current, controller.signal)
       .then((r) => {
         if (controller.signal.aborted) return
         setPayloads(r.payloads)
@@ -165,7 +174,7 @@ export default function ReplayPlayer({
       })
 
     return () => controller.abort()
-  }, [session.id, chunks, presignedChunkCount, hasOverride])
+  }, [session.id, chunkSig, presignedChunkCount, hasOverride])
 
   // Single source of truth for what can be rendered
   const model: ReplayModel = useMemo(() => {
@@ -264,26 +273,30 @@ export default function ReplayPlayer({
     return null
   }, [webEvents, timelineEvents])
 
-  const displayUrl = useMemo(() => {
-    if (recordedUrl) return recordedUrl
-    if (effectivePlatform === 'web') {
-      return `http://localhost:3001/session/${formatSessionId(session.id, 12)}`
-    }
-    if (effectivePlatform === 'ios') {
-      return 'MainViewController.swift · RootNavigation'
-    }
-    return 'com.aiacademy.app · MainActivity · NavHost'
-  }, [recordedUrl, effectivePlatform, session.id])
+  // Active mobile screen at the playhead (frames come from chunks or telemetry view trees)
+  const activeScreen =
+    model.kind === 'mobile' ? (activeFrameAt(model.frames, model.startMs + currentTimeMs)?.screen ?? null) : null
+
+  // Only recorded values: no invented URLs / activity names when nothing was captured
+  const strip = routeStrip({ platform: effectivePlatform, screen: activeScreen, recordedUrl })
+  const clock = deviceClock(baseTimestampMs + currentTimeMs) ?? '--:--'
 
   const displayPath = useMemo(() => {
-    if (!recordedUrl) return effectivePlatform === 'web' ? '/' : 'MainScreen'
+    if (!recordedUrl) return strip.value
     try {
       const u = new URL(recordedUrl)
       return `${u.pathname}${u.search}` || '/'
     } catch {
       return recordedUrl
     }
-  }, [recordedUrl, effectivePlatform])
+  }, [recordedUrl, strip.value])
+
+  // Scrubber: click or drag anywhere on the track to seek
+  const scrubbingRef = useRef(false)
+  const seekToPointer = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    seekTo(offsetFromPointer(e.clientX, { left: r.left, width: r.width }, durationMs))
+  }
 
   // Build timeline markers (red = error, yellow = warn / click / frustration)
   const markers: TimelineMarker[] = useMemo(() => {
@@ -486,6 +499,7 @@ export default function ReplayPlayer({
           currentTs={model.startMs + currentTimeMs}
           platform={model.platform}
           containerWidth={model.platform === 'ios' ? 308 : 300}
+          maxHeight={486}
         />
       )
     }
@@ -652,13 +666,13 @@ export default function ReplayPlayer({
         {/* Dedicated Full-Width Route / Screen Location Strip */}
         <div className="or-route-strip">
           <span className="or-route-strip__label">
-            {effectivePlatform === 'web' ? 'URL' : effectivePlatform === 'ios' ? 'SCREEN' : 'ACTIVITY'}
+            {strip.label}
           </span>
           <span
-            className="or-route-strip__path"
-            title={displayUrl}
+            className={`or-route-strip__path${strip.value === 'Not recorded' ? ' is-empty' : ''}`}
+            title={activeScreen ?? recordedUrl ?? undefined}
           >
-            {displayUrl}
+            {strip.value}
           </span>
         </div>
 
@@ -672,12 +686,12 @@ export default function ReplayPlayer({
                   <span className="or-web-dot or-web-dot--yellow" />
                   <span className="or-web-dot or-web-dot--green" />
                 </div>
-                <div className="or-url-pill" title={displayUrl}>
+                <div className="or-url-pill" title={recordedUrl ?? undefined}>
                   <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 5, opacity: 0.6 }}>
                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                     <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                   </svg>
-                  {displayUrl}
+                  {strip.value}
                 </div>
               </div>
               {renderViewportContent()}
@@ -687,7 +701,7 @@ export default function ReplayPlayer({
           {effectivePlatform === 'ios' && (
             <div className="or-phone-frame or-phone-frame--ios">
               <div className="or-phone-statusbar">
-                <span>09:41</span>
+                <span title="Recorded device time">{clock}</span>
                 <div className="or-phone-status-icons">
                   <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M5 12.55a11 11 0 0 1 14.08 0" />
@@ -713,7 +727,7 @@ export default function ReplayPlayer({
             <div className="or-phone-frame or-phone-frame--android">
               <div className="or-phone-camera-dot" />
               <div className="or-phone-statusbar">
-                <span>10:00</span>
+                <span title="Recorded device time">{clock}</span>
                 <div className="or-phone-status-icons">
                   <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M5 12.55a11 11 0 0 1 14.08 0" />
@@ -749,7 +763,28 @@ export default function ReplayPlayer({
             {formatOffsetMs(currentTimeMs)} / {formatOffsetMs(durationMs)}
           </span>
 
-          <div className="replay-marker-track" style={{ flex: 1 }}>
+          <div
+            className="replay-marker-track"
+            style={{ flex: 1, touchAction: 'none' }}
+            role="slider"
+            aria-label="Seek replay"
+            aria-valuemin={0}
+            aria-valuemax={Math.round(durationMs / 1000)}
+            aria-valuenow={Math.round(currentTimeMs / 1000)}
+            onPointerDown={(e) => {
+              if ((e.target as HTMLElement).closest('.replay-marker-dot')) return
+              scrubbingRef.current = true
+              e.currentTarget.setPointerCapture(e.pointerId)
+              seekToPointer(e)
+            }}
+            onPointerMove={(e) => {
+              if (scrubbingRef.current) seekToPointer(e)
+            }}
+            onPointerUp={(e) => {
+              scrubbingRef.current = false
+              e.currentTarget.releasePointerCapture(e.pointerId)
+            }}
+          >
             <div className="replay-marker-track__rail" />
             <div
               className="replay-marker-track__fill"
