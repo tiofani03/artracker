@@ -69,9 +69,17 @@ export function chunkSignature(chunks: ReplayChunkDetail[]): string {
     .join('|')
 }
 
-/** Human-readable screen name from a controller class name. */
+/** Human-readable screen name from a controller class name or mobile route URI. */
 export function displayScreenName(raw: string): string {
-  const name = raw.trim()
+  let name = raw.trim()
+  if (name.startsWith('android://')) {
+    name = name.slice('android://'.length)
+    if (name.includes('_id_')) {
+      name = name.replace(/_id_/g, '{id}')
+    }
+  } else if (name.startsWith('ios://')) {
+    name = name.slice('ios://'.length)
+  }
   if (/^UIHostingController</.test(name)) return 'SwiftUI view'
   const generic = name.indexOf('<')
   return generic > 0 ? name.slice(0, generic) : name

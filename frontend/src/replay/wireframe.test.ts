@@ -86,6 +86,13 @@ describe('displayScreenName', () => {
   it('keeps plain names', () => {
     expect(displayScreenName('CheckoutScreen')).toBe('CheckoutScreen')
   })
+
+  it('strips android:// and ios:// URI prefixes and normalizes route parameters', () => {
+    expect(displayScreenName('android://MainActivity')).toBe('MainActivity')
+    expect(displayScreenName('android://lab/_id_')).toBe('lab/{id}')
+    expect(displayScreenName('android://skenario')).toBe('skenario')
+    expect(displayScreenName('ios://SettingsView')).toBe('SettingsView')
+  })
 })
 
 describe('hasCapturedContent', () => {
