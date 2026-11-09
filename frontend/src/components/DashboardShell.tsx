@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthContext'
 import { Link, Redirect, useLocation } from '../router'
 import OrgSwitcher from './OrgSwitcher'
 import ProjectSelector from './ProjectSelector'
+import ThemeToggle from './ThemeToggle'
 import { ToastProvider } from './Toast'
 
 const ORG_KEY = 'artracker.org'
@@ -124,17 +125,6 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
         icon: 'M12 4a6 6 0 0 0-6 6v3.5L4.5 16h15L18 13.5V10a6 6 0 0 0-6-6Zm-2 14a2 2 0 1 0 4 0',
         badge: '1',
         badgeTone: 'alert',
-        demoAllowed: true,
-      },
-    ],
-  },
-  {
-    heading: 'Developers',
-    items: [
-      {
-        to: '/docs',
-        label: 'API Documentation',
-        icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Zm-1 2 5 5h-5V4ZM8 12h8v2H8v-2Zm0 4h8v2H8v-2Zm0-8h4v2H8V8Z',
         demoAllowed: true,
       },
     ],
@@ -389,6 +379,7 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
                 </strong>
                 <span className="console-account__email">{effectiveUser.email}</span>
               </div>
+              <ThemeToggle showLabel={false} />
               {isDemo ? (
                 <Link to="/login" className="dash-btn">
                   Sign in
@@ -443,7 +434,10 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
               </div>
             </div>
 
-            {toolbar && <div className="console-topbar__right">{toolbar}</div>}
+            <div className="console-topbar__right">
+              {toolbar}
+              <ThemeToggle />
+            </div>
           </header>
 
           <main className="console-content">

@@ -6,7 +6,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ARTracker: Session Replay, Crash Traces &amp; Event Analytics</title>
     <meta name="description" content="Self-hosted session replay, source-mapped crash diagnostics, and conversion funnels in a single high-throughput engine." />
+    <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#fafbfd" />
+    <script>
+      try {
+        const theme = localStorage.getItem('color-scheme') || 'light dark';
+        const meta = document.querySelector('meta[name="color-scheme"]');
+        if (meta) meta.content = theme;
+        if (theme === 'dark' || (theme === 'light dark' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+          document.documentElement.dataset.theme = 'dark';
+        } else if (theme === 'light') {
+          document.documentElement.dataset.theme = 'light';
+        }
+      } catch (e) {}
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;600&family=IBM+Plex+Sans:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />

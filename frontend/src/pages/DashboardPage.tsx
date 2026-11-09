@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   analyticsApi,
-  keyApi,
   replayApi,
   telemetryApi,
-  type ApiKey,
-  type OrgMembership,
   type Project,
   type ProjectStats,
   type ReplayChunkDetail,
@@ -13,11 +10,12 @@ import {
   type TelemetryEvent,
 } from '../api'
 import DashboardShell from '../components/DashboardShell'
-import ReplayPlayer from '../components/ReplayPlayer'
+import ReplayPlayer, { type DeviceMode } from '../components/ReplayPlayer'
 import GrowthAnalyticsView from '../components/analytics/GrowthAnalyticsView'
 import CampaignsView from '../components/campaigns/CampaignsView'
-import { Link, navigate } from '../router'
+import { navigate } from '../router'
 import { startInteractiveCapture, type LiveCaptureResult } from '../utils/liveReplayCapture'
+import { detectSessionPlatform } from '../utils/platformDetector'
 import '../dashboard.css'
 
 export type ConsoleSection = 'overview' | 'replays' | 'logs' | 'campaigns' | 'funnels' | 'alerts'
@@ -111,52 +109,296 @@ function formatDurationMs(ms: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
+function formatSessionId(id: string, maxLen = 16): string {
+  if (!id) return ''
+  if (id.length <= maxLen) return id
+  const half = Math.floor((maxLen - 3) / 2)
+  return `${id.slice(0, half + 2)}…${id.slice(-half)}`
+}
+
+function formatExactTime(timestamp?: string | number | Date): string {
+  if (!timestamp) return ''
+  const d = new Date(timestamp)
+  if (Number.isNaN(d.getTime())) return String(timestamp)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const yyyy = d.getFullYear()
+  const mm = pad(d.getMonth() + 1)
+  const dd = pad(d.getDate())
+  const hh = pad(d.getHours())
+  const min = pad(d.getMinutes())
+  const ss = pad(d.getSeconds())
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`
+}
+
+function formatExactTimeShort(timestamp?: string | number | Date): string {
+  if (!timestamp) return ''
+  const d = new Date(timestamp)
+  if (Number.isNaN(d.getTime())) return String(timestamp)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const hh = pad(d.getHours())
+  const min = pad(d.getMinutes())
+  const ss = pad(d.getSeconds())
+  return `${hh}:${min}:${ss}`
+}
+
+function formatExactDateShort(timestamp?: string | number | Date): string {
+  if (!timestamp) return ''
+  const d = new Date(timestamp)
+  if (Number.isNaN(d.getTime())) return ''
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const m = months[d.getMonth()]
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${m} ${dd}`
+}
+
+function formatAgo(timestamp: string): string {
+  const diffMs = Date.now() - new Date(timestamp).getTime()
+  if (Number.isNaN(diffMs)) return 'just now'
+  const diffSec = Math.floor(diffMs / 1000)
+  if (diffSec < 60) return `${Math.max(1, diffSec)}s ago`
+  const diffMin = Math.floor(diffSec / 60)
+  if (diffMin < 60) return `${diffMin}m ago`
+  const diffHr = Math.floor(diffMin / 60)
+  if (diffHr < 24) return `${diffHr}h ago`
+  return `${Math.floor(diffHr / 24)}d ago`
+}
+
 type DevLogEntry = {
   id: string
   time: string
+  exactTime: string
+  exactTimeShort: string
+  exactDateShort: string
+  rawTimestamp?: string
   kind: Exclude<LogKind, 'all'>
+  level?: string
+  eventName?: string
   title: string
   detail: string
+  statusCode?: number | string
+  durationMs?: number
   occurrences: number
   sessionId: string
+  environment?: string
+  releaseVersion?: string
+  userId?: string
+  attributes?: Record<string, unknown>
+}
+
+const nowMs = Date.now()
+const getMockLogTime = (minutesAgo: number) => {
+  const date = new Date(nowMs - minutesAgo * 60 * 1000)
+  return {
+    time: `${minutesAgo}m ago`,
+    exactTime: formatExactTime(date),
+    exactTimeShort: formatExactTimeShort(date),
+    exactDateShort: formatExactDateShort(date),
+    rawTimestamp: date.toISOString(),
+  }
 }
 
 const DEV_LOGS: DevLogEntry[] = [
   {
     id: 'iss_104',
-    time: '2m ago',
+    ...getMockLogTime(2),
     kind: 'exception',
+    level: 'error',
     title: 'TypeError: Cannot read properties of undefined (reading "charge_id")',
     detail: 'PaymentForm.tsx:142:19 · Chrome 131',
     occurrences: 12,
     sessionId: 'ses_94k2p8',
+    environment: 'production',
+    releaseVersion: 'v2.4.1',
+    userId: 'usr_premium_88',
+    attributes: {
+      component: 'PaymentForm.tsx:142:19',
+      browser: 'Chrome 131.0.6778.86 (macOS)',
+      route: '/checkout/pay',
+      error_code: 'ERR_UNDEFINED_PROP',
+      runtime: 'React 18.3.1',
+    },
   },
   {
     id: 'iss_103',
-    time: '4m ago',
+    ...getMockLogTime(4),
     kind: 'network',
+    level: 'error',
     title: 'POST /api/v1/charge → 502 Bad Gateway (1,840 ms)',
-    detail: 'trace_id=tr_88a41f · payload PII redacted',
+    detail: 'trace_id=tr_88a41f · payload PII redacted · status 502',
     occurrences: 19,
     sessionId: 'ses_94k2p8',
+    environment: 'production',
+    releaseVersion: 'v2.4.1',
+    userId: 'usr_premium_88',
+    attributes: {
+      method: 'POST',
+      endpoint: '/api/v1/charge',
+      status_code: 502,
+      latency_ms: 1840,
+      trace_id: 'tr_88a41f',
+      upstream: 'payment-gateway-service',
+    },
   },
   {
     id: 'iss_102',
-    time: '18m ago',
+    ...getMockLogTime(18),
     kind: 'console',
+    level: 'warn',
     title: 'console.warn: Slow template hydration exceeded 2000ms budget',
     detail: 'route=/onboarding/workspace · p95=2,410 ms · iOS Safari 18',
     occurrences: 7,
     sessionId: 'ses_71m9x3',
+    environment: 'staging',
+    releaseVersion: 'v2.4.0',
+    userId: 'usr_onboard_12',
+    attributes: {
+      route: '/onboarding/workspace',
+      hydration_ms: 2410,
+      budget_ms: 2000,
+      client: 'iOS Safari 18.1',
+      platform: 'Mobile',
+    },
   },
   {
     id: 'iss_101',
-    time: '41m ago',
+    ...getMockLogTime(41),
     kind: 'exception',
+    level: 'error',
     title: 'UnhandledRejection: NetworkError when attempting to fetch resource',
     detail: 'src/api.ts:52:25 · transient mobile handoff',
     occurrences: 3,
     sessionId: 'ses_71m9x3',
+    environment: 'production',
+    releaseVersion: 'v2.3.9',
+    userId: 'usr_onboard_12',
+    attributes: {
+      source: 'src/api.ts:52:25',
+      failure_reason: 'Mobile connection reset (transient cell handoff)',
+      retry_attempt: 2,
+    },
+  },
+  {
+    id: 'iss_100',
+    ...getMockLogTime(64),
+    kind: 'network',
+    level: 'error',
+    title: 'GET /api/v1/projects/1/stats → 504 Gateway Timeout (5,000 ms)',
+    detail: 'trace_id=tr_77e20a · database replica sync lag',
+    occurrences: 5,
+    sessionId: 'ses_83b1x9',
+    environment: 'production',
+    releaseVersion: 'v2.3.9',
+    attributes: {
+      method: 'GET',
+      endpoint: '/api/v1/projects/1/stats',
+      status_code: 504,
+      latency_ms: 5000,
+      trace_id: 'tr_77e20a',
+    },
+  },
+  {
+    id: 'iss_99',
+    ...getMockLogTime(85),
+    kind: 'exception',
+    level: 'error',
+    title: 'ReferenceError: window.analytics is not defined',
+    detail: 'tracker.ts:88:12 · Firefox 133 · AdBlock detected',
+    occurrences: 14,
+    sessionId: 'ses_83b1x9',
+    environment: 'production',
+    releaseVersion: 'v2.3.9',
+    attributes: {
+      component: 'tracker.ts:88:12',
+      browser: 'Firefox 133.0 (Linux)',
+      script_blocked: true,
+    },
+  },
+  {
+    id: 'iss_98',
+    ...getMockLogTime(110),
+    kind: 'console',
+    level: 'error',
+    title: 'console.error: Failed to load resource: net::ERR_CONNECTION_REFUSED',
+    detail: 'https://cdn.artracker.dev/sdk/v2.js · fallback initiated',
+    occurrences: 8,
+    sessionId: 'ses_52q7w1',
+    environment: 'staging',
+    releaseVersion: 'v2.3.8',
+    attributes: {
+      url: 'https://cdn.artracker.dev/sdk/v2.js',
+      network_error: 'ERR_CONNECTION_REFUSED',
+      fallback_used: true,
+    },
+  },
+  {
+    id: 'iss_97',
+    ...getMockLogTime(145),
+    kind: 'network',
+    level: 'warn',
+    title: 'POST /api/v1/ingest → 429 Too Many Requests',
+    detail: 'client rate limit threshold reached (100 req/s)',
+    occurrences: 22,
+    sessionId: 'ses_52q7w1',
+    environment: 'production',
+    releaseVersion: 'v2.3.8',
+    attributes: {
+      method: 'POST',
+      endpoint: '/api/v1/ingest',
+      status_code: 429,
+      rate_limit_bucket: 'client_ingest',
+    },
+  },
+  {
+    id: 'iss_96',
+    ...getMockLogTime(180),
+    kind: 'exception',
+    level: 'error',
+    title: 'SecurityError: Blocked a frame with origin from accessing a cross-origin frame',
+    detail: 'iframeBridge.ts:31:14 · Safari 17.6',
+    occurrences: 6,
+    sessionId: 'ses_41r8k2',
+    environment: 'production',
+    releaseVersion: 'v2.3.8',
+    attributes: {
+      component: 'iframeBridge.ts:31:14',
+      browser: 'Safari 17.6 (macOS)',
+      security_origin: 'https://checkout.partner.com',
+    },
+  },
+  {
+    id: 'iss_95',
+    ...getMockLogTime(230),
+    kind: 'console',
+    level: 'warn',
+    title: 'console.warn: WebGL context lost. Attempting auto-restore',
+    detail: 'three_canvas.tsx:64 · GPU memory pressure',
+    occurrences: 4,
+    sessionId: 'ses_33p2m8',
+    environment: 'production',
+    releaseVersion: 'v2.3.7',
+    attributes: {
+      component: 'three_canvas.tsx:64',
+      gpu_renderer: 'Apple M1',
+      context_restored: true,
+    },
+  },
+  {
+    id: 'iss_94',
+    ...getMockLogTime(310),
+    kind: 'network',
+    level: 'warn',
+    title: 'POST /api/v1/auth/refresh → 401 Unauthorized',
+    detail: 'refresh_token expired · auto re-auth scheduled',
+    occurrences: 11,
+    sessionId: 'ses_22k9j4',
+    environment: 'production',
+    releaseVersion: 'v2.3.7',
+    attributes: {
+      method: 'POST',
+      endpoint: '/api/v1/auth/refresh',
+      status_code: 401,
+      reason: 'Token expired',
+    },
   },
 ]
 
@@ -210,94 +452,6 @@ const INITIAL_ALERTS: AlertRule[] = [
     lastTriggered: '6d ago',
   },
 ]
-
-function SdkStatusBanner({
-  activeOrg,
-  project,
-  isDemo,
-  eventsCount,
-  onSendTest,
-  sendingTest,
-}: {
-  activeOrg: OrgMembership | null
-  project: Project | null
-  isDemo: boolean
-  eventsCount?: number
-  onSendTest?: () => void
-  sendingTest?: boolean
-}) {
-  const [keys, setKeys] = useState<ApiKey[]>([])
-
-  useEffect(() => {
-    if (!project || isDemo) return
-    let cancelled = false
-    void keyApi
-      .list(project.id)
-      .then((r) => {
-        if (!cancelled) setKeys(r.items)
-      })
-      .catch(() => {
-        if (!cancelled) setKeys([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [project, isDemo])
-
-  const activePublicKey = keys.find((k) => k.is_active && k.key_type === 'public_client')
-  if (isDemo || (project && activePublicKey)) {
-    return (
-      <div className="sdk-strip">
-        <div className="sdk-strip__left">
-          <span className="console-db-dot is-up" aria-hidden="true" />
-          <span>
-            SDK key{' '}
-            <code className="dash-code">{isDemo ? 'art_live_demo9x8k…' : `${activePublicKey?.prefix}…`}</code>{' '}
-            active on <strong>{project?.slug ?? 'checkout-web'}</strong>
-          </span>
-        </div>
-        <span className="sdk-strip__hint">
-          {eventsCount !== undefined && eventsCount > 0
-            ? `🟢 Live PostgreSQL connected (${eventsCount.toLocaleString()} events recorded in DB)`
-            : isDemo
-              ? 'Sample telemetry displayed in demo mode'
-              : 'Waiting for SDK client events at /api/v1/ingest'}
-        </span>
-        {project && !isDemo && onSendTest && (
-          <button
-            type="button"
-            className="dash-btn"
-            onClick={onSendTest}
-            disabled={sendingTest}
-            style={{ marginLeft: 'auto', padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
-          >
-            {sendingTest ? 'Ingesting...' : '⚡ Send Real Test Event'}
-          </button>
-        )}
-      </div>
-    )
-  }
-
-  return (
-    <div className="sdk-strip sdk-strip--setup">
-      <div className="sdk-strip__left">
-        <span className="console-db-dot" aria-hidden="true" />
-        <span>
-          {!activeOrg
-            ? 'Create an Organization from the left sidebar to begin.'
-            : !project
-              ? `Create your first Project inside ${activeOrg.name} from the left sidebar.`
-              : `No active public SDK key on ${project.name} yet.`}
-        </span>
-      </div>
-      {project && (
-        <Link to="/dashboard/settings" className="dash-btn">
-          Generate SDK key →
-        </Link>
-      )}
-    </div>
-  )
-}
 
 function TelemetryAreaChart({
   buckets,
@@ -424,29 +578,15 @@ function TelemetryAreaChart({
   )
 }
 
-function formatAgo(timestamp: string): string {
-  const diffMs = Date.now() - new Date(timestamp).getTime()
-  if (Number.isNaN(diffMs)) return 'just now'
-  const diffSec = Math.floor(diffMs / 1000)
-  if (diffSec < 60) return `${Math.max(1, diffSec)}s ago`
-  const diffMin = Math.floor(diffSec / 60)
-  if (diffMin < 60) return `${diffMin}m ago`
-  const diffHr = Math.floor(diffMin / 60)
-  if (diffHr < 24) return `${diffHr}h ago`
-  return `${Math.floor(diffHr / 24)}d ago`
-}
-
 function DashboardInner({
   section,
   range,
-  activeOrg,
   project,
   isDemo,
   error,
 }: {
   section: ConsoleSection
   range: RangeKey
-  activeOrg: OrgMembership | null
   project: Project | null
   isDemo: boolean
   error: string | null
@@ -461,6 +601,7 @@ function DashboardInner({
   const [replayTotal, setReplayTotal] = useState<number>(0)
   const [replayOffset, setReplayOffset] = useState<number>(0)
   const [replayFilter, setReplayFilter] = useState<ReplayFilter>('all')
+  const [replayDeviceMode, setReplayDeviceMode] = useState<DeviceMode>('auto')
   const [replayLoading, setReplayLoading] = useState<boolean>(true)
   const [replayError, setReplayError] = useState<string | null>(null)
 
@@ -475,11 +616,23 @@ function DashboardInner({
   const [seedingSessions, setSeedingSessions] = useState<boolean>(false)
 
   const [logFilter, setLogFilter] = useState<LogKind>('all')
+  const [logPage, setLogPage] = useState<number>(1)
+  const [expandedLogIds, setExpandedLogIds] = useState<Set<string>>(new Set())
+  const LOGS_PER_PAGE = 8
+
+  const toggleLogExpanded = (id: string) => {
+    setExpandedLogIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
   const [alerts, setAlerts] = useState<AlertRule[]>(INITIAL_ALERTS)
   const [realStats, setRealStats] = useState<ProjectStats | null>(null)
   const [realEvents, setRealEvents] = useState<TelemetryEvent[]>([])
   const [realCampaigns, setRealCampaigns] = useState<typeof CAMPAIGNS | null>(null)
-  const [sendingTest, setSendingTest] = useState(false)
 
   const targetPid = project?.id ?? 1
 
@@ -685,21 +838,6 @@ function DashboardInner({
     }
   }, [project?.id, range])
 
-  const handleSendTestEvent = async () => {
-    const targetPid = project?.id ?? 1
-    try {
-      setSendingTest(true)
-      await telemetryApi.sendTestEvent(targetPid)
-      setTimeout(() => {
-        reloadTelemetry()
-        setSendingTest(false)
-      }, 350)
-    } catch (err) {
-      console.error('Send test event failed', err)
-      setSendingTest(false)
-    }
-  }
-
   const emptyBuckets: BucketPoint[] = [
     { label: '00:00', sessions: 0, errors: 0 },
     { label: '04:00', sessions: 0, errors: 0 },
@@ -736,25 +874,74 @@ function DashboardInner({
           } else if (
             e.name.toLowerCase().includes('http') ||
             e.name.toLowerCase().includes('fetch') ||
-            e.name.toLowerCase().includes('network')
+            e.name.toLowerCase().includes('network') ||
+            (e.attributes && (e.attributes.status_code || e.attributes.method))
           ) {
             kind = 'network'
           }
+
+          // MoEngage-style smart headline extraction
+          const method = (e.attributes?.method as string) || ''
+          const rawUrl = (e.attributes?.url as string) || ''
+          const status = (e.attributes?.status as number | string) || (e.attributes?.status_code as number | string) || undefined
+          const duration = typeof e.attributes?.duration_ms === 'number' ? e.attributes.duration_ms : undefined
+
+          let title = e.name || e.message || `${e.kind} event`
+          let detail = e.message || (e.environment ? `env: ${e.environment}` : '')
+
+          if (e.name === 'http_request' || kind === 'network') {
+            if (e.message && e.message.includes('http')) {
+              const cleanMsg = e.message
+                .replace(/https?:\/\/[^/]+/i, '')
+                .replace(/\?[^→\s]+/i, '')
+                .replace(/\s*→\s*\d+/, '')
+                .trim()
+              title = cleanMsg || e.message
+              detail = `${status ? `HTTP ${status}` : ''}${duration ? ` · ${duration}ms` : ''}${e.environment ? ` · env: ${e.environment}` : ''}`
+            } else if (method && rawUrl) {
+              const cleanPath = rawUrl.replace(/https?:\/\/[^/]+/i, '').split('?')[0]
+              title = `${method} ${cleanPath}`
+              detail = `${status ? `HTTP ${status}` : ''}${duration ? ` · ${duration}ms` : ''}${e.environment ? ` · env: ${e.environment}` : ''}`
+            }
+          } else if (kind === 'exception') {
+            if (e.name && e.message && e.name !== e.message) {
+              title = `${e.name}: ${e.message}`
+              detail = e.environment ? `env: ${e.environment} · ${e.release_version || 'v1.0'}` : ''
+            }
+          }
+
           return {
             id: e.id,
             time: formatAgo(e.event_timestamp),
+            exactTime: formatExactTime(e.event_timestamp),
+            exactTimeShort: formatExactTimeShort(e.event_timestamp),
+            exactDateShort: formatExactDateShort(e.event_timestamp),
+            rawTimestamp: e.event_timestamp,
             kind,
-            title: e.name || e.message || `${e.kind} event`,
-            detail:
-              e.message ||
-              (e.environment ? `env: ${e.environment} · ${e.release_version || 'v1.0'}` : 'telemetry payload'),
+            level: e.level || (kind === 'exception' ? 'error' : kind === 'network' ? 'info' : 'log'),
+            eventName: e.name,
+            title,
+            detail: detail.replace(/^ · /, ''),
+            statusCode: status,
+            durationMs: duration,
             occurrences: 1,
             sessionId: e.session_id || 'n/a',
+            environment: e.environment,
+            releaseVersion: e.release_version,
+            userId: e.user_id,
+            attributes: e.attributes,
           }
         })
       : DEV_LOGS
 
   const filteredLogs = logFilter === 'all' ? displayLogs : displayLogs.filter((l) => l.kind === logFilter)
+  const totalLogs = filteredLogs.length
+  const totalLogPages = Math.max(1, Math.ceil(totalLogs / LOGS_PER_PAGE))
+  const currentLogPage = Math.min(logPage, totalLogPages)
+  const paginatedLogs = filteredLogs.slice(
+    (currentLogPage - 1) * LOGS_PER_PAGE,
+    currentLogPage * LOGS_PER_PAGE,
+  )
 
   const toggleAlert = (id: string) => {
     setAlerts((prev) =>
@@ -776,18 +963,8 @@ function DashboardInner({
         </p>
       )}
 
-      <SdkStatusBanner
-        key={project?.id ?? 'none'}
-        activeOrg={activeOrg}
-        project={project}
-        isDemo={isDemo}
-        eventsCount={realStats?.events_count}
-        onSendTest={handleSendTestEvent}
-        sendingTest={sendingTest}
-      />
-
-            {/* ==================== OVERVIEW ==================== */}
-            {section === 'overview' && (
+      {/* ==================== OVERVIEW ==================== */}
+      {section === 'overview' && (
               <div className="dash-panel-stack">
                 {/* Unified 4-Column Metric Strip */}
                 <section className="metric-strip" aria-label="Key telemetry metrics">
@@ -858,7 +1035,7 @@ function DashboardInner({
                   <section className="dash-card dash-card--compact">
                     <div className="dash-card__head">
                       <div>
-                        <h2 className="dash-card__title">Unresolved Dev Issues</h2>
+                        <h2 className="dash-card__title">Unresolved Issues</h2>
                         <p className="dash-card__desc">Correlated stacktraces &amp; 5xx network failures.</p>
                       </div>
                       <button type="button" className="dash-btn" onClick={() => goSection('/dashboard/logs')}>
@@ -885,7 +1062,9 @@ function DashboardInner({
                               <div className="dash-list__top">
                                 <span className={`badge badge--${item.kind}`}>{item.kind}</span>
                                 <span className="dash-code">{item.occurrences}×</span>
-                                <span className="dash-code">{item.time}</span>
+                                <span className="dash-code" title={`Exact time: ${item.exactTime}`}>
+                                  {item.time} ({item.exactTime})
+                                </span>
                               </div>
                               <p className="dash-list__title">{item.title}</p>
                               <p className="dash-list__sub dash-code">{item.detail}</p>
@@ -973,28 +1152,6 @@ function DashboardInner({
                       </button>
                     ))}
                   </div>
-
-                  <div className="dash-replay-toolbar__actions">
-                    <button
-                      type="button"
-                      className="dash-btn"
-                      onClick={handleStartLiveCapture}
-                      disabled={isCapturingLive}
-                      title="Record a 5-second live DOM session using rrweb with rage & dead click detector"
-                    >
-                      {isCapturingLive ? '● Recording 5s DOM…' : '📹 Record Live DOM'}
-                    </button>
-                    {project && !isDemo && (
-                      <button
-                        type="button"
-                        className="dash-btn"
-                        onClick={handleSeedSessions}
-                        disabled={seedingSessions}
-                      >
-                        {seedingSessions ? 'Seeding…' : '⚡ Seed Replay Data'}
-                      </button>
-                    )}
-                  </div>
                 </div>
 
                 {replayError && (
@@ -1056,6 +1213,14 @@ function DashboardInner({
                         {replaySessions.map((s) => {
                           const selected = s.id === selectedSessionId
                           const durFormatted = formatDurationMs(s.duration_ms)
+                          const plat = detectSessionPlatform(s, null, project?.platform)
+                          const hasErr = s.has_error
+                          const hasWarn = s.has_rage_click || s.has_dead_click
+                          const dotClass = hasErr
+                            ? 'dash-session-item__dot--error'
+                            : hasWarn
+                              ? 'dash-session-item__dot--warn'
+                              : 'dash-session-item__dot--clean'
                           return (
                             <button
                               key={s.id}
@@ -1065,29 +1230,40 @@ function DashboardInner({
                                 setSelectedSessionId(s.id)
                               }}
                             >
-                              <div className="dash-session-item__top">
-                                <span className="dash-code">{s.id}</span>
-                                <div style={{ display: 'flex', gap: '4px' }}>
-                                  {s.has_error && (
-                                    <span className="badge badge--exception">error</span>
-                                  )}
-                                  {s.has_rage_click && (
-                                    <span className="badge badge--console">rage tap/click</span>
-                                  )}
-                                  {s.has_dead_click && (
-                                    <span className="badge badge--console">dead click</span>
-                                  )}
-                                  {!s.has_error && !s.has_rage_click && !s.has_dead_click && (
-                                    <span className="badge badge--active">clean</span>
-                                  )}
+                              <div className="dash-session-item__row-1">
+                                <div className="dash-session-item__user-box">
+                                  <span className={`dash-session-item__dot ${dotClass}`} />
+                                  <strong className="dash-session-item__user">
+                                    {s.user_id || 'anonymous_user'}
+                                  </strong>
+                                </div>
+                                <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                  <span className="dash-session-item__platform">
+                                    {plat.label}
+                                  </span>
+                                  {hasErr && <span className="badge badge--exception">error</span>}
+                                  {s.has_rage_click && <span className="badge badge--console">rage</span>}
+                                  {s.has_dead_click && <span className="badge badge--console">dead</span>}
+                                  {!hasErr && !hasWarn && <span className="badge badge--active">clean</span>}
                                 </div>
                               </div>
-                              <strong className="dash-session-item__user">
-                                {s.user_id || 'anonymous_user'}
-                              </strong>
-                              <span className="dash-session-item__meta">
-                                {s.chunk_count} chunk{s.chunk_count === 1 ? '' : 's'} · {durFormatted} · {formatAgo(s.start_time)}
-                              </span>
+
+                              <div className="dash-session-item__row-2">
+                                <span className="dash-code dash-session-item__id" title={s.id}>
+                                  {formatSessionId(s.id, 14)}
+                                </span>
+                                <span className="dash-session-item__time">
+                                  {formatAgo(s.start_time)}
+                                </span>
+                              </div>
+
+                              <div className="dash-session-item__row-3">
+                                <span>{durFormatted} duration</span>
+                                <span>
+                                  {s.event_count || s.chunk_count} events · {s.chunk_count} chunk
+                                  {s.chunk_count === 1 ? '' : 's'}
+                                </span>
+                              </div>
                             </button>
                           )
                         })}
@@ -1119,45 +1295,29 @@ function DashboardInner({
                       )}
                     </section>
 
-                    {/* Right Column: Interactive Visual Player (rrweb-player) & Timeline */}
-                    <section className="dash-card dash-card--compact" aria-label="Session player">
+                    {/* Right Column: OpenReplay Unified Studio Theater */}
+                    <div style={{ minWidth: 0, flex: 1 }} aria-label="Session player">
                       {sessionDetail ? (
-                        <>
-                          <div className="dash-card__head">
-                            <div>
-                              <h2 className="dash-card__title">
-                                {sessionDetail.session.user_id || 'anonymous_user'} ·{' '}
-                                <span className="dash-code">{sessionDetail.session.id}</span>
-                              </h2>
-                              <p className="dash-card__desc">
-                                {sessionDetail.session.environment} · {sessionDetail.chunks.length} R2 chunk(s) · {sessionDetail.session.event_count} events
-                              </p>
-                            </div>
-                            <span className="badge badge--role">
-                              {formatDurationMs(sessionDetail.session.duration_ms)}
-                            </span>
-                          </div>
-
-                          <ReplayPlayer
-                            session={sessionDetail.session}
-                            chunks={sessionDetail.chunks}
-                            timelineEvents={sessionDetail.timelineEvents}
-                            overrideEvents={
-                              liveCapture && liveCapture.sessionId === sessionDetail.session.id
-                                ? liveCapture.events
-                                : null
-                            }
-                            loadingDetail={detailLoading}
-                            onStartLiveCapture={handleStartLiveCapture}
-                            isCapturingLive={isCapturingLive}
-                          />
-                        </>
+                        <ReplayPlayer
+                          session={sessionDetail.session}
+                          chunks={sessionDetail.chunks}
+                          timelineEvents={sessionDetail.timelineEvents}
+                          overrideEvents={
+                            liveCapture && liveCapture.sessionId === sessionDetail.session.id
+                              ? liveCapture.events
+                              : null
+                          }
+                          loadingDetail={detailLoading}
+                          projectPlatform={project?.platform}
+                          deviceMode={replayDeviceMode}
+                          onDeviceModeChange={setReplayDeviceMode}
+                        />
                       ) : (
-                        <div style={{ padding: '3rem 1rem', textAlign: 'center' }}>
+                        <section className="dash-card dash-card--compact" style={{ padding: '3.5rem 1rem', textAlign: 'center' }}>
                           <p className="dash-empty">Select a session from the queue to start replay.</p>
-                        </div>
+                        </section>
                       )}
-                    </section>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1168,9 +1328,12 @@ function DashboardInner({
               <section className="dash-card dash-card--compact">
                 <div className="dash-card__head">
                   <div>
-                    <h2 className="dash-card__title">Developer Event &amp; Error Stream</h2>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <h2 className="dash-card__title">Event &amp; Error Stream</h2>
+                      <span className="badge badge--role">{totalLogs} events</span>
+                    </div>
                     <p className="dash-card__desc">
-                      Exceptions, HTTP 5xx spans, and console warnings linked directly to session replays.
+                      Exceptions, HTTP spans, and telemetry warnings with exact timestamps and correlated session replays.
                     </p>
                   </div>
                   <div className="dash-seg" role="group" aria-label="Filter log type">
@@ -1187,7 +1350,10 @@ function DashboardInner({
                         type="button"
                         className={`dash-seg__btn${logFilter === f.id ? ' is-active' : ''}`}
                         aria-pressed={logFilter === f.id}
-                        onClick={() => setLogFilter(f.id)}
+                        onClick={() => {
+                          setLogFilter(f.id)
+                          setLogPage(1)
+                        }}
                       >
                         {f.label}
                       </button>
@@ -1195,52 +1361,224 @@ function DashboardInner({
                   </div>
                 </div>
 
-                <div className="dash-list">
-                  {filteredLogs.length === 0 ? (
-                    <div style={{ padding: '3rem 1rem', textAlign: 'center', color: 'var(--color-fg-muted)' }}>
-                      <p style={{ fontWeight: 500, margin: '0 0 0.5rem 0', color: 'var(--color-fg)' }}>
-                        No telemetry logs found in PostgreSQL
-                      </p>
-                      <p style={{ fontSize: '0.8125rem', margin: '0 0 1.25rem 0' }}>
-                        {!isDemo && project && (realStats?.events_count ?? 0) === 0
-                          ? 'Send events using your SDK client key to POST /api/v1/ingest or send a live test event.'
-                          : 'No events match the selected filter.'}
-                      </p>
-                      {project && !isDemo && (
-                        <button
-                          type="button"
-                          className="dash-btn"
-                          onClick={handleSendTestEvent}
-                          disabled={sendingTest}
-                        >
-                          {sendingTest ? 'Ingesting...' : '⚡ Send Real Test Event to DB'}
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    filteredLogs.map((entry) => (
-                      <div key={entry.id} className="dash-list__row">
-                        <div className="dash-list__main">
-                          <div className="dash-list__top">
-                            <span className={`badge badge--${entry.kind}`}>{entry.kind}</span>
-                            <span className="dash-code">{entry.occurrences}× events</span>
-                            <span className="dash-code">{entry.time}</span>
-                            <span className="dash-code">{entry.sessionId}</span>
+                {filteredLogs.length === 0 ? (
+                  <div style={{ padding: '3rem 1rem', textAlign: 'center', color: 'var(--color-fg-muted)' }}>
+                    <p style={{ fontWeight: 500, margin: '0 0 0.5rem 0', color: 'var(--color-fg)' }}>
+                      No telemetry logs found in PostgreSQL
+                    </p>
+                    <p style={{ fontSize: '0.8125rem', margin: 0 }}>
+                      {!isDemo && project && (realStats?.events_count ?? 0) === 0
+                        ? 'Send events using your SDK client key to POST /api/v1/ingest or send a live test event.'
+                        : 'No events match the selected filter.'}
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="mo-stream">
+                      {paginatedLogs.map((entry) => {
+                        const isExpanded = expandedLogIds.has(entry.id)
+                        const hasAttributes = entry.attributes && Object.keys(entry.attributes).length > 0
+                        return (
+                          <div
+                            key={entry.id}
+                            className={`mo-card${isExpanded ? ' is-expanded' : ''}`}
+                          >
+                            <div
+                              className="mo-card__body"
+                              onClick={() => toggleLogExpanded(entry.id)}
+                            >
+                              <div className="mo-card__left">
+                                <span className={`mo-card__indicator mo-card__indicator--${entry.kind}`} />
+
+                                <div className="mo-card__content">
+                                  <div className="mo-card__title-row">
+                                    <span className={`badge badge--${entry.kind}`}>{entry.kind}</span>
+                                    {entry.statusCode && (
+                                      <span
+                                        className={`badge ${
+                                          Number(entry.statusCode) >= 400 ? 'badge--exception' : 'badge--active'
+                                        }`}
+                                      >
+                                        {entry.statusCode} {Number(entry.statusCode) === 200 ? 'OK' : ''}
+                                      </span>
+                                    )}
+                                    <h3 className="mo-card__title">{entry.title}</h3>
+                                  </div>
+
+                                  <p className="mo-card__subtitle">
+                                    {entry.detail}
+                                    {entry.sessionId && entry.sessionId !== 'n/a'
+                                      ? ` · session: ${entry.sessionId}`
+                                      : ''}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="mo-card__right" onClick={(e) => e.stopPropagation()}>
+                                <div
+                                  className="mo-card__time"
+                                  title={`Exact timestamp: ${entry.exactTime}${entry.rawTimestamp ? ` (${entry.rawTimestamp})` : ''}`}
+                                >
+                                  <span className="mo-card__time-exact">
+                                    {entry.exactDateShort}, {entry.exactTimeShort}
+                                  </span>
+                                  <span className="mo-card__time-ago">{entry.time}</span>
+                                </div>
+
+                                <div className="mo-card__actions">
+                                  {entry.sessionId && entry.sessionId !== 'n/a' && (
+                                    <button
+                                      type="button"
+                                      className="dash-btn dash-btn--sm"
+                                      onClick={() => openReplay(entry.sessionId)}
+                                      title={`Inspect session replay for ${entry.sessionId}`}
+                                    >
+                                      Replay →
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="dash-btn dash-btn--sm"
+                                    onClick={() => toggleLogExpanded(entry.id)}
+                                    title="Toggle event details"
+                                    style={{ padding: '0 6px' }}
+                                  >
+                                    <span className="mo-card__expand-icon">▾</span>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* MoEngage-Style Parameter Grid on expand */}
+                            {isExpanded && (
+                              <div className="mo-drawer">
+                                <div className="mo-drawer__head">
+                                  <span className="mo-drawer__heading">Event Attributes &amp; Context</span>
+                                  <span
+                                    className="dash-code"
+                                    style={{ fontSize: '0.6875rem', color: 'var(--color-muted)' }}
+                                  >
+                                    ID: {entry.id}
+                                  </span>
+                                </div>
+
+                                <div className="mo-kv-grid">
+                                  <div className="mo-kv-item">
+                                    <span className="mo-kv-item__key">Event Name</span>
+                                    <span className="mo-kv-item__val">{entry.eventName || entry.title}</span>
+                                  </div>
+                                  <div className="mo-kv-item">
+                                    <span className="mo-kv-item__key">Type / Level</span>
+                                    <span className="mo-kv-item__val">{entry.kind} · {entry.level || 'info'}</span>
+                                  </div>
+                                  <div className="mo-kv-item">
+                                    <span className="mo-kv-item__key">Exact Timestamp</span>
+                                    <span className="mo-kv-item__val">{entry.exactTime}</span>
+                                  </div>
+                                  <div className="mo-kv-item">
+                                    <span className="mo-kv-item__key">Session ID</span>
+                                    <span className="mo-kv-item__val">{entry.sessionId}</span>
+                                  </div>
+                                  {entry.environment && (
+                                    <div className="mo-kv-item">
+                                      <span className="mo-kv-item__key">Environment</span>
+                                      <span className="mo-kv-item__val">{entry.environment}</span>
+                                    </div>
+                                  )}
+                                  {entry.releaseVersion && (
+                                    <div className="mo-kv-item">
+                                      <span className="mo-kv-item__key">Release Version</span>
+                                      <span className="mo-kv-item__val">{entry.releaseVersion}</span>
+                                    </div>
+                                  )}
+                                  {entry.userId && (
+                                    <div className="mo-kv-item">
+                                      <span className="mo-kv-item__key">User ID</span>
+                                      <span className="mo-kv-item__val">{entry.userId}</span>
+                                    </div>
+                                  )}
+                                  {entry.statusCode && (
+                                    <div className="mo-kv-item">
+                                      <span className="mo-kv-item__key">HTTP Status</span>
+                                      <span className="mo-kv-item__val">{entry.statusCode}</span>
+                                    </div>
+                                  )}
+                                  {entry.durationMs !== undefined && (
+                                    <div className="mo-kv-item">
+                                      <span className="mo-kv-item__key">Duration</span>
+                                      <span className="mo-kv-item__val">{entry.durationMs} ms</span>
+                                    </div>
+                                  )}
+                                  {entry.attributes &&
+                                    Object.entries(entry.attributes)
+                                      .filter(
+                                        ([k]) => !['method', 'url', 'status', 'status_code', 'duration_ms'].includes(k),
+                                      )
+                                      .map(([k, v]) => (
+                                        <div key={k} className="mo-kv-item">
+                                          <span className="mo-kv-item__key">{k.replace(/_/g, ' ')}</span>
+                                          <span className="mo-kv-item__val">
+                                            {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                                          </span>
+                                        </div>
+                                      ))}
+                                </div>
+
+                                {hasAttributes && (
+                                  <details style={{ marginTop: '2px' }}>
+                                    <summary
+                                      style={{
+                                        cursor: 'pointer',
+                                        fontSize: '0.6875rem',
+                                        color: 'var(--color-muted)',
+                                        fontFamily: 'var(--font-outlier)',
+                                      }}
+                                    >
+                                      Raw JSON Payload
+                                    </summary>
+                                    <pre className="mo-json-box" style={{ marginTop: '6px' }}>
+                                      {JSON.stringify(entry.attributes, null, 2)}
+                                    </pre>
+                                  </details>
+                                )}
+                              </div>
+                            )}
                           </div>
-                          <p className="dash-list__title">{entry.title}</p>
-                          <p className="dash-list__sub dash-code">{entry.detail}</p>
+                        )
+                      })}
+                    </div>
+
+                    {/* MoEngage-Style Stream Pagination */}
+                    {totalLogs > LOGS_PER_PAGE && (
+                      <div className="mo-pagination">
+                        <span className="mo-pagination__info">
+                          Showing <strong>{(currentLogPage - 1) * LOGS_PER_PAGE + 1}–{Math.min(currentLogPage * LOGS_PER_PAGE, totalLogs)}</strong> of <strong>{totalLogs}</strong> events
+                        </span>
+                        <div className="mo-pagination__nav">
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn--sm"
+                            disabled={currentLogPage <= 1}
+                            onClick={() => setLogPage((p) => Math.max(1, p - 1))}
+                          >
+                            ← Prev
+                          </button>
+                          <span className="mo-pagination__pages">
+                            Page {currentLogPage} of {totalLogPages}
+                          </span>
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn--sm"
+                            disabled={currentLogPage >= totalLogPages}
+                            onClick={() => setLogPage((p) => Math.min(totalLogPages, p + 1))}
+                          >
+                            Next →
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          className="dash-btn"
-                          onClick={() => openReplay(entry.sessionId)}
-                        >
-                          Open Replay →
-                        </button>
                       </div>
-                    ))
-                  )}
-                </div>
+                    )}
+                  </>
+                )}
               </section>
             )}
 
@@ -1321,11 +1659,10 @@ export default function DashboardPage({ section }: { section: ConsoleSection }) 
 
   return (
     <DashboardShell sectionTitle={SECTION_TITLES[section]} toolbar={toolbar} allowDemo>
-      {({ activeOrg, project, isDemo, error }) => (
+      {({ project, isDemo, error }) => (
         <DashboardInner
           section={section}
           range={range}
-          activeOrg={activeOrg}
           project={project}
           isDemo={isDemo}
           error={error}

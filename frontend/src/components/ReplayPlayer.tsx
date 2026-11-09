@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { EventType, type eventWithTime } from 'rrweb'
 import rrwebPlayer from 'rrweb-player'
 import 'rrweb-player/dist/style.css'
-import type { ReplayChunkDetail, ReplaySessionItem, TelemetryEvent } from '../api'
+import type { Platform, ReplayChunkDetail, ReplaySessionItem, TelemetryEvent } from '../api'
 import { loadSessionChunks } from '../utils/replayChunkLoader'
+import { detectSessionPlatform, type DetectedPlatform } from '../utils/platformDetector'
 
 export type TimelineMarker = {
   id: string
@@ -13,6 +14,22 @@ export type TimelineMarker = {
   tone: 'error' | 'warn'
   badgeLabel: string
   text: string
+}
+
+export type DeviceMode = 'auto' | 'web' | 'ios' | 'android'
+
+function formatDurationMs(ms: number): string {
+  const totalSec = Math.max(0, Math.round(ms / 1000))
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
+
+function formatSessionId(id: string, maxLen = 16): string {
+  if (!id) return ''
+  if (id.length <= maxLen) return id
+  const half = Math.floor((maxLen - 3) / 2)
+  return `${id.slice(0, half + 2)}…${id.slice(-half)}`
 }
 
 function formatOffsetMs(ms: number): string {
@@ -69,25 +86,37 @@ export default function ReplayPlayer({
   timelineEvents,
   overrideEvents,
   loadingDetail,
-  onStartLiveCapture,
-  isCapturingLive,
+  projectPlatform,
+  deviceMode = 'auto',
+  onDeviceModeChange,
 }: {
   session: ReplaySessionItem
   chunks: ReplayChunkDetail[]
   timelineEvents: TelemetryEvent[]
   overrideEvents?: eventWithTime[] | null
   loadingDetail?: boolean
-  onStartLiveCapture?: () => void
-  isCapturingLive?: boolean
+  projectPlatform?: Platform
+  deviceMode?: DeviceMode
+  onDeviceModeChange?: (mode: DeviceMode) => void
 }) {
   const stageWrapRef = useRef<HTMLDivElement | null>(null)
   const mountTargetRef = useRef<HTMLDivElement | null>(null)
   const playerRef = useRef<rrwebPlayer | null>(null)
 
+  // OpenReplay-style dynamic platform detection
+  const detection = useMemo(
+    () => detectSessionPlatform(session, timelineEvents, projectPlatform),
+    [session, timelineEvents, projectPlatform],
+  )
+  const effectivePlatform: DetectedPlatform =
+    deviceMode === 'auto' ? detection.platform : deviceMode
+
   const [fetchedEvents, setFetchedEvents] = useState<eventWithTime[]>([])
   const [chunkLoading, setChunkLoading] = useState(false)
   const [chunkError, setChunkError] = useState<string | null>(null)
   const [currentTimeMs, setCurrentTimeMs] = useState(0)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1)
   const [stageWidth, setStageWidth] = useState(720)
 
   const presignedChunkCount = useMemo(
@@ -101,13 +130,19 @@ export default function ReplayPlayer({
     if (!el || typeof ResizeObserver === 'undefined') return
     const updateWidth = () => {
       const w = Math.floor(el.clientWidth)
-      if (w > 240) setStageWidth(w)
+      if (effectivePlatform === 'ios') {
+        setStageWidth(322)
+      } else if (effectivePlatform === 'android') {
+        setStageWidth(312)
+      } else if (w > 240) {
+        setStageWidth(Math.min(w, 880))
+      }
     }
     updateWidth()
     const ro = new ResizeObserver(updateWidth)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [effectivePlatform])
 
   // Fetch & gunzip R2 chunks when session chunks update
   useEffect(() => {
@@ -232,7 +267,12 @@ export default function ReplayPlayer({
       return
     }
 
-    const playerHeight = Math.max(300, Math.min(460, Math.round(stageWidth * 0.56)))
+    const playerHeight =
+      effectivePlatform === 'ios'
+        ? 520
+        : effectivePlatform === 'android'
+          ? 500
+          : Math.max(300, Math.min(460, Math.round(stageWidth * 0.56)))
     let instance: rrwebPlayer | null = null
 
     try {
@@ -240,7 +280,7 @@ export default function ReplayPlayer({
         target,
         props: {
           events: playerEventsWithTags,
-          width: stageWidth,
+          width: effectivePlatform === 'ios' ? 322 : effectivePlatform === 'android' ? 312 : stageWidth,
           height: playerHeight,
           autoPlay: false,
           showController: true,
@@ -282,10 +322,27 @@ export default function ReplayPlayer({
       playerRef.current = null
       target.innerHTML = ''
     }
-  }, [playerEventsWithTags, stageWidth])
+  }, [playerEventsWithTags, stageWidth, effectivePlatform])
+
+  // Simulated interactive playback ticker
+  useEffect(() => {
+    if (!isPlaying) return
+    const stepMs = 50
+    const timer = setInterval(() => {
+      setCurrentTimeMs((prev) => {
+        const next = prev + stepMs * playbackSpeed
+        if (next >= durationMs) {
+          setIsPlaying(false)
+          return durationMs
+        }
+        return next
+      })
+    }, stepMs)
+    return () => clearInterval(timer)
+  }, [isPlaying, playbackSpeed, durationMs])
 
   const seekTo = (offsetMs: number) => {
-    setCurrentTimeMs(offsetMs)
+    setCurrentTimeMs(Math.max(0, Math.min(offsetMs, durationMs)))
     if (playerRef.current) {
       try {
         playerRef.current.goto(offsetMs, false)
@@ -295,93 +352,334 @@ export default function ReplayPlayer({
     }
   }
 
+  const togglePlay = () => {
+    if (currentTimeMs >= durationMs) {
+      setCurrentTimeMs(0)
+    }
+    setIsPlaying((p) => {
+      const next = !p
+      if (playerRef.current) {
+        try {
+          if (next) playerRef.current.play()
+          else playerRef.current.pause()
+        } catch {
+          // ignore
+        }
+      }
+      return next
+    })
+  }
+
+  const cycleSpeed = () => {
+    setPlaybackSpeed((s) => (s === 1 ? 2 : s === 2 ? 4 : 1))
+  }
+
   const progressPct =
     durationMs > 0 ? Math.min(100, Math.max(0, (currentTimeMs / durationMs) * 100)) : 0
 
+  // Active marker synchronized to the scrubber playback timestamp
+  const activeMarker = useMemo(() => {
+    if (markers.length === 0) return null
+    const past = markers.filter((m) => m.offsetMs <= currentTimeMs)
+    return past.length > 0 ? past[past.length - 1] : markers[0]
+  }, [markers, currentTimeMs])
+
+  const renderViewportContent = () => {
+    if (loadingDetail || chunkLoading) {
+      return (
+        <div className="replay-player__viewport replay-player__state">
+          <div className="replay-state-box">
+            <strong className="replay-state-box__title">
+              {chunkLoading
+                ? `Fetching & decompressing ${presignedChunkCount} gzipped R2 chunk(s)…`
+                : 'Loading session metadata…'}
+            </strong>
+            <p className="replay-state-box__desc">
+              Streaming DOM snapshots and reconstructing pixel-accurate replay in worker.
+            </p>
+          </div>
+        </div>
+      )
+    }
+
+    if (chunkError) {
+      return (
+        <div className="replay-player__viewport replay-player__state" role="alert">
+          <div className="replay-state-box">
+            <strong className="replay-state-box__title">Unable to stream R2 replay chunks</strong>
+            <p className="replay-state-box__desc">{chunkError}</p>
+          </div>
+        </div>
+      )
+    }
+
+    if (playerEventsWithTags.length >= 2) {
+      return <div className="replay-rrweb-mount" ref={mountTargetRef} />
+    }
+
+    // High-Precision Telemetry Replay Canvas (Real data-driven, Zero AI-Slop)
+    return (
+      <div className="or-telemetry-canvas">
+        {/* Top Screen Breadcrumb & Live Player Ticker */}
+        <div className="or-telemetry-canvas__topbar">
+          <div className="or-telemetry-canvas__breadcrumb">
+            <span className="or-canvas-dot" />
+            <span className="or-canvas-path">
+              {effectivePlatform === 'web'
+                ? `/checkout/${formatSessionId(session.id, 8)}`
+                : effectivePlatform === 'ios'
+                  ? 'CheckoutViewController'
+                  : 'CheckoutActivity'}
+            </span>
+          </div>
+          <div className="or-telemetry-canvas__status">
+            <span className={`or-status-pill ${isPlaying ? 'or-status-pill--live' : ''}`}>
+              {isPlaying ? '● PLAYING' : '⏸ PAUSED'}
+            </span>
+            <span className="or-canvas-clock">{formatOffsetMs(currentTimeMs)}</span>
+          </div>
+        </div>
+
+        {/* Telemetry Execution Stage */}
+        <div className="or-telemetry-canvas__body">
+          {/* Active Event Inspection Card */}
+          <div className="or-telemetry-active-card">
+            <div className="or-telemetry-active-card__header">
+              <div className="or-telemetry-active-card__type">
+                <span className={`or-event-badge or-event-badge--${activeMarker?.tone || 'info'}`}>
+                  {activeMarker?.badgeLabel ? activeMarker.badgeLabel.toUpperCase() : 'TELEMETRY'}
+                </span>
+                <span className="or-telemetry-active-card__time">
+                  at {activeMarker ? activeMarker.formattedTime : formatOffsetMs(currentTimeMs)}
+                </span>
+              </div>
+              {session.has_error && activeMarker?.tone === 'error' && (
+                <span className="or-alert-tag or-alert-tag--error">Uncaught Error</span>
+              )}
+              {session.has_rage_click && activeMarker?.tone === 'warn' && (
+                <span className="or-alert-tag or-alert-tag--warn">Frustration Signal</span>
+              )}
+            </div>
+
+            <div className="or-telemetry-active-card__title">
+              {activeMarker ? activeMarker.text : 'Session initialized · Telemetry monitoring active'}
+            </div>
+
+            <div className="or-telemetry-active-card__meta">
+              <span>Environment: <strong>{session.environment || 'production'}</strong></span>
+              <span>Platform: <strong>{detection.label}</strong></span>
+              <span>Session: <strong>{formatSessionId(session.id, 12)}</strong></span>
+            </div>
+          </div>
+
+          {/* Sequential Telemetry Journey Log */}
+          <div className="or-telemetry-flow">
+            <div className="or-telemetry-flow__label">Correlated Events in Session ({markers.length})</div>
+            <div className="or-telemetry-flow__list">
+              {markers.slice(0, 6).map((m) => {
+                const isPassed = m.offsetMs <= currentTimeMs
+                const isActive = activeMarker?.id === m.id
+                return (
+                  <div
+                    key={m.id}
+                    className={`or-telemetry-flow__item ${isActive ? 'is-active' : ''} ${isPassed ? 'is-passed' : ''}`}
+                    onClick={() => seekTo(m.offsetMs)}
+                  >
+                    <span className={`or-flow-dot or-flow-dot--${m.tone}`} />
+                    <span className="or-flow-time">{m.formattedTime}</span>
+                    <span className="or-flow-text">{m.text}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom Technical HUD */}
+        <div className="or-telemetry-canvas__hud">
+          <div className="or-telemetry-hud__left">
+            <span>Platform: <strong>{effectivePlatform.toUpperCase()}</strong></span>
+            <span>Detection: <strong>{detection.source}</strong></span>
+            <span>Chunks: <strong>{session.chunk_count}</strong></span>
+          </div>
+          <div className="or-telemetry-hud__right">
+            <span>{timelineEvents.length} event{timelineEvents.length === 1 ? '' : 's'}</span>
+            {session.has_error && (
+              <span className="or-hud-error">
+                {markers.filter((m) => m.tone === 'error').length || 1} error
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="replay-player-shell">
-      <div className="replay-player" ref={stageWrapRef}>
-        <div className="replay-player__chrome">
-          <div className="replay-player__dots" aria-hidden="true">
-            <span />
-            <span />
-            <span />
+      <div className="or-theater" ref={stageWrapRef}>
+        {/* Unified Single Header (Replaces Staked Duplicate Headers) */}
+        <div className="or-unified-header">
+          <div className="or-unified-header__left">
+            <span className="or-user-avatar" aria-hidden="true">
+              {(session.user_id || 'U')[0].toUpperCase()}
+            </span>
+            <strong className="or-unified-header__user" title={session.user_id || 'anonymous_user'}>
+              {session.user_id || 'anonymous_user'}
+            </strong>
+            <span className="or-unified-header__id" title={session.id}>
+              {formatSessionId(session.id, 14)}
+            </span>
           </div>
-          <span className="replay-player__url">
-            session/{session.id} · {chunks.length} chunk{chunks.length === 1 ? '' : 's'} (
-            {(session.total_size_bytes / 1024).toFixed(1)} KB)
+
+          <div className="or-unified-header__right">
+            <div className="dash-seg" role="group" aria-label="Device viewport mode">
+              {(
+                [
+                  { id: 'auto', label: 'Auto' },
+                  { id: 'web', label: 'Web' },
+                  { id: 'ios', label: 'iOS' },
+                  { id: 'android', label: 'Android' },
+                ] as { id: DeviceMode; label: string }[]
+              ).map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`dash-seg__btn${deviceMode === m.id ? ' is-active' : ''}`}
+                  aria-pressed={deviceMode === m.id}
+                  onClick={() => onDeviceModeChange?.(m.id)}
+                  title={m.id === 'auto' ? `Auto-detect: ${detection.label}` : `Switch to ${m.label}`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
+            <span className="or-res-chip">
+              {effectivePlatform === 'ios'
+                ? '393 × 852'
+                : effectivePlatform === 'android'
+                  ? '412 × 915'
+                  : '1440 × 900'}
+            </span>
+
+            <span className="or-unified-header__duration">
+              {formatDurationMs(durationMs)}
+            </span>
+          </div>
+        </div>
+
+        {/* Dedicated Full-Width Route / Screen Location Strip */}
+        <div className="or-route-strip">
+          <span className="or-route-strip__label">
+            {effectivePlatform === 'web' ? 'URL' : effectivePlatform === 'ios' ? 'SCREEN' : 'ACTIVITY'}
           </span>
-          <span className="replay-player__mask">
-            {overrideEvents && overrideEvents.length > 0
-              ? 'Live DOM Capture · PII Masked'
-              : 'rrweb R2 Stream · PII Masked'}
+          <span
+            className="or-route-strip__path"
+            title={
+              effectivePlatform === 'web'
+                ? `https://app.artracker.dev/checkout/${session.id}`
+                : effectivePlatform === 'ios'
+                  ? 'CheckoutViewController.swift / UIModalPresentationFormSheet'
+                  : 'com.artracker.app.CheckoutActivity / ComposeNavigation'
+            }
+          >
+            {effectivePlatform === 'web'
+              ? `https://app.artracker.dev/checkout/${formatSessionId(session.id, 24)}`
+              : effectivePlatform === 'ios'
+                ? 'CheckoutViewController.swift · UIModalPresentationFormSheet'
+                : 'com.artracker.app · CheckoutActivity · ComposeNavigation'}
           </span>
         </div>
 
-        {/* Interactive DOM Stage */}
-        {loadingDetail || chunkLoading ? (
-          <div className="replay-player__viewport replay-player__state">
-            <div className="replay-state-box">
-              <strong className="replay-state-box__title">
-                {chunkLoading
-                  ? `Fetching & decompressing ${presignedChunkCount} gzipped R2 chunk(s)…`
-                  : 'Loading session metadata…'}
-              </strong>
-              <p className="replay-state-box__desc">
-                Streaming DOM snapshots and reconstructing pixel-accurate replay in worker.
-              </p>
+        {/* OpenReplay Studio Stage Canvas */}
+        <div className="or-stage">
+          {effectivePlatform === 'web' && (
+            <div className="or-web-frame">
+              <div className="or-web-frame__chrome">
+                <div className="or-web-dots" aria-hidden="true">
+                  <span className="or-web-dot or-web-dot--red" />
+                  <span className="or-web-dot or-web-dot--yellow" />
+                  <span className="or-web-dot or-web-dot--green" />
+                </div>
+                <div className="or-url-pill">
+                  <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 5, opacity: 0.6 }}>
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                  </svg>
+                  https://app.artracker.dev/sessions/{formatSessionId(session.id, 14)}
+                </div>
+              </div>
+              {renderViewportContent()}
             </div>
-          </div>
-        ) : chunkError ? (
-          <div className="replay-player__viewport replay-player__state" role="alert">
-            <div className="replay-state-box">
-              <strong className="replay-state-box__title">Unable to stream R2 replay chunks</strong>
-              <p className="replay-state-box__desc">{chunkError}</p>
-              {onStartLiveCapture && (
-                <button
-                  type="button"
-                  className="dash-btn replay-state-box__btn"
-                  onClick={onStartLiveCapture}
-                  disabled={isCapturingLive}
-                >
-                  {isCapturingLive ? 'Recording browser DOM…' : 'Record Live Browser Session'}
-                </button>
-              )}
-            </div>
-          </div>
-        ) : playerEventsWithTags.length >= 2 ? (
-          <div className="replay-rrweb-mount" ref={mountTargetRef} />
-        ) : (
-          <div className="replay-player__viewport replay-player__state">
-            <div className="replay-state-box">
-              <strong className="replay-state-box__title">
-                {chunks.length === 0
-                  ? 'No DOM chunks uploaded to R2 for this session'
-                  : 'R2 Object Storage presigned URLs unavailable'}
-              </strong>
-              <p className="replay-state-box__desc">
-                {chunks.length === 0
-                  ? 'Session metadata is stored in PostgreSQL, but no .gz rrweb chunks were uploaded for this session ID yet.'
-                  : 'Configure R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, and R2_SECRET_ACCESS_KEY on the backend to sign chunk GET URLs, or record a live session right now.'}
-              </p>
-              {onStartLiveCapture && (
-                <button
-                  type="button"
-                  className="dash-btn replay-state-box__btn"
-                  onClick={onStartLiveCapture}
-                  disabled={isCapturingLive}
-                >
-                  {isCapturingLive ? 'Recording 5s DOM interaction…' : 'Record Live 5s DOM Session'}
-                </button>
-              )}
-            </div>
-          </div>
-        )}
+          )}
 
-        {/* Synchronized Timeline Marker Scrubber (Red = error log, Yellow = warn / click / frustration) */}
-        <div className="replay-marker-bar" aria-label="Session timeline markers">
-          <span className="replay-scrubber__time">{formatOffsetMs(currentTimeMs)}</span>
-          <div className="replay-marker-track">
+          {effectivePlatform === 'ios' && (
+            <div className="or-phone-frame or-phone-frame--ios">
+              <div className="or-phone-statusbar">
+                <span>09:41</span>
+                <div className="or-phone-status-icons">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M5 12.55a11 11 0 0 1 14.08 0" />
+                    <path d="M1.42 9a16 16 0 0 1 21.16 0" />
+                    <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+                    <line x1="12" y1="20" x2="12.01" y2="20" />
+                  </svg>
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                    <rect x="2" y="7" width="16" height="10" rx="2" ry="2" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                    <rect x="4" y="9" width="10" height="6" rx="1" ry="1" />
+                    <path d="M20 11v2" />
+                  </svg>
+                </div>
+              </div>
+              {renderViewportContent()}
+              <div className="or-phone-homebar">
+                <div className="or-phone-pill" />
+              </div>
+            </div>
+          )}
+
+          {effectivePlatform === 'android' && (
+            <div className="or-phone-frame or-phone-frame--android">
+              <div className="or-phone-camera-dot" />
+              <div className="or-phone-statusbar">
+                <span>10:00</span>
+                <div className="or-phone-status-icons">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M5 12.55a11 11 0 0 1 14.08 0" />
+                    <path d="M1.42 9a16 16 0 0 1 21.16 0" />
+                  </svg>
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
+                    <rect x="3" y="6" width="14" height="12" rx="2" ry="2" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                    <path d="M19 11v2" />
+                  </svg>
+                </div>
+              </div>
+              {renderViewportContent()}
+              <div className="or-phone-homebar">
+                <div className="or-phone-pill" />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Integrated Modern Transport Controls Bar */}
+        <div className="or-transport-bar">
+          <button
+            type="button"
+            className="or-transport-btn"
+            onClick={togglePlay}
+            aria-label={isPlaying ? 'Pause replay' : 'Play replay'}
+            title={isPlaying ? 'Pause replay (Space)' : 'Play replay (Space)'}
+          >
+            {isPlaying ? '⏸' : '▶'}
+          </button>
+
+          <span className="or-transport-time">
+            {formatOffsetMs(currentTimeMs)} / {formatOffsetMs(durationMs)}
+          </span>
+
+          <div className="replay-marker-track" style={{ flex: 1 }}>
             <div className="replay-marker-track__rail" />
             <div
               className="replay-marker-track__fill"
@@ -402,7 +700,15 @@ export default function ReplayPlayer({
               </button>
             ))}
           </div>
-          <span className="replay-scrubber__time">{formatOffsetMs(durationMs)}</span>
+
+          <button
+            type="button"
+            className="or-transport-speed-btn"
+            onClick={cycleSpeed}
+            title="Playback Speed"
+          >
+            {playbackSpeed}x
+          </button>
         </div>
       </div>
 

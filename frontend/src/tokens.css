@@ -1,5 +1,5 @@
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
 
   /* 4px-aligned spacing scale */
   --space-2xs: 4px;
@@ -136,5 +136,92 @@
     --section-gap-s: 64px;
     --section-gap: 80px;
     --section-gap-l: 96px;
+  }
+}
+
+/* =====================================================================
+   Soft Dark Theme Tokens (Warm Slate / Linear / GitHub Dark Aesthetic)
+===================================================================== */
+:root[data-theme="dark"],
+:root:has(> head > meta[name="color-scheme"][content="dark"]) {
+  color-scheme: dark;
+
+  /* Soft Slate Backgrounds (Gentle on the eyes, zero harsh pitch-black) */
+  --color-paper: oklch(19.5% 0.008 260);
+  --color-paper-2: oklch(22% 0.01 260);
+  --color-paper-3: oklch(25% 0.012 260);
+  --color-paper-hi: oklch(23.5% 0.01 260);
+  --color-backdrop: oklch(10% 0.01 260 / 0.55);
+
+  /* Soft Natural Typography (Muted pearl & slate, zero blinding pure white) */
+  --color-ink: oklch(87% 0.006 250);
+  --color-ink-2: oklch(74% 0.008 250);
+  --color-muted: oklch(58% 0.01 250);
+
+  /* Whispering Hairline Dividers (Low contrast, non-glowing) */
+  --color-rule: oklch(26% 0.008 260);
+  --color-rule-2: oklch(31% 0.01 260);
+  --rule-grid: oklch(88% 0.006 250 / 0.025);
+
+  /* Refined, Calm Hallmark Cobalt (Restrained chroma, zero neon cyan) */
+  --color-accent: oklch(58% 0.12 258);
+  --color-accent-deep: oklch(50% 0.12 258);
+  --color-accent-edge: oklch(42% 0.1 258);
+  --color-accent-wash: oklch(25% 0.035 258);
+  --color-accent-ink: oklch(96% 0.003 250);
+  --color-focus: oklch(58% 0.12 258);
+
+  --color-key-face: oklch(23.5% 0.01 260);
+  --color-key-edge: oklch(30% 0.01 260);
+
+  /* Understated Semantic Tones */
+  --color-error: oklch(62% 0.11 25);
+  --color-error-wash: oklch(24% 0.03 25);
+  --color-warn: oklch(67% 0.09 72);
+  --color-warn-wash: oklch(24% 0.03 72);
+  --color-success: oklch(63% 0.09 155);
+  --color-success-wash: oklch(24% 0.03 155);
+
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.25), 0 8px 24px -12px rgba(0, 0, 0, 0.35);
+  --shadow-modal: 0 20px 48px -12px rgba(0, 0, 0, 0.5);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not(:has(> head > meta[name="color-scheme"][content="light"])) {
+    color-scheme: dark;
+
+    --color-paper: oklch(19.5% 0.008 260);
+    --color-paper-2: oklch(22% 0.01 260);
+    --color-paper-3: oklch(25% 0.012 260);
+    --color-paper-hi: oklch(23.5% 0.01 260);
+    --color-backdrop: oklch(10% 0.01 260 / 0.55);
+
+    --color-ink: oklch(87% 0.006 250);
+    --color-ink-2: oklch(74% 0.008 250);
+    --color-muted: oklch(58% 0.01 250);
+
+    --color-rule: oklch(26% 0.008 260);
+    --color-rule-2: oklch(31% 0.01 260);
+    --rule-grid: oklch(88% 0.006 250 / 0.025);
+
+    --color-accent: oklch(58% 0.12 258);
+    --color-accent-deep: oklch(50% 0.12 258);
+    --color-accent-edge: oklch(42% 0.1 258);
+    --color-accent-wash: oklch(25% 0.035 258);
+    --color-accent-ink: oklch(96% 0.003 250);
+    --color-focus: oklch(58% 0.12 258);
+
+    --color-key-face: oklch(23.5% 0.01 260);
+    --color-key-edge: oklch(30% 0.01 260);
+
+    --color-error: oklch(62% 0.11 25);
+    --color-error-wash: oklch(24% 0.03 25);
+    --color-warn: oklch(67% 0.09 72);
+    --color-warn-wash: oklch(24% 0.03 72);
+    --color-success: oklch(63% 0.09 155);
+    --color-success-wash: oklch(24% 0.03 155);
+
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.25), 0 8px 24px -12px rgba(0, 0, 0, 0.35);
+    --shadow-modal: 0 20px 48px -12px rgba(0, 0, 0, 0.5);
   }
 }
