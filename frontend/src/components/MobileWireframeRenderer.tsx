@@ -1,15 +1,8 @@
 import React, { useMemo } from 'react'
 import type { TelemetryEvent } from '../api'
+import type { ViewNode } from '../replay/model'
 
-export type ViewNode = {
-  cls?: string
-  frame?: [number, number, number, number] | { x: number; y: number; width: number; height: number }
-  hidden?: boolean
-  masked?: boolean
-  text?: string
-  children?: ViewNode[]
-  [key: string]: unknown
-}
+export type { ViewNode }
 
 export type ParsedFrame = [number, number, number, number]
 
