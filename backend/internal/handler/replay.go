@@ -171,7 +171,7 @@ func (h *Handler) GenerateChunkUploadURL(c *fiber.Ctx) error {
 		exp := time.Now().Add(expires).Unix()
 		sig := computeChunkUploadSignature(h.replaySecret(), objectKey, exp)
 		uploadURL = fmt.Sprintf("%s/api/v1/replay/upload-chunk?key=%s&exp=%d&sig=%s",
-			getBaseURL(c), url.QueryEscape(objectKey), exp, sig)
+			h.getBaseURL(c), url.QueryEscape(objectKey), exp, sig)
 	} else {
 		presignedURL, err := h.replayStore.GeneratePresignedPut(ctx, objectKey, req.SizeBytes, expires)
 		if err != nil {
@@ -319,7 +319,10 @@ func verifyChunkUploadSignature(secret, objectKey string, expiresAt int64, signa
 	return hmac.Equal([]byte(expected), []byte(signature))
 }
 
-func getBaseURL(c *fiber.Ctx) string {
+func (h *Handler) getBaseURL(c *fiber.Ctx) string {
+	if h.cfg.PublicURL != "" {
+		return strings.TrimRight(h.cfg.PublicURL, "/")
+	}
 	host := c.Get("X-Forwarded-Host")
 	if host == "" {
 		host = c.Get("Host")
@@ -618,7 +621,7 @@ func (h *Handler) GetProjectSession(c *fiber.Ctx) error {
 				exp := time.Now().Add(1 * time.Hour).Unix()
 				sig := computeChunkUploadSignature(h.replaySecret(), chunk.ObjectKey, exp)
 				chunk.URL = fmt.Sprintf("%s/api/v1/replay/download-chunk?key=%s&exp=%d&sig=%s",
-					getBaseURL(c), url.QueryEscape(chunk.ObjectKey), exp, sig)
+					h.getBaseURL(c), url.QueryEscape(chunk.ObjectKey), exp, sig)
 			} else {
 				getURL, err := h.replayStore.GeneratePresignedGet(ctx, chunk.ObjectKey, 15*time.Minute)
 				if err == nil {
