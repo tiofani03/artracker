@@ -4812,14 +4812,12 @@
   border: 1px solid rgba(255, 255, 255, 0.16) !important;
   border-radius: 14px !important;
   box-shadow: 0 24px 48px rgba(0, 0, 0, 0.7) !important;
-  z-index: 100 !important;
 }
 
 .mw-node--toolbar {
   background: rgba(15, 23, 42, 0.88);
   backdrop-filter: blur(12px);
   border-top: 1px solid rgba(255, 255, 255, 0.08);
-  z-index: 20;
 }
 
 .mw-node--scroll {
@@ -4909,6 +4907,21 @@
   color: rgba(255, 255, 255, 0.3);
   font-size: 11px;
   font-family: var(--font-outlier);
+}
+
+/* Shown when a frame holds only container views (e.g. SwiftUI inside _UIHostingView) */
+.mw-capture-note {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #fde68a;
+  background: rgba(120, 53, 15, 0.55);
+  border: 1px solid rgba(251, 191, 36, 0.35);
 }
 
 /* Touch Gesture Ripple */

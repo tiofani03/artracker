@@ -7,6 +7,7 @@ import { loadChunkPayloads } from '../utils/replayChunkLoader'
 import { buildReplayModel } from '../replay/normalize'
 import type { ReplayModel } from '../replay/model'
 import { fallbackNotice } from '../replay/playback'
+import { chunkSignature } from '../replay/wireframe'
 import { detectSessionPlatform, type DetectedPlatform } from '../utils/platformDetector'
 import { MobileWireframeRenderer } from './MobileWireframeRenderer'
 
@@ -132,6 +133,14 @@ export default function ReplayPlayer({
   )
   const hasOverride = Boolean(overrideEvents && overrideEvents.length > 0)
 
+  // Session-detail refetches return the same chunks with freshly signed URLs; only a real change
+  // in the chunk set (or session) may reload chunks and reset the playhead.
+  const chunkSig = useMemo(() => chunkSignature(chunks), [chunks])
+  const chunksRef = useRef(chunks)
+  useLayoutEffect(() => {
+    chunksRef.current = chunks
+  })
+
   // Fetch & gunzip chunks; interpretation happens in buildReplayModel
   useEffect(() => {
     setCurrentTimeMs(0)
@@ -148,7 +157,7 @@ export default function ReplayPlayer({
     setChunkLoading(true)
     setChunkError(null)
 
-    loadChunkPayloads(chunks, controller.signal)
+    loadChunkPayloads(chunksRef.current, controller.signal)
       .then((r) => {
         if (controller.signal.aborted) return
         setPayloads(r.payloads)
@@ -165,7 +174,7 @@ export default function ReplayPlayer({
       })
 
     return () => controller.abort()
-  }, [session.id, chunks, presignedChunkCount, hasOverride])
+  }, [session.id, chunkSig, presignedChunkCount, hasOverride])
 
   // Single source of truth for what can be rendered
   const model: ReplayModel = useMemo(() => {
@@ -486,6 +495,7 @@ export default function ReplayPlayer({
           currentTs={model.startMs + currentTimeMs}
           platform={model.platform}
           containerWidth={model.platform === 'ios' ? 308 : 300}
+          maxHeight={486}
         />
       )
     }
