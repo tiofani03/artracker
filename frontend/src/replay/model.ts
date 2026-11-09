@@ -24,7 +24,14 @@ export type MobileFrame = {
 export type TouchPoint = { ts: number; x: number; y: number; name?: string }
 
 export type ReplayModel =
-  | { kind: 'web'; events: eventWithTime[]; startMs: number; endMs: number }
+  | {
+      kind: 'web'
+      events: eventWithTime[]
+      startMs: number
+      endMs: number
+      inferredPlatform?: 'android' | 'ios' | 'web'
+      viewport?: { width: number; height: number }
+    }
   | {
       kind: 'mobile'
       platform: 'ios' | 'android'

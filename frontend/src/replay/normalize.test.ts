@@ -250,4 +250,132 @@ describe('extractMobileFrames chunk/telemetry overlap (final review #1)', () => 
     )
     expect(out.frames).toHaveLength(2)
   })
+
+  it('accepts legacy mobile chunks without format property', () => {
+    const legacy = {
+      platform: 'ios',
+      frames: [{ ts: 5000, screen: 'Profile', view_tree: tree('profile') }],
+    }
+    const out = extractMobileFrames([legacy], [])
+    expect(out.platform).toBe('ios')
+    expect(out.frames).toHaveLength(1)
+    expect(out.frames[0].screen).toBe('Profile')
+  })
+})
+
+describe('buildReplayModel with synthetic mobile rrweb events', () => {
+  it('infers android platform and viewport from Meta event and injects wireframe styles into head', () => {
+    const meta = ev(4, 1000, { href: 'android://MainActivity', width: 320, height: 716 })
+    const fullSnapshot = ev(2, 1001, {
+      node: {
+        type: 0,
+        id: 1,
+        childNodes: [
+          {
+            type: 2,
+            id: 2,
+            tagName: 'html',
+            childNodes: [
+              { type: 2, id: 3, tagName: 'head', childNodes: [] },
+              {
+                type: 2,
+                id: 4,
+                tagName: 'body',
+                childNodes: [
+                  {
+                    type: 2,
+                    id: 5,
+                    tagName: 'div',
+                    attributes: {
+                      'data-artracker-type': 'BUTTON',
+                      style: 'position:absolute;left:10px;top:20px;width:100px;height:40px;',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    })
+
+    const m = buildReplayModel({ payloads: [[meta, fullSnapshot]], timeline: [] })
+    expect(m.kind).toBe('web')
+    if (m.kind !== 'web') return
+
+    expect(m.inferredPlatform).toBe('android')
+    expect(m.viewport).toEqual({ width: 320, height: 716 })
+
+    const snapshot = m.events.find((e) => e.type === 2) as any
+    const htmlNode = snapshot.data.node.childNodes[0]
+    const headNode = htmlNode.childNodes.find((c: any) => c.tagName === 'head')
+    expect(headNode.childNodes.length).toBeGreaterThan(0)
+    const styleChild = headNode.childNodes[0]
+    expect(styleChild.tagName).toBe('style')
+    expect(styleChild.attributes['data-artracker-injected']).toBe('true')
+  })
+
+  it('eliminates ghosting when two large container screens overlap in full snapshot', () => {
+    const meta = ev(4, 1000, { href: 'android://lab', width: 320, height: 716 })
+    const fullSnapshot = ev(2, 1001, {
+      node: {
+        type: 0,
+        id: 1,
+        childNodes: [
+          {
+            type: 2,
+            id: 2,
+            tagName: 'html',
+            childNodes: [
+              { type: 2, id: 3, tagName: 'head', childNodes: [] },
+              {
+                type: 2,
+                id: 4,
+                tagName: 'body',
+                childNodes: [
+                  {
+                    type: 2,
+                    id: 16,
+                    tagName: 'div',
+                    childNodes: [
+                      {
+                        type: 2,
+                        id: 21,
+                        tagName: 'div',
+                        attributes: {
+                          'data-artracker-type': 'CONTAINER',
+                          style: 'position:absolute;left:0px;top:160px;width:320px;height:432px;overflow:hidden;',
+                        },
+                      },
+                      {
+                        type: 2,
+                        id: 54,
+                        tagName: 'div',
+                        attributes: {
+                          'data-artracker-type': 'CONTAINER',
+                          style: 'position:absolute;left:0px;top:160px;width:320px;height:432px;overflow:hidden;',
+                        },
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    })
+
+    const m = buildReplayModel({ payloads: [[meta, fullSnapshot]], timeline: [] })
+    if (m.kind !== 'web') throw new Error('expected web model')
+
+    const snapshot = m.events.find((e) => e.type === 2) as any
+    const body = snapshot.data.node.childNodes[0].childNodes.find((c: any) => c.tagName === 'body')
+    const parent = body.childNodes[0]
+    const exiting = parent.childNodes[0]
+    const entering = parent.childNodes[1]
+
+    expect(exiting.attributes.style).toContain('display:none')
+    expect(entering.attributes.style).toContain('background-color:#fafafa')
+  })
 })

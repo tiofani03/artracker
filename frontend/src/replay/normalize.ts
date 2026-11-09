@@ -96,6 +96,246 @@ const TOUCH_NAME = /touch|tap|click|gesture/i
  * when both describe the same `ts` + `screen`, and telemetry frames inside the time span covered
  * by chunk frames are dropped.
  */
+type RrwebNode = {
+  type: number
+  id: number
+  tagName?: string
+  attributes?: Record<string, unknown>
+  childNodes?: RrwebNode[]
+  textContent?: string
+  [key: string]: unknown
+}
+
+const WIREFRAME_CSS = `
+html, body {
+  margin: 0 !important;
+  padding: 0 !important;
+  font-family: Roboto, -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif !important;
+  font-size: 12px !important;
+  line-height: 1.25 !important;
+  color: #0f172a !important;
+  background: #fafafa !important;
+  -webkit-font-smoothing: antialiased !important;
+}
+[data-artracker-type="CONTAINER"] {
+  box-sizing: border-box !important;
+}
+[data-artracker-type="TEXT"] {
+  display: flex !important;
+  align-items: center !important;
+  font-family: Roboto, -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif !important;
+  font-size: 11px !important;
+  line-height: 1.15 !important;
+  letter-spacing: -0.01em !important;
+  color: #1e293b !important;
+  overflow: visible !important;
+  white-space: nowrap !important;
+}
+[data-artracker-type="BUTTON"] {
+  background: rgba(0, 122, 255, 0.10) !important;
+  border: 1px solid rgba(0, 122, 255, 0.30) !important;
+  border-radius: 8px !important;
+  box-sizing: border-box !important;
+}
+[data-artracker-type="BUTTON"] [data-artracker-type="TEXT"] {
+  color: #0066dc !important;
+  font-weight: 600 !important;
+  font-size: 10.5px !important;
+  justify-content: center !important;
+}
+[data-artracker-type="IMAGE"] {
+  background: rgba(148, 163, 184, 0.18) !important;
+  border: 1px dashed rgba(100, 116, 139, 0.35) !important;
+  border-radius: 6px !important;
+  box-sizing: border-box !important;
+}
+`
+
+function parseBox(style: string) {
+  const left = style.match(/(?:^|;)\s*left:\s*(-?\d+)px/)?.[1]
+  const top = style.match(/(?:^|;)\s*top:\s*(-?\d+)px/)?.[1]
+  const width = style.match(/(?:^|;)\s*width:\s*(-?\d+)px/)?.[1]
+  const height = style.match(/(?:^|;)\s*height:\s*(-?\d+)px/)?.[1]
+  return {
+    left: left != null ? parseInt(left, 10) : undefined,
+    top: top != null ? parseInt(top, 10) : undefined,
+    width: width != null ? parseInt(width, 10) : undefined,
+    height: height != null ? parseInt(height, 10) : undefined,
+  }
+}
+
+/**
+ * Checks whether the serialized DOM tree contains synthetic mobile markers (e.g. data-artracker-type).
+ */
+function hasArtrackerMarkers(node: RrwebNode): boolean {
+  if (node.attributes && 'data-artracker-type' in node.attributes) return true
+  if (Array.isArray(node.childNodes)) {
+    for (const c of node.childNodes) {
+      if (hasArtrackerMarkers(c)) return true
+    }
+  }
+  return false
+}
+
+/**
+ * Enhances synthetic mobile snapshots by injecting wireframe CSS, styling containers semantically,
+ * and eliminating double-screen ghosting during compose transitions.
+ */
+export function enhanceMobileSyntheticEvents(
+  events: eventWithTime[],
+  inferredPlatform?: 'android' | 'ios' | 'web',
+): eventWithTime[] {
+  const isMobile = inferredPlatform === 'android' || inferredPlatform === 'ios'
+  const hasSynthetic = events.some((e) => {
+    if (e.type === FULL_SNAPSHOT && isRec(e.data) && isRec(e.data.node)) {
+      return hasArtrackerMarkers(e.data.node as RrwebNode)
+    }
+    return false
+  })
+
+  if (!isMobile && !hasSynthetic) return events
+
+  return events.map((ev) => {
+    if (ev.type !== FULL_SNAPSHOT || !isRec(ev.data) || !isRec(ev.data.node)) {
+      return ev
+    }
+
+    // Deep clone root node to avoid mutating original
+    const root = JSON.parse(JSON.stringify(ev.data.node)) as RrwebNode
+    let maxId = 1
+    function scanIds(n: RrwebNode) {
+      if (typeof n.id === 'number' && n.id > maxId) maxId = n.id
+      n.childNodes?.forEach(scanIds)
+    }
+    scanIds(root)
+
+    // Locate or create <head>
+    let head: RrwebNode | null = null
+    let html: RrwebNode | null = null
+
+    function findTags(n: RrwebNode) {
+      if (n.type === 2) {
+        const tag = n.tagName?.toLowerCase()
+        if (tag === 'head') head = n
+        if (tag === 'html') html = n
+      }
+      n.childNodes?.forEach(findTags)
+    }
+    findTags(root)
+
+    const textChild: RrwebNode = {
+      type: 3,
+      id: ++maxId,
+      textContent: WIREFRAME_CSS,
+    }
+    const styleElem: RrwebNode = {
+      type: 2,
+      id: ++maxId,
+      tagName: 'style',
+      attributes: { 'data-artracker-injected': 'true' },
+      childNodes: [textChild],
+    }
+
+    if (head) {
+      const h = head as RrwebNode
+      h.childNodes = h.childNodes || []
+      const hasStyle = h.childNodes.some(
+        (c) => c.type === 2 && c.tagName?.toLowerCase() === 'style' && c.attributes?.['data-artracker-injected'],
+      )
+      if (!hasStyle) {
+        h.childNodes.unshift(styleElem)
+      }
+    } else if (html) {
+      const ht = html as RrwebNode
+      const newHead: RrwebNode = {
+        type: 2,
+        id: ++maxId,
+        tagName: 'head',
+        attributes: {},
+        childNodes: [styleElem],
+      }
+      ht.childNodes = ht.childNodes || []
+      ht.childNodes.unshift(newHead)
+    }
+
+    // Process nodes for styling and ghosting elimination
+    function processNode(node: RrwebNode) {
+      if (node.type === 2 && node.attributes) {
+        const trackerType = node.attributes['data-artracker-type']
+        let style = typeof node.attributes.style === 'string' ? node.attributes.style : ''
+        const box = parseBox(style)
+
+        if (trackerType === 'CONTAINER' && box.width != null && box.height != null) {
+          if (box.left === 0 && box.top != null && box.top <= 60 && box.height <= 64 && box.width >= 300) {
+            style += ';background-color:#ffffff;border-bottom:1px solid #e2e8f0;'
+          } else if (box.top != null && box.top >= 560 && box.width >= 300) {
+            style += ';background-color:#ffffff;border-top:1px solid #e2e8f0;'
+          } else if (box.width >= 250 && box.width <= 315 && box.height >= 48 && box.height < 350 && box.top != null && box.top > 64 && box.top < 560) {
+            style += ';background-color:#ffffff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 1px 2px rgba(15,23,42,0.04);'
+          } else if (box.width === 64 && box.height === 32) {
+            style += ';background-color:rgba(0,122,255,0.12);border-radius:16px;'
+          } else if (box.width === 24 && box.height === 24 && (!node.childNodes || node.childNodes.length === 0)) {
+            style += ';background-color:rgba(100,116,139,0.15);border-radius:4px;'
+          }
+          node.attributes.style = style
+        }
+      }
+
+      // Ghosting elimination: check if multiple large container children overlap
+      if (node.childNodes && node.childNodes.length > 1) {
+        const largeContainers: { child: RrwebNode; box: ReturnType<typeof parseBox> }[] = []
+        node.childNodes.forEach((child) => {
+          if (child.type === 2 && child.attributes) {
+            const style = typeof child.attributes.style === 'string' ? child.attributes.style : ''
+            const box = parseBox(style)
+            if (box.width != null && box.width >= 300 && box.height != null && box.height >= 350) {
+              largeContainers.push({ child, box })
+            }
+          }
+        })
+
+        if (largeContainers.length > 1) {
+          for (let i = 0; i < largeContainers.length - 1; i++) {
+            const prev = largeContainers[i]
+            const next = largeContainers[largeContainers.length - 1]
+            if (
+              prev.box.top != null &&
+              next.box.top != null &&
+              Math.abs(prev.box.top - next.box.top) < 30
+            ) {
+              // Hide exiting screen
+              const prevAttrs = prev.child.attributes || {}
+              let prevStyle = typeof prevAttrs.style === 'string' ? prevAttrs.style : ''
+              prevStyle += ';display:none !important;'
+              prevAttrs.style = prevStyle
+              prev.child.attributes = prevAttrs
+
+              // Ensure entering screen is opaque
+              const nextAttrs = next.child.attributes || {}
+              let nextStyle = typeof nextAttrs.style === 'string' ? nextAttrs.style : ''
+              nextStyle += ';background-color:#fafafa !important;z-index:2 !important;'
+              nextAttrs.style = nextStyle
+              next.child.attributes = nextAttrs
+            }
+          }
+        }
+      }
+
+      node.childNodes?.forEach(processNode)
+    }
+
+    processNode(root)
+
+    return {
+      ...ev,
+      data: {
+        ...(ev.data as Record<string, unknown>),
+        node: root,
+      },
+    } as eventWithTime
+  })
+}
+
 export function extractMobileFrames(
   payloads: unknown[],
   timeline: TelemetryEvent[],
@@ -106,7 +346,11 @@ export function extractMobileFrames(
   let telemetryPlatform: 'ios' | 'android' | null = null
 
   for (const p of payloads) {
-    if (!isRec(p) || p.format !== MOBILE_CHUNK_FORMAT) continue
+    if (!isRec(p)) continue
+    const isMobilePayload =
+      p.format === MOBILE_CHUNK_FORMAT ||
+      (!p.format && (p.platform === 'ios' || p.platform === 'android') && Array.isArray(p.frames))
+    if (!isMobilePayload) continue
     chunkPlatform ??= asPlatform(p.platform)
     for (const f of Array.isArray(p.frames) ? p.frames : []) {
       if (!isRec(f)) continue
@@ -163,7 +407,37 @@ export function buildReplayModel(input: {
 
   const web = normalizeWebEvents(payloads.flatMap(rrwebEventsOf))
   if (web) {
-    return { kind: 'web', events: web, startMs: web[0].timestamp, endMs: web[web.length - 1].timestamp }
+    let inferredPlatform: 'android' | 'ios' | 'web' | undefined
+    let viewport: { width: number; height: number } | undefined
+
+    for (const ev of web) {
+      if (ev.type === META) {
+        const d = ev.data as { href?: string; width?: number; height?: number }
+        if (d?.href) {
+          if (d.href.startsWith('android://')) inferredPlatform = 'android'
+          else if (d.href.startsWith('ios://')) inferredPlatform = 'ios'
+        }
+        if (typeof d?.width === 'number' && typeof d?.height === 'number' && !viewport) {
+          viewport = { width: d.width, height: d.height }
+        }
+      }
+    }
+
+    if (!inferredPlatform) {
+      if (input.projectPlatform === 'android') inferredPlatform = 'android'
+      else if (input.projectPlatform === 'ios') inferredPlatform = 'ios'
+    }
+
+    const enhanced = enhanceMobileSyntheticEvents(web, inferredPlatform)
+
+    return {
+      kind: 'web',
+      events: enhanced,
+      startMs: enhanced[0].timestamp,
+      endMs: enhanced[enhanced.length - 1].timestamp,
+      inferredPlatform: inferredPlatform ?? 'web',
+      viewport,
+    }
   }
 
   const mobile = extractMobileFrames(payloads, input.timeline)

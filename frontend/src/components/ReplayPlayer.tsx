@@ -202,8 +202,8 @@ export default function ReplayPlayer({
       ? deviceMode
       : model.kind === 'mobile'
         ? model.platform
-        : model.kind === 'web'
-          ? 'web'
+        : model.kind === 'web' && model.inferredPlatform && model.inferredPlatform !== 'web'
+          ? model.inferredPlatform
           : detection.platform
 
   // Observe player container width for responsive scaling
@@ -220,12 +220,17 @@ export default function ReplayPlayer({
     return () => ro.disconnect()
   }, [])
 
-  const playerWidth = effectivePlatform === 'ios' ? 322 : effectivePlatform === 'android' ? 312 : stageWidth
+  const playerWidth =
+    effectivePlatform === 'ios'
+      ? 308
+      : effectivePlatform === 'android'
+        ? 308
+        : stageWidth
   const playerHeight =
     effectivePlatform === 'ios'
-      ? 520
+      ? 502
       : effectivePlatform === 'android'
-        ? 500
+        ? 502
         : Math.max(340, Math.min(520, Math.round(stageWidth * 0.5625)))
 
   const durationMs = useMemo(() => {
@@ -256,10 +261,22 @@ export default function ReplayPlayer({
 
   // Dynamically extract real recorded URL / screen from rrweb Meta events or timeline events
   const recordedUrl = useMemo(() => {
-    for (const ev of webEvents ?? []) {
-      if (ev.type === EventType.Meta && (ev.data as { href?: string })?.href) {
-        return (ev.data as { href?: string }).href!
+    if (webEvents && webEvents.length > 0) {
+      const targetTs = baseTimestampMs + currentTimeMs
+      let currentHref: string | null = null
+      for (const ev of webEvents) {
+        if (ev.type === EventType.Meta) {
+          const href = (ev.data as { href?: string })?.href
+          if (href) {
+            if (ev.timestamp <= targetTs + 50 || currentHref === null) {
+              currentHref = href
+            } else {
+              break
+            }
+          }
+        }
       }
+      if (currentHref) return currentHref
     }
     for (const ev of timelineEvents) {
       const attrs = ev.attributes as Record<string, unknown> | undefined
@@ -271,7 +288,7 @@ export default function ReplayPlayer({
       }
     }
     return null
-  }, [webEvents, timelineEvents])
+  }, [webEvents, timelineEvents, baseTimestampMs, currentTimeMs])
 
   // Active mobile screen at the playhead (frames come from chunks or telemetry view trees)
   const activeScreen =
@@ -283,11 +300,14 @@ export default function ReplayPlayer({
 
   const displayPath = useMemo(() => {
     if (!recordedUrl) return strip.value
+    if (recordedUrl.startsWith('android://') || recordedUrl.startsWith('ios://')) {
+      return strip.value
+    }
     try {
       const u = new URL(recordedUrl)
       return `${u.pathname}${u.search}` || '/'
     } catch {
-      return recordedUrl
+      return strip.value
     }
   }, [recordedUrl, strip.value])
 
@@ -306,8 +326,10 @@ export default function ReplayPlayer({
       let offsetMs: number
       if (!Number.isNaN(evTs) && evTs >= baseTimestampMs && evTs <= baseTimestampMs + durationMs) {
         offsetMs = evTs - baseTimestampMs
-      } else if (!Number.isNaN(evTs) && evTs > baseTimestampMs) {
-        offsetMs = Math.min(durationMs, evTs - baseTimestampMs)
+      } else if (!Number.isNaN(evTs) && evTs > baseTimestampMs + durationMs) {
+        offsetMs = durationMs
+      } else if (!Number.isNaN(evTs) && evTs < baseTimestampMs && baseTimestampMs > 0) {
+        offsetMs = 0
       } else {
         // Fallback proportional placement when DB clocks differ slightly from chunk monotonic timestamps
         offsetMs = Math.round(((idx + 1) / (timelineEvents.length + 1)) * durationMs)
@@ -644,11 +666,13 @@ export default function ReplayPlayer({
             </div>
 
             <span className="or-res-chip">
-              {effectivePlatform === 'ios'
-                ? '393 × 852'
-                : effectivePlatform === 'android'
-                  ? '412 × 915'
-                  : '1440 × 900'}
+              {model.kind === 'web' && model.viewport
+                ? `${model.viewport.width} × ${model.viewport.height}`
+                : effectivePlatform === 'ios'
+                  ? '393 × 852'
+                  : effectivePlatform === 'android'
+                    ? '412 × 915'
+                    : '1440 × 900'}
             </span>
 
             {failedChunks > 0 && (
