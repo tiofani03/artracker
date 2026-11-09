@@ -1,79 +1,19 @@
-import type { eventWithTime } from 'rrweb'
+import { fetchChunkPayloads } from '../replay/parseChunk'
 
-type WorkerRequest = {
-  id: number
-  urls: string[]
-}
+type WorkerRequest = { id: number; urls: string[] }
 
 type WorkerResponse =
-  | { id: number; ok: true; events: eventWithTime[] }
+  | { id: number; ok: true; payloads: unknown[]; failed: number }
   | { id: number; ok: false; error: string }
-
-async function decompressBytes(buf: ArrayBuffer): Promise<string> {
-  const bytes = new Uint8Array(buf)
-  // Check GZIP magic header (0x1f 0x8b); if CDN/browser already gunzipped via Content-Encoding, decode directly
-  if (bytes.byteLength >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
-    try {
-      const ds = new DecompressionStream('gzip')
-      const decompressedStream = new Response(buf).body!.pipeThrough(ds)
-      return await new Response(decompressedStream).text()
-    } catch {
-      // fallback
-    }
-  }
-  return new TextDecoder().decode(bytes)
-}
-
-function extractEvents(parsed: unknown): eventWithTime[] {
-  if (Array.isArray(parsed)) {
-    return parsed as eventWithTime[]
-  }
-  if (
-    parsed &&
-    typeof parsed === 'object' &&
-    'events' in parsed &&
-    Array.isArray((parsed as { events: unknown }).events)
-  ) {
-    return (parsed as { events: eventWithTime[] }).events
-  }
-  return []
-}
 
 self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
   const { id, urls } = ev.data
+  let msg: WorkerResponse
   try {
-    const chunkEventArrays = await Promise.all(
-      urls.map(async (rawUrl) => {
-        let url = rawUrl
-        try {
-          const u = new URL(rawUrl)
-          if (u.pathname.includes('/api/v1/replay/download-chunk')) {
-            url = `${u.pathname}${u.search}`
-          }
-        } catch {
-          // keep original
-        }
-        const res = await fetch(url)
-        if (!res.ok) {
-          throw new Error(`Chunk fetch failed (${res.status} ${res.statusText})`)
-        }
-        const buf = await res.arrayBuffer()
-        const jsonText = await decompressBytes(buf)
-        return extractEvents(JSON.parse(jsonText))
-      }),
-    )
-
-    const merged = chunkEventArrays.flat()
-    merged.sort((a, b) => a.timestamp - b.timestamp)
-
-    const msg: WorkerResponse = { id, ok: true, events: merged }
-    self.postMessage(msg)
+    const { payloads, failed } = await fetchChunkPayloads(urls)
+    msg = { id, ok: true, payloads, failed }
   } catch (err) {
-    const msg: WorkerResponse = {
-      id: ev.data.id,
-      ok: false,
-      error: err instanceof Error ? err.message : 'Failed to load replay chunks',
-    }
-    self.postMessage(msg)
+    msg = { id, ok: false, error: err instanceof Error ? err.message : 'Failed to load replay chunks' }
   }
+  self.postMessage(msg)
 }

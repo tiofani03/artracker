@@ -3,7 +3,8 @@ import { EventType, type eventWithTime } from 'rrweb'
 import rrwebPlayer from 'rrweb-player'
 import 'rrweb-player/dist/style.css'
 import type { Platform, ReplayChunkDetail, ReplaySessionItem, TelemetryEvent } from '../api'
-import { loadSessionChunks } from '../utils/replayChunkLoader'
+import { loadChunkPayloads } from '../utils/replayChunkLoader'
+import { buildReplayModel } from '../replay/normalize'
 import { detectSessionPlatform, type DetectedPlatform } from '../utils/platformDetector'
 import { MobileWireframeRenderer } from './MobileWireframeRenderer'
 
@@ -166,10 +167,11 @@ export default function ReplayPlayer({
     setChunkError(null)
     setCurrentTimeMs(0)
 
-    loadSessionChunks(chunks, controller.signal)
-      .then((loaded) => {
+    loadChunkPayloads(chunks, controller.signal)
+      .then(({ payloads }) => {
         if (controller.signal.aborted) return
-        setFetchedEvents(loaded)
+        const model = buildReplayModel({ payloads, timeline: [] })
+        setFetchedEvents(model.kind === 'web' ? model.events : [])
         setChunkLoading(false)
       })
       .catch((err: unknown) => {
