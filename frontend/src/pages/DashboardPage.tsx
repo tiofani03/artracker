@@ -867,7 +867,26 @@ function DashboardInner({
   // Pure real events from PostgreSQL
   const displayLogs: DevLogEntry[] =
     realEvents && realEvents.length > 0
-      ? realEvents.map((e) => {
+      ? realEvents
+          .filter((e) => {
+            if (e.name === 'replay_chunk') return false
+            const msg = (e.message || '').toLowerCase()
+            const rawUrl = String(e.attributes?.url || '').toLowerCase()
+            if (
+              msg.includes('/api/v1/replay/') ||
+              msg.includes('/api/v1/ingest') ||
+              msg.includes('/api/v1/events') ||
+              msg.includes('r2.cloudflarestorage.com') ||
+              rawUrl.includes('/api/v1/replay/') ||
+              rawUrl.includes('/api/v1/ingest') ||
+              rawUrl.includes('/api/v1/events') ||
+              rawUrl.includes('r2.cloudflarestorage.com')
+            ) {
+              return false
+            }
+            return true
+          })
+          .map((e) => {
           let kind: Exclude<LogKind, 'all'> = 'console'
           if (e.kind === 'log' && (e.level === 'error' || e.level === 'fatal')) {
             kind = 'exception'

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -270,19 +271,22 @@ func (h *Handler) DownloadChunkProxy(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(c.Context(), 15*time.Second)
 	defer cancel()
 
-	body, size, contentType, err := h.replayStore.GetObject(ctx, objectKey)
+	body, _, contentType, err := h.replayStore.GetObject(ctx, objectKey)
 	if err != nil {
 		return fiber.NewError(fiber.StatusNotFound, fmt.Sprintf("chunk object not found: %v", err))
 	}
 	defer body.Close()
 
-	c.Set("Content-Type", contentType)
-	if size > 0 {
-		c.Set("Content-Length", strconv.FormatInt(size, 10))
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, fmt.Sprintf("read chunk payload: %v", err))
 	}
-	c.Set("Access-Control-Allow-Origin", "*")
 
-	return c.SendStream(body, int(size))
+	c.Set("Content-Type", contentType)
+	c.Set("Access-Control-Allow-Origin", "*")
+	c.Set("Content-Length", strconv.Itoa(len(data)))
+
+	return c.Send(data)
 }
 
 func (h *Handler) replaySecret() string {

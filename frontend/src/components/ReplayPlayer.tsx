@@ -201,6 +201,48 @@ export default function ReplayPlayer({
     return Number.isNaN(parsed) ? Date.now() : parsed
   }, [activeDomEvents, session.start_time])
 
+  // Dynamically extract real recorded URL / screen from rrweb Meta events or timeline events
+  const recordedUrl = useMemo(() => {
+    // 1. From rrweb meta events (type 4 has data.href)
+    for (const ev of activeDomEvents) {
+      if (ev.type === 4 && (ev.data as { href?: string })?.href) {
+        return (ev.data as { href?: string }).href!
+      }
+    }
+    // 2. From timeline telemetry events attributes (url, path, screen, or route)
+    for (const ev of timelineEvents) {
+      const attrs = ev.attributes as Record<string, unknown> | undefined
+      if (attrs) {
+        if (typeof attrs.url === 'string' && attrs.url.trim()) return attrs.url.trim()
+        if (typeof attrs.path === 'string' && attrs.path.trim()) return attrs.path.trim()
+        if (typeof attrs.screen === 'string' && attrs.screen.trim()) return attrs.screen.trim()
+        if (typeof attrs.route === 'string' && attrs.route.trim()) return attrs.route.trim()
+      }
+    }
+    return null
+  }, [activeDomEvents, timelineEvents])
+
+  const displayUrl = useMemo(() => {
+    if (recordedUrl) return recordedUrl
+    if (effectivePlatform === 'web') {
+      return `http://localhost:3001/session/${formatSessionId(session.id, 12)}`
+    }
+    if (effectivePlatform === 'ios') {
+      return 'MainViewController.swift · RootNavigation'
+    }
+    return 'com.aiacademy.app · MainActivity · NavHost'
+  }, [recordedUrl, effectivePlatform, session.id])
+
+  const displayPath = useMemo(() => {
+    if (!recordedUrl) return effectivePlatform === 'web' ? '/' : 'MainScreen'
+    try {
+      const u = new URL(recordedUrl)
+      return `${u.pathname}${u.search}` || '/'
+    } catch {
+      return recordedUrl
+    }
+  }, [recordedUrl, effectivePlatform])
+
   // Build timeline markers (red = error, yellow = warn / click / frustration)
   const markers: TimelineMarker[] = useMemo(() => {
     if (timelineEvents.length === 0) return []
@@ -425,11 +467,7 @@ export default function ReplayPlayer({
           <div className="or-telemetry-canvas__breadcrumb">
             <span className="or-canvas-dot" />
             <span className="or-canvas-path">
-              {effectivePlatform === 'web'
-                ? `/checkout/${formatSessionId(session.id, 8)}`
-                : effectivePlatform === 'ios'
-                  ? 'CheckoutViewController'
-                  : 'CheckoutActivity'}
+              {displayPath}
             </span>
           </div>
           <div className="or-telemetry-canvas__status">
@@ -576,19 +614,9 @@ export default function ReplayPlayer({
           </span>
           <span
             className="or-route-strip__path"
-            title={
-              effectivePlatform === 'web'
-                ? `https://app.artracker.dev/checkout/${session.id}`
-                : effectivePlatform === 'ios'
-                  ? 'CheckoutViewController.swift / UIModalPresentationFormSheet'
-                  : 'com.artracker.app.CheckoutActivity / ComposeNavigation'
-            }
+            title={displayUrl}
           >
-            {effectivePlatform === 'web'
-              ? `https://app.artracker.dev/checkout/${formatSessionId(session.id, 24)}`
-              : effectivePlatform === 'ios'
-                ? 'CheckoutViewController.swift · UIModalPresentationFormSheet'
-                : 'com.artracker.app · CheckoutActivity · ComposeNavigation'}
+            {displayUrl}
           </span>
         </div>
 
@@ -602,12 +630,12 @@ export default function ReplayPlayer({
                   <span className="or-web-dot or-web-dot--yellow" />
                   <span className="or-web-dot or-web-dot--green" />
                 </div>
-                <div className="or-url-pill">
+                <div className="or-url-pill" title={displayUrl}>
                   <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 5, opacity: 0.6 }}>
                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                     <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                   </svg>
-                  https://app.artracker.dev/sessions/{formatSessionId(session.id, 14)}
+                  {displayUrl}
                 </div>
               </div>
               {renderViewportContent()}

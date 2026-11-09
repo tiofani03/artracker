@@ -212,6 +212,15 @@ func (h *Handler) ListProjectEvents(c *fiber.Ctx) error {
 		FROM telemetry_events
 		WHERE project_id = $1
 		  AND ($2 = '' OR kind = $2)
+		  AND name != 'replay_chunk'
+		  AND NOT (
+		    kind = 'log' AND (
+		      message LIKE '%/api/v1/replay/%' OR
+		      message LIKE '%/api/v1/ingest%' OR
+		      message LIKE '%/api/v1/events%' OR
+		      message LIKE '%.r2.cloudflarestorage.com%'
+		    )
+		  )
 		ORDER BY event_timestamp DESC
 		LIMIT $3`
 
