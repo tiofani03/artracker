@@ -116,4 +116,15 @@ describe('ScreenReplaySession', () => {
     expect(session.index.ranges().map((r) => r.seq)).toEqual([0, 2])
     expect(session.index.isResolved(BASE + 15_000)).toBe(true)
   })
+
+  it('bumps `version` whenever it notifies, so UIs can re-read frame data', async () => {
+    const { session } = makeSession()
+    const v0 = session.version
+    await session.start()
+    expect(session.version).toBeGreaterThan(v0)
+    const v1 = session.version
+    session.frameImage(session.index.frames.find((f) => f.chunkSeq === 4)!) // outside the window: requests a reload
+    await session.whenIdle()
+    expect(session.version).toBeGreaterThan(v1)
+  })
 })

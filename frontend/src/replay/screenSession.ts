@@ -32,6 +32,7 @@ export class ScreenReplaySession {
   private readonly failedAt = new Map<number, number>()
   private playhead: number | null = null
   private signal: AbortSignal | undefined
+  private versionCounter = 0
 
   constructor(deps: ScreenSessionDeps) {
     this.deps = deps
@@ -44,6 +45,11 @@ export class ScreenReplaySession {
     return () => {
       this.listeners.delete(fn)
     }
+  }
+
+  /** Increases on every notification; a stable snapshot value for `useSyncExternalStore`. */
+  get version(): number {
+    return this.versionCounter
   }
 
   residentSeqs(): number[] {
@@ -149,6 +155,7 @@ export class ScreenReplaySession {
   }
 
   private notify(): void {
+    this.versionCounter++
     for (const fn of [...this.listeners]) fn()
   }
 }
