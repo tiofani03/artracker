@@ -35,5 +35,6 @@ func (h *Handler) UpdateReplaySettings(c *fiber.Ctx) error {
 		projectID, *req.ScreenshotEnabled), &p); err != nil {
 		return err
 	}
+	h.replaySwitch.invalidate(projectID)
 	return c.JSON(p)
 }

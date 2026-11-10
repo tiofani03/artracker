@@ -85,3 +85,27 @@ func TestReplaySettingsValidation(t *testing.T) {
 		t.Fatalf("empty body status = %d, want 400", status)
 	}
 }
+
+func TestReplaySettingsPatchBlocksScreenChunkURLImmediately(t *testing.T) {
+	f := newReplaySettingsFixture(t)
+	f.e.h.WithReplayStore(&mockReplayStore{})
+	key := f.e.createKey(t, f.pid, "public_client", f.adminHdr)
+	hdr := map[string]string{"X-Artracker-Key": key.Secret, "Content-Type": "application/json"}
+	chunkURL := func(body string) int {
+		return f.e.post(t, "/api/v1/replay/chunk-url", body, hdr).StatusCode
+	}
+
+	// Primes the in-memory switch cache with "enabled".
+	if got := chunkURL(screenChunkBody); got != 200 {
+		t.Fatalf("screen chunk-url before switch-off = %d, want 200", got)
+	}
+	if status, _ := f.patch(t, f.adminHdr, `{"screenshot_enabled":false}`); status != 200 {
+		t.Fatalf("patch status = %d", status)
+	}
+	if got := chunkURL(screenChunkBody); got != 403 {
+		t.Fatalf("screen chunk-url after switch-off = %d, want 403 (cache must be invalidated)", got)
+	}
+	if got := chunkURL(plainChunkBody); got != 200 {
+		t.Fatalf("legacy chunk-url after switch-off = %d, want 200", got)
+	}
+}

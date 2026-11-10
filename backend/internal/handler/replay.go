@@ -31,6 +31,8 @@ type ReplayChunkURLRequest struct {
 	Environment string     `json:"environment,omitempty"`
 	StartTime   *time.Time `json:"start_time,omitempty"`
 	Direct      *bool      `json:"direct,omitempty"`
+	// Format is the chunk format about to be uploaded (e.g. "artracker-screen-v1"); empty for legacy SDKs.
+	Format string `json:"format,omitempty"`
 }
 
 type ReplayChunkURLResponse struct {
@@ -114,6 +116,18 @@ func (h *Handler) GenerateChunkUploadURL(c *fiber.Ctx) error {
 
 	if req.ChunkSeq < 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "chunk_seq must be >= 0")
+	}
+
+	if req.Format == ScreenChunkFormat {
+		swCtx, swCancel := context.WithTimeout(c.Context(), 5*time.Second)
+		enabled, err := h.replayScreenshotEnabled(swCtx, projectID)
+		swCancel()
+		if err != nil {
+			return fmt.Errorf("check replay screenshot switch: %w", err)
+		}
+		if !enabled {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "screenshot_disabled"})
+		}
 	}
 
 	maxChunk := h.cfg.ReplayMaxChunkBytes

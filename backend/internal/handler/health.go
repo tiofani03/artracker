@@ -24,6 +24,7 @@ type Handler struct {
 	ingestSvc    *ingest.Service
 	analyticsSvc *analytics.Service
 	replayStore  storage.ReplayStore
+	replaySwitch replaySwitchCache
 
 	// in-memory artwork store, used only when the database is disabled (SKIP_DB)
 	mu     sync.RWMutex
