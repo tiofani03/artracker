@@ -39,7 +39,7 @@ func (h *Handler) RequireProjectRole(min auth.Role) fiber.Handler {
 		if err != nil {
 			return errProjectNotFound
 		}
-		if c.Get("X-Demo-Mode") == "1" || c.Query("demo") == "1" {
+		if h.demoMode(c) {
 			c.Locals("projectID", pid)
 			return c.Next()
 		}
