@@ -67,6 +67,7 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Get("/projects/:projectID/events", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListProjectEvents)
 	api.Get("/projects/:projectID/sessions", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListProjectSessions)
 	api.Get("/projects/:projectID/sessions/:sessionID", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetProjectSession)
+	api.Get("/projects/:projectID/sessions/:sessionID/chunks", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListSessionChunks)
 	api.Post("/projects/:projectID/seed-mock", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.SeedProjectMockData)
 	api.Post("/projects/:projectID/test-event", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.SendProjectTestEvent)
 
