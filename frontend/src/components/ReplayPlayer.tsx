@@ -1,15 +1,37 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { EventType, type eventWithTime } from 'rrweb'
 import rrwebPlayer from 'rrweb-player'
 import 'rrweb-player/dist/style.css'
-import type { Platform, ReplayChunkDetail, ReplaySessionItem, TelemetryEvent } from '../api'
+import { replayApi, type Platform, type ReplayChunkDetail, type ReplaySessionItem, type TelemetryEvent } from '../api'
 import { loadChunkPayloads } from '../utils/replayChunkLoader'
+import { ScreenChunkSource } from '../utils/screenChunkSource'
 import { buildReplayModel } from '../replay/normalize'
 import type { ReplayModel } from '../replay/model'
-import { activeFrameAt, deviceClock, fallbackNotice, offsetFromPointer, routeStrip } from '../replay/playback'
+import {
+  activeFrameAt,
+  deviceClock,
+  fallbackNotice,
+  offsetFromPointer,
+  replayModeLabel,
+  routeStrip,
+} from '../replay/playback'
+import { activeScreenFrameAt } from '../replay/screen'
+import { fitScreenStage } from '../replay/screenPlanner'
+import { probeScreenSession } from '../replay/screenProbe'
+import type { ScreenReplaySession } from '../replay/screenSession'
 import { chunkSignature } from '../replay/wireframe'
 import { detectSessionPlatform, type DetectedPlatform } from '../utils/platformDetector'
 import { MobileWireframeRenderer } from './MobileWireframeRenderer'
+import { ScreenReplayRenderer } from './ScreenReplayRenderer'
 
 export type TimelineMarker = {
   id: string
@@ -119,6 +141,9 @@ export default function ReplayPlayer({
   )
 
   const [payloads, setPayloads] = useState<unknown[]>([])
+  // Screenshot sessions (artracker-screen-v1) load progressively through this instead of `payloads`
+  const [screenSession, setScreenSession] = useState<ScreenReplaySession | null>(null)
+  const [screenScanning, setScreenScanning] = useState(false)
   const [failedChunks, setFailedChunks] = useState(0)
   const [chunkLoading, setChunkLoading] = useState(false)
   const [chunkError, setChunkError] = useState<string | null>(null)
@@ -141,10 +166,14 @@ export default function ReplayPlayer({
     chunksRef.current = chunks
   })
 
-  // Fetch & gunzip chunks; interpretation happens in buildReplayModel
+  // Fetch & gunzip chunks. A screenshot session (artracker-screen-v1) is recognised by probing its first and
+  // last chunk and then loads progressively; any other session is fetched eagerly and interpreted by
+  // buildReplayModel.
   useEffect(() => {
     setCurrentTimeMs(0)
     setIsPlaying(false)
+    setScreenSession(null)
+    setScreenScanning(false)
     if (hasOverride || presignedChunkCount === 0) {
       setPayloads([])
       setFailedChunks(0)
@@ -157,27 +186,72 @@ export default function ReplayPlayer({
     setChunkLoading(true)
     setChunkError(null)
 
-    loadChunkPayloads(chunksRef.current, controller.signal)
-      .then((r) => {
-        if (controller.signal.aborted) return
-        setPayloads(r.payloads)
-        setFailedChunks(r.failed)
-        setChunkLoading(false)
+    const run = async () => {
+      const source = new ScreenChunkSource(chunksRef.current, (from, to) =>
+        replayApi.listSessionChunks(session.project_id, session.id, from, to).then((r) => r.chunks),
+      )
+      const startMs = Date.parse(session.start_time)
+      const screen = await probeScreenSession({
+        chunks: chunksRef.current,
+        sessionStartMs: Number.isFinite(startMs) ? startMs : 0,
+        fetchChunk: (seq, signal) => source.fetchChunk(seq, signal),
+        signal: controller.signal,
       })
-      .catch((err: unknown) => {
-        if (controller.signal.aborted) return
-        if (err instanceof DOMException && err.name === 'AbortError') return
-        setChunkError(err instanceof Error ? err.message : 'Failed to fetch replay chunks')
+      if (controller.signal.aborted) return
+      if (screen) {
+        setScreenSession(screen)
+        setScreenScanning(true)
         setPayloads([])
         setFailedChunks(0)
         setChunkLoading(false)
-      })
+        void screen.start(controller.signal).finally(() => {
+          if (!controller.signal.aborted) setScreenScanning(false)
+        })
+        return
+      }
+      const r = await loadChunkPayloads(chunksRef.current, controller.signal)
+      if (controller.signal.aborted) return
+      setPayloads(r.payloads)
+      setFailedChunks(r.failed)
+      setChunkLoading(false)
+    }
+
+    run().catch((err: unknown) => {
+      if (controller.signal.aborted) return
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      setChunkError(err instanceof Error ? err.message : 'Failed to fetch replay chunks')
+      setPayloads([])
+      setFailedChunks(0)
+      setChunkLoading(false)
+    })
 
     return () => controller.abort()
-  }, [session.id, chunkSig, presignedChunkCount, hasOverride])
+  }, [session.id, session.project_id, session.start_time, chunkSig, presignedChunkCount, hasOverride])
+
+  // Re-render whenever the screenshot session indexes more chunks
+  const subscribeScreen = useCallback(
+    (fn: () => void) => (screenSession ? screenSession.subscribe(fn) : () => {}),
+    [screenSession],
+  )
+  const screenVersion = useSyncExternalStore(subscribeScreen, () => (screenSession ? screenSession.version : 0))
 
   // Single source of truth for what can be rendered
   const model: ReplayModel = useMemo(() => {
+    if (screenSession && !hasOverride) {
+      // the session index is mutable: `screenVersion` (a dependency below) is what invalidates this memo
+      const idx = screenSession.index
+      if (idx.frames.length > 0) {
+        const projectMobile = projectPlatform === 'ios' || projectPlatform === 'android' ? projectPlatform : null
+        return {
+          kind: 'screen',
+          platform: idx.platform ?? projectMobile ?? 'android',
+          startMs: idx.startMs,
+          // the scan may not have reached the last chunk yet: the acknowledged session duration is the floor
+          endMs: Math.max(idx.endMs, idx.startMs + session.duration_ms),
+          session: screenSession,
+        }
+      }
+    }
     const built = buildReplayModel({
       payloads: hasOverride ? [overrideEvents] : payloads,
       timeline: timelineEvents,
@@ -193,14 +267,26 @@ export default function ReplayPlayer({
       }
     }
     return built
-  }, [hasOverride, overrideEvents, payloads, timelineEvents, projectPlatform, chunkError, chunks.length, presignedChunkCount])
+  }, [
+    hasOverride,
+    overrideEvents,
+    payloads,
+    timelineEvents,
+    projectPlatform,
+    chunkError,
+    chunks.length,
+    presignedChunkCount,
+    screenSession,
+    screenVersion,
+    session.duration_ms,
+  ])
 
   const webEvents = model.kind === 'web' ? model.events : null
 
   const effectivePlatform: DetectedPlatform =
     deviceMode !== 'auto'
       ? deviceMode
-      : model.kind === 'mobile'
+      : model.kind === 'mobile' || model.kind === 'screen'
         ? model.platform
         : model.kind === 'web' && model.inferredPlatform && model.inferredPlatform !== 'web'
           ? model.inferredPlatform
@@ -292,7 +378,11 @@ export default function ReplayPlayer({
 
   // Active mobile screen at the playhead (frames come from chunks or telemetry view trees)
   const activeScreen =
-    model.kind === 'mobile' ? (activeFrameAt(model.frames, model.startMs + currentTimeMs)?.screen ?? null) : null
+    model.kind === 'mobile'
+      ? (activeFrameAt(model.frames, model.startMs + currentTimeMs)?.screen ?? null)
+      : model.kind === 'screen'
+        ? (activeScreenFrameAt(model.session.index.frames, model.startMs + currentTimeMs)?.screen ?? null)
+        : null
 
   // Only recorded values: no invented URLs / activity names when nothing was captured
   const strip = routeStrip({ platform: effectivePlatform, screen: activeScreen, recordedUrl })
@@ -490,7 +580,9 @@ export default function ReplayPlayer({
   const notice = fallbackNotice(model)
 
   const renderViewportContent = () => {
-    if (loadingDetail || chunkLoading) {
+    // a screenshot session whose first chunk is still being indexed has nothing to show yet
+    const screenPending = screenSession !== null && screenScanning && model.kind === 'none'
+    if (loadingDetail || chunkLoading || screenPending) {
       return (
         <div className="replay-player__viewport replay-player__state">
           <div className="replay-state-box">
@@ -512,7 +604,23 @@ export default function ReplayPlayer({
       return <div className="replay-rrweb-mount" ref={setMountEl} />
     }
 
-    // 2. Mobile Visual Wireframe Replay (native view hierarchy from chunks or telemetry)
+    // 2a. Screenshot replay (artracker-screen-v1): the device's own pixels
+    if (model.kind === 'screen') {
+      const stage = fitScreenStage(model.session.index.frames[0] ?? null, {
+        width: playerWidth,
+        maxHeight: playerHeight,
+      })
+      return (
+        <ScreenReplayRenderer
+          session={model.session}
+          currentTs={model.startMs + currentTimeMs}
+          width={stage.width}
+          height={stage.height}
+        />
+      )
+    }
+
+    // 2b. Mobile Visual Wireframe Replay (native view hierarchy from chunks or telemetry)
     if (model.kind === 'mobile') {
       return (
         <MobileWireframeRenderer
@@ -665,10 +773,18 @@ export default function ReplayPlayer({
               ))}
             </div>
 
+            {replayModeLabel(model) && (
+              <span className="or-res-chip" title="How this replay was recorded">
+                {replayModeLabel(model)}
+              </span>
+            )}
+
             <span className="or-res-chip">
               {model.kind === 'web' && model.viewport
                 ? `${model.viewport.width} × ${model.viewport.height}`
-                : effectivePlatform === 'ios'
+                : model.kind === 'screen' && model.session.index.frames[0]
+                  ? `${model.session.index.frames[0].vw} × ${model.session.index.frames[0].vh}`
+                  : effectivePlatform === 'ios'
                   ? '393 × 852'
                   : effectivePlatform === 'android'
                     ? '412 × 915'

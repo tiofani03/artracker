@@ -47,3 +47,17 @@ export function planScreenFrame(input: {
 
   return { due, show, buffering: !resolved || (due !== null && !decoded.has(frameKey(due))), prefetch }
 }
+
+/**
+ * Stage size for the screenshot canvas: the box width, and a height following the frame's aspect ratio,
+ * kept between `minHeight` (default 300) and `maxHeight`. Without a frame yet it fills the box.
+ */
+export function fitScreenStage(
+  frame: { w: number; h: number } | null,
+  box: { width: number; maxHeight: number; minHeight?: number },
+): { width: number; height: number } {
+  if (!frame || frame.w <= 0 || frame.h <= 0) return { width: box.width, height: box.maxHeight }
+  const minHeight = box.minHeight ?? 300
+  const height = Math.round((box.width * frame.h) / frame.w)
+  return { width: box.width, height: Math.min(box.maxHeight, Math.max(minHeight, height)) }
+}

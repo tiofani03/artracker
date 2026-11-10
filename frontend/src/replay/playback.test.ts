@@ -6,6 +6,7 @@ import {
   deviceClock,
   fallbackNotice,
   offsetFromPointer,
+  replayModeLabel,
   routeStrip,
   TOUCH_WINDOW_MS,
 } from './playback'
@@ -100,5 +101,20 @@ describe('routeStrip', () => {
   })
   it('falls back to a recorded screen attribute for mobile without frames', () => {
     expect(routeStrip({ platform: 'ios', screen: null, recordedUrl: 'CheckoutScreen' }).value).toBe('CheckoutScreen')
+  })
+})
+
+describe('replayModeLabel', () => {
+  const base = { startMs: 0, endMs: 1 }
+  it('labels each renderer', () => {
+    expect(replayModeLabel({ ...base, kind: 'screen', platform: 'android', session: {} as never })).toBe('Screenshot')
+    expect(replayModeLabel({ ...base, kind: 'mobile', platform: 'ios', frames: [], touches: [] })).toBe('Wireframe')
+    expect(replayModeLabel({ ...base, kind: 'web', events: [], inferredPlatform: 'android' })).toBe('Wireframe')
+    expect(replayModeLabel({ ...base, kind: 'web', events: [], inferredPlatform: 'ios' })).toBe('Wireframe')
+    expect(replayModeLabel({ ...base, kind: 'web', events: [], inferredPlatform: 'web' })).toBe('DOM')
+    expect(replayModeLabel({ ...base, kind: 'web', events: [] })).toBe('DOM')
+  })
+  it('has no label when there is nothing visual', () => {
+    expect(replayModeLabel({ kind: 'none', reason: 'no-chunks' })).toBeNull()
   })
 })

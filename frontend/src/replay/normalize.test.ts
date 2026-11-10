@@ -450,3 +450,19 @@ describe('normalizeWebEvents with nested adds', () => {
     expect(addsOf(mut!).every((a) => a.node.type !== 2 || a.node.childNodes?.length === 0)).toBe(true)
   })
 })
+
+describe('buildReplayModel with artracker-screen-v1 payloads', () => {
+  const screenChunk = {
+    format: 'artracker-screen-v1',
+    platform: 'android',
+    frames: [{ ts: 1, screen: 's', w: 1, h: 1, vw: 1, vh: 1, mime: 'image/jpeg', data: 'QUJD', masked: 0 }],
+    touches: [],
+  }
+  it('never misreads a screen chunk as wireframe frames (screen sessions are detected by the player)', () => {
+    expect(buildReplayModel({ payloads: [screenChunk], timeline: [] })).toEqual({ kind: 'none', reason: 'no-visual-data' })
+  })
+  it('still builds the web model when an rrweb chunk sits next to a screen chunk', () => {
+    const m = buildReplayModel({ payloads: [screenChunk, [ev(4, 1000), ev(2, 1001)]], timeline: [] })
+    expect(m.kind).toBe('web')
+  })
+})

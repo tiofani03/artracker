@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { frameKey, planScreenFrame } from './screenPlanner'
+import { fitScreenStage, frameKey, planScreenFrame } from './screenPlanner'
 import type { ScreenFrameMeta } from './screen'
 
 const f = (ts: number, index: number): ScreenFrameMeta => ({
@@ -63,5 +63,20 @@ describe('planScreenFrame', () => {
     const many = Array.from({ length: 11 }, (_, i) => f(i * 500, i))
     const plan = planScreenFrame({ frames: many, playheadMs: 1000, decoded: new Set(), resolved: true, aheadMs: 500 })
     expect(plan.prefetch.map((x) => x.ts)).toEqual([1500])
+  })
+})
+
+describe('fitScreenStage', () => {
+  const box = { width: 312, maxHeight: 500 }
+  it('keeps the box width and follows the frame aspect ratio, capped at maxHeight', () => {
+    expect(fitScreenStage({ w: 720, h: 1600 }, box)).toEqual({ width: 312, height: 500 }) // 693 -> capped
+    expect(fitScreenStage({ w: 1000, h: 1000 }, box)).toEqual({ width: 312, height: 312 })
+  })
+  it('never goes below minHeight (default 300) for landscape frames', () => {
+    expect(fitScreenStage({ w: 1600, h: 720 }, box)).toEqual({ width: 312, height: 300 })
+    expect(fitScreenStage({ w: 1600, h: 720 }, { ...box, minHeight: 200 })).toEqual({ width: 312, height: 200 })
+  })
+  it('falls back to the full box before any frame is known', () => {
+    expect(fitScreenStage(null, box)).toEqual({ width: 312, height: 500 })
   })
 })
