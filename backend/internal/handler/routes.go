@@ -55,6 +55,7 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Post("/invites/:token/accept", h.RequireAuth, h.AcceptInvite)
 
 	api.Get("/projects/:projectID", h.RequireAuth, h.GetProject)
+	api.Patch("/projects/:projectID/replay-settings", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.UpdateReplaySettings)
 
 	api.Get("/projects/:projectID/keys", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListKeys)
 	api.Post("/projects/:projectID/keys", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.CreateKey)
