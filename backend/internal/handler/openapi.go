@@ -253,8 +253,88 @@ var openAPISpecBytes = []byte(`{
           },
           "400": { "description": "Invalid session_id, chunk_seq, or size_bytes" },
           "401": { "description": "Missing or invalid api key" },
+          "403": { "description": "Screenshot replay is switched off for this project: body {\"error\":\"screenshot_disabled\"} when format is artracker-screen-v1. SDKs must stop screenshot capture and fall back to wireframe mode." },
           "413": { "description": "Chunk size exceeds maximum limit (5MB)" },
+          "429": { "description": "Replay rate limit exceeded (separate per-project bucket, REPLAY_RATE_RPS); honour Retry-After" },
           "503": { "description": "Object storage not configured" }
+        }
+      }
+    },
+    "/replay/config": {
+      "get": {
+        "summary": "Replay Capture Settings for the SDK",
+        "description": "Tells a mobile SDK whether screenshot-mode replay (artracker-screen-v1) may be captured and uploaded for the key's project, and the frame-rate ceiling. SDKs call it when replay starts and cache the answer.",
+        "operationId": "getReplayConfig",
+        "tags": ["Session Replay"],
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          {
+            "name": "X-Artracker-Key",
+            "in": "header",
+            "required": true,
+            "description": "Project client SDK key",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Capture settings",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ReplayConfigResponse" }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid api key" },
+          "429": { "description": "Replay rate limit exceeded" }
+        }
+      }
+    },
+    "/projects/{projectID}/replay-settings": {
+      "patch": {
+        "summary": "Update Project Replay Settings",
+        "description": "Admin-only. Switches screenshot-mode replay uploads on or off for the project; takes effect for every app version without a release.",
+        "operationId": "updateProjectReplaySettings",
+        "tags": ["Session Replay"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["screenshot_enabled"],
+                "properties": { "screenshot_enabled": { "type": "boolean" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "The updated project, including replay_screenshot_enabled" },
+          "400": { "description": "screenshot_enabled is required" },
+          "403": { "description": "Requires the admin role" }
+        }
+      }
+    },
+    "/projects/{projectID}/sessions/{sessionID}/chunks": {
+      "get": {
+        "summary": "Refresh Signed URLs for Replay Chunks",
+        "description": "Returns freshly signed download URLs for a range of a session's chunks (at most 100), so the player can keep loading a long session after the URLs from the session detail expired.",
+        "operationId": "listSessionChunks",
+        "tags": ["Session Replay"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "sessionID", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "from_seq", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 0, "default": 0 } },
+          { "name": "to_seq", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 0 } }
+        ],
+        "responses": {
+          "200": { "description": "Chunks in ascending chunk_seq order, each with a signed url" },
+          "400": { "description": "Invalid session id, or from_seq / to_seq not a non-negative integer or from_seq > to_seq" }
         }
       }
     },
@@ -656,7 +736,19 @@ var openAPISpecBytes = []byte(`{
           "size_bytes": { "type": "integer", "maximum": 5242880, "example": 45000 },
           "user_id": { "type": "string", "example": "usr_42" },
           "environment": { "type": "string", "example": "production" },
-          "start_time": { "type": "string", "format": "date-time" }
+          "start_time": { "type": "string", "format": "date-time" },
+          "format": {
+            "type": "string",
+            "description": "Chunk format about to be uploaded. Send artracker-screen-v1 for screenshot-mode mobile replay; omit for rrweb / wireframe chunks.",
+            "example": "artracker-screen-v1"
+          }
+        }
+      },
+      "ReplayConfigResponse": {
+        "type": "object",
+        "properties": {
+          "screenshot_enabled": { "type": "boolean", "description": "Server-side switch: whether screenshot-mode replay may be uploaded for this project", "example": true },
+          "max_fps": { "type": "integer", "description": "Frame-rate ceiling for screenshot mode", "example": 10 }
         }
       },
       "ReplayChunkURLResponse": {

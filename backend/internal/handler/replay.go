@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -31,6 +32,8 @@ type ReplayChunkURLRequest struct {
 	Environment string     `json:"environment,omitempty"`
 	StartTime   *time.Time `json:"start_time,omitempty"`
 	Direct      *bool      `json:"direct,omitempty"`
+	// Format is the chunk format about to be uploaded (e.g. "artracker-screen-v1"); empty for legacy SDKs.
+	Format string `json:"format,omitempty"`
 }
 
 type ReplayChunkURLResponse struct {
@@ -114,6 +117,18 @@ func (h *Handler) GenerateChunkUploadURL(c *fiber.Ctx) error {
 
 	if req.ChunkSeq < 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "chunk_seq must be >= 0")
+	}
+
+	if req.Format == ScreenChunkFormat {
+		swCtx, swCancel := context.WithTimeout(c.Context(), 5*time.Second)
+		enabled, err := h.replayScreenshotEnabled(swCtx, projectID)
+		swCancel()
+		if err != nil {
+			return fmt.Errorf("check replay screenshot switch: %w", err)
+		}
+		if !enabled {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "screenshot_disabled"})
+		}
 	}
 
 	maxChunk := h.cfg.ReplayMaxChunkBytes
@@ -628,17 +643,7 @@ func (h *Handler) GetProjectSession(c *fiber.Ctx) error {
 			return fmt.Errorf("scan replay chunk: %w", err)
 		}
 
-		if h.replayStore != nil {
-			if !h.cfg.ReplayProxyUpload {
-				getURL, err := h.replayStore.GeneratePresignedGet(ctx, chunk.ObjectKey, 15*time.Minute)
-				if err == nil {
-					chunk.URL = getURL
-				}
-			}
-			if chunk.URL == "" {
-				chunk.URL = h.signedChunkURL(c, "download-chunk", chunk.ObjectKey, time.Hour)
-			}
-		}
+		chunk.URL = h.chunkDownloadURL(c, ctx, chunk.ObjectKey)
 
 		chunks = append(chunks, chunk)
 	}
@@ -676,4 +681,83 @@ func (h *Handler) GetProjectSession(c *fiber.Ctx) error {
 		Chunks:         chunks,
 		TimelineEvents: timelineEvents,
 	})
+}
+
+// chunkDownloadURL returns a signed URL the browser can GET the chunk from: a presigned object-store URL when
+// proxying is off, otherwise (or when presigning is unavailable) the signed API download proxy. Empty when
+// replay storage is not configured.
+func (h *Handler) chunkDownloadURL(c *fiber.Ctx, ctx context.Context, objectKey string) string {
+	if h.replayStore == nil {
+		return ""
+	}
+	if !h.cfg.ReplayProxyUpload {
+		if getURL, err := h.replayStore.GeneratePresignedGet(ctx, objectKey, 15*time.Minute); err == nil {
+			return getURL
+		}
+	}
+	return h.signedChunkURL(c, "download-chunk", objectKey, time.Hour)
+}
+
+// maxChunkListRows bounds one ListSessionChunks response.
+const maxChunkListRows = 100
+
+type ReplayChunkListResponse struct {
+	Chunks []ReplayChunkDetail `json:"chunks"`
+}
+
+// ListSessionChunks handles GET /api/v1/projects/:projectID/sessions/:sessionID/chunks?from_seq=&to_seq=.
+// It returns freshly signed URLs for a seq range so the player can keep loading after earlier URLs expired.
+func (h *Handler) ListSessionChunks(c *fiber.Ctx) error {
+	projectID := c.Locals("projectID").(int64)
+	sessionID := strings.TrimSpace(c.Params("sessionID"))
+	if !sessionIDRegex.MatchString(sessionID) {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid session_id format")
+	}
+
+	fromSeq, toSeq := 0, math.MaxInt32
+	if raw := c.Query("from_seq"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "from_seq must be a non-negative integer")
+		}
+		fromSeq = v
+	}
+	if raw := c.Query("to_seq"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "to_seq must be a non-negative integer")
+		}
+		toSeq = v
+	}
+	if fromSeq > toSeq {
+		return fiber.NewError(fiber.StatusBadRequest, "from_seq must be <= to_seq")
+	}
+
+	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	defer cancel()
+
+	rows, err := h.db.Query(ctx, `
+		SELECT chunk_seq, object_key, size_bytes, event_count, created_at
+		FROM replay_chunks
+		WHERE project_id = $1 AND session_id = $2 AND chunk_seq BETWEEN $3 AND $4
+		ORDER BY chunk_seq ASC
+		LIMIT $5`, projectID, sessionID, fromSeq, toSeq, maxChunkListRows)
+	if err != nil {
+		return fmt.Errorf("query replay chunks: %w", err)
+	}
+	defer rows.Close()
+
+	chunks := make([]ReplayChunkDetail, 0)
+	for rows.Next() {
+		var chunk ReplayChunkDetail
+		if err := rows.Scan(&chunk.ChunkSeq, &chunk.ObjectKey, &chunk.SizeBytes, &chunk.EventCount, &chunk.CreatedAt); err != nil {
+			return fmt.Errorf("scan replay chunk: %w", err)
+		}
+		chunk.URL = h.chunkDownloadURL(c, ctx, chunk.ObjectKey)
+		chunks = append(chunks, chunk)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("chunk rows: %w", err)
+	}
+	return c.JSON(ReplayChunkListResponse{Chunks: chunks})
 }

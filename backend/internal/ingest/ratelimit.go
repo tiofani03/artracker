@@ -49,10 +49,14 @@ func (tb *TokenBucket) allowN(now time.Time, n float64) (bool, int) {
 }
 
 type projectLimiters struct {
-	reqBucket   *TokenBucket
-	eventBucket *TokenBucket
-	lastActive  time.Time
+	reqBucket    *TokenBucket
+	eventBucket  *TokenBucket
+	replayBucket *TokenBucket
+	lastActive   time.Time
 }
+
+// defaultReplayRPS is the per-project replay request rate when none is configured.
+const defaultReplayRPS = 100.0
 
 const numShards = 16
 
@@ -68,12 +72,23 @@ type ProjectRateLimiter struct {
 	defaultBurstReq  float64
 	defaultEPS       float64
 	defaultBurstEvt  float64
+	defaultReplayRPS float64
+	defaultBurstRepl float64
 	cleanupInterval  time.Duration
 	stopCh           chan struct{}
 }
 
-// NewProjectRateLimiter creates a new sharded token bucket rate limiter.
+// NewProjectRateLimiter creates a new sharded token bucket rate limiter with the default replay rate.
 func NewProjectRateLimiter(rps, eps float64) *ProjectRateLimiter {
+	return NewProjectRateLimiterWithReplay(rps, eps, defaultReplayRPS)
+}
+
+// NewProjectRateLimiterWithReplay is NewProjectRateLimiter with an explicit per-project replay request
+// rate (burst 2x). Replay requests use their own bucket so they never starve telemetry ingest.
+func NewProjectRateLimiterWithReplay(rps, eps, replayRPS float64) *ProjectRateLimiter {
+	if replayRPS <= 0 {
+		replayRPS = defaultReplayRPS
+	}
 	if rps <= 0 {
 		rps = 50.0
 	}
@@ -86,6 +101,8 @@ func NewProjectRateLimiter(rps, eps float64) *ProjectRateLimiter {
 		defaultBurstReq:  rps * 2,
 		defaultEPS:       eps,
 		defaultBurstEvt:  eps * 2.5,
+		defaultReplayRPS: replayRPS,
+		defaultBurstRepl: replayRPS * 2,
 		cleanupInterval:  5 * time.Minute,
 		stopCh:           make(chan struct{}),
 	}
@@ -104,6 +121,33 @@ func (prl *ProjectRateLimiter) getShard(projectID int64) *shard {
 	return &prl.shards[idx]
 }
 
+// limitersLocked returns the project's buckets, creating them on first use. s.mu must be held.
+func (prl *ProjectRateLimiter) limitersLocked(s *shard, projectID int64, now time.Time) *projectLimiters {
+	p, exists := s.limiters[projectID]
+	if !exists {
+		p = &projectLimiters{
+			reqBucket:    newTokenBucket(prl.defaultRPS, prl.defaultBurstReq, now),
+			eventBucket:  newTokenBucket(prl.defaultEPS, prl.defaultBurstEvt, now),
+			replayBucket: newTokenBucket(prl.defaultReplayRPS, prl.defaultBurstRepl, now),
+			lastActive:   now,
+		}
+		s.limiters[projectID] = p
+	}
+	p.lastActive = now
+	return p
+}
+
+// AllowReplayRequest checks if project is allowed to make 1 replay HTTP request (own bucket).
+func (prl *ProjectRateLimiter) AllowReplayRequest(projectID int64) (bool, int) {
+	s := prl.getShard(projectID)
+	now := time.Now()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return prl.limitersLocked(s, projectID, now).replayBucket.allowN(now, 1)
+}
+
 // AllowRequest checks if project is allowed to make 1 HTTP request.
 func (prl *ProjectRateLimiter) AllowRequest(projectID int64) (bool, int) {
 	s := prl.getShard(projectID)
@@ -112,16 +156,7 @@ func (prl *ProjectRateLimiter) AllowRequest(projectID int64) (bool, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	p, exists := s.limiters[projectID]
-	if !exists {
-		p = &projectLimiters{
-			reqBucket:   newTokenBucket(prl.defaultRPS, prl.defaultBurstReq, now),
-			eventBucket: newTokenBucket(prl.defaultEPS, prl.defaultBurstEvt, now),
-			lastActive:  now,
-		}
-		s.limiters[projectID] = p
-	}
-	p.lastActive = now
+	p := prl.limitersLocked(s, projectID, now)
 
 	return p.reqBucket.allowN(now, 1)
 }
@@ -137,16 +172,7 @@ func (prl *ProjectRateLimiter) AllowEvents(projectID int64, eventCount int) (boo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	p, exists := s.limiters[projectID]
-	if !exists {
-		p = &projectLimiters{
-			reqBucket:   newTokenBucket(prl.defaultRPS, prl.defaultBurstReq, now),
-			eventBucket: newTokenBucket(prl.defaultEPS, prl.defaultBurstEvt, now),
-			lastActive:  now,
-		}
-		s.limiters[projectID] = p
-	}
-	p.lastActive = now
+	p := prl.limitersLocked(s, projectID, now)
 
 	return p.eventBucket.allowN(now, float64(eventCount))
 }

@@ -60,3 +60,17 @@ export function routeStrip(input: {
   const raw = input.platform === 'web' ? input.recordedUrl : (input.screen ?? input.recordedUrl)
   return { label, value: raw ? displayScreenName(raw) : 'Not recorded' }
 }
+
+/** Which renderer plays the session, for the badge in the player header; null when nothing is visual. */
+export function replayModeLabel(model: ReplayModel): 'Screenshot' | 'Wireframe' | 'DOM' | null {
+  switch (model.kind) {
+    case 'screen':
+      return 'Screenshot'
+    case 'mobile':
+      return 'Wireframe'
+    case 'web':
+      return model.inferredPlatform === 'android' || model.inferredPlatform === 'ios' ? 'Wireframe' : 'DOM'
+    case 'none':
+      return null
+  }
+}

@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import ApiKeysPanel from '../components/ApiKeysPanel'
 import DashboardShell from '../components/DashboardShell'
+import ReplaySettingsPanel from '../components/ReplaySettingsPanel'
 import TeamMembersPanel from '../components/TeamMembersPanel'
 import '../dashboard.css'
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<'keys' | 'team'>('keys')
+  const [activeTab, setActiveTab] = useState<'keys' | 'team' | 'replay'>('keys')
 
   return (
     <DashboardShell sectionTitle="API Keys & Settings" allowDemo>
@@ -30,6 +31,14 @@ export default function SettingsPage() {
                   onClick={() => setActiveTab('keys')}
                 >
                   API Keys
+                </button>
+                <button
+                  type="button"
+                  className={`dash-seg__btn${activeTab === 'replay' ? ' is-active' : ''}`}
+                  aria-pressed={activeTab === 'replay'}
+                  onClick={() => setActiveTab('replay')}
+                >
+                  Replay
                 </button>
                 <button
                   type="button"
@@ -70,6 +79,18 @@ export default function SettingsPage() {
                   canManage={canManage}
                   currentUserRole={activeOrg.role}
                 />
+              )}
+
+              {activeOrg && activeTab === 'replay' && (
+                <>
+                  {!project && !error && (
+                    <p className="dash-empty dash-card">
+                      No projects yet.{' '}
+                      {canManage ? 'Use the Project switcher in the sidebar to create one.' : `Your role (${activeOrg.role}) cannot create projects.`}
+                    </p>
+                  )}
+                  {project && <ReplaySettingsPanel key={project.id} project={project} canManage={canManage} />}
+                </>
               )}
 
               {activeOrg && activeTab === 'keys' && (

@@ -25,6 +25,48 @@ function rrwebEventsOf(payload: unknown): eventWithTime[] {
   return list.filter(isRrwebEvent)
 }
 
+const INCREMENTAL_SNAPSHOT = 3
+const SOURCE_MUTATION = 0
+
+type FlatAdd = { parentId: number; nextId: number | null; node: Record<string, unknown> }
+
+/**
+ * rrweb's replayer builds a node from a mutation `adds` entry with `skipChild: true`, so only the entry's own
+ * element is created and any `childNodes` nested inside it are dropped (later mutations then fail with
+ * "Node with id … not found"). The Android SDK nests whole subtrees, so each nested add becomes one flat
+ * entry per node, pre-order (a parent always precedes its children). Only the subtree root keeps `nextId`;
+ * descendants append in order. Events without nested adds are returned as the same object.
+ */
+export function flattenNestedAdds(events: eventWithTime[]): eventWithTime[] {
+  return events.map((e) => {
+    if (e.type !== INCREMENTAL_SNAPSHOT) return e
+    const data: unknown = e.data
+    if (!isRec(data) || data.source !== SOURCE_MUTATION) return e
+    const adds: unknown = data.adds
+    if (!Array.isArray(adds)) return e
+    const nested = adds.some(
+      (a) => isRec(a) && isRec(a.node) && Array.isArray(a.node.childNodes) && a.node.childNodes.length > 0,
+    )
+    if (!nested) return e
+
+    const flat: FlatAdd[] = []
+    const visit = (node: Record<string, unknown>, parentId: number, nextId: number | null) => {
+      const kids = Array.isArray(node.childNodes) ? (node.childNodes as unknown[]) : []
+      const entry: Record<string, unknown> = { ...node }
+      if (node.type === 2 || Array.isArray(node.childNodes)) entry.childNodes = []
+      flat.push({ parentId, nextId, node: entry })
+      for (const kid of kids) {
+        if (isRec(kid)) visit(kid, Number(node.id), null)
+      }
+    }
+    for (const a of adds) {
+      if (!isRec(a) || !isRec(a.node)) continue
+      visit(a.node, Number(a.parentId), a.nextId == null ? null : Number(a.nextId))
+    }
+    return { ...e, data: { ...data, adds: flat } } as eventWithTime
+  })
+}
+
 /**
  * Sorts, de-duplicates and trims rrweb events so playback starts at a Meta event
  * followed by a FullSnapshot. Returns null when nothing replayable remains.
@@ -52,7 +94,7 @@ export function normalizeWebEvents(raw: eventWithTime[]): eventWithTime[] | null
     }
   }
 
-  const out = sorted.slice(start)
+  const out = flattenNestedAdds(sorted.slice(start))
   return out.length >= 2 ? out : null
 }
 

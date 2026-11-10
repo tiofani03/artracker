@@ -20,12 +20,15 @@ type Project struct {
 	Slug      string    `json:"slug"`
 	Platform  string    `json:"platform"`
 	CreatedAt time.Time `json:"created_at"`
+
+	// ReplayScreenshotEnabled is the server-side switch for screenshot-mode replay uploads.
+	ReplayScreenshotEnabled bool `json:"replay_screenshot_enabled"`
 }
 
-const projectColumns = `id, org_id, name, slug, platform, created_at`
+const projectColumns = `id, org_id, name, slug, platform, created_at, replay_screenshot_enabled`
 
 func scanProject(row pgx.Row, p *Project) error {
-	return row.Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.Platform, &p.CreatedAt)
+	return row.Scan(&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.Platform, &p.CreatedAt, &p.ReplayScreenshotEnabled)
 }
 
 func (h *Handler) ListProjects(c *fiber.Ctx) error {

@@ -5096,3 +5096,84 @@
   opacity: 0.55;
   font-style: italic;
 }
+
+/* ---- screenshot replay (ScreenReplayRenderer) ---- */
+.sr-stage {
+  position: relative;
+  margin: 0 auto;
+  overflow: hidden;
+  background: #0b0b0f;
+  border-radius: 12px;
+}
+.sr-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+.sr-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(15, 23, 42, 0.72);
+  pointer-events: none;
+}
+.sr-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+.sr-touch {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  border-radius: 50%;
+  border: 2px solid rgba(59, 130, 246, 0.9);
+  background: rgba(59, 130, 246, 0.25);
+  pointer-events: none;
+}
+.sr-touch--up {
+  opacity: 0.55;
+}
+
+/* ---- on/off switch (Replay settings) ---- */
+.dash-switch {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: #cbd5e1;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.dash-switch.is-on {
+  background: #2563eb;
+}
+.dash-switch:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.dash-switch__knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s ease;
+}
+.dash-switch.is-on .dash-switch__knob {
+  transform: translateX(20px);
+}

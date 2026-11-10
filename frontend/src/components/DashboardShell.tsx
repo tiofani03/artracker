@@ -24,6 +24,7 @@ const DEMO_PROJECT: Project = {
   slug: 'checkout-web',
   platform: 'web',
   created_at: '2026-11-04T06:00:00Z',
+  replay_screenshot_enabled: true,
 }
 
 const DEMO_USER: User = {

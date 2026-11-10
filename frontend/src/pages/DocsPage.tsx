@@ -713,6 +713,30 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
     },
   },
   {
+    id: 'replay-config',
+    title: 'Replay Capture Settings',
+    category: 'SESSION REPLAY API',
+    method: 'GET',
+    path: '/replay/config',
+    description:
+      'Tells a mobile SDK whether screenshot-mode replay (artracker-screen-v1) may be captured and uploaded for the key\'s project, and the frame-rate ceiling. SDKs call it when replay starts and cache the answer.',
+    callouts: [
+      {
+        type: 'info',
+        title: 'Server-side switch',
+        content:
+          'Project admins turn screenshot replay on or off under Settings > Replay. When it is off, chunk-url answers 403 {"error":"screenshot_disabled"} for format artracker-screen-v1; the SDK must stop screenshot capture and fall back to wireframe mode. Requests without a format are unaffected.',
+      },
+    ],
+    headers: [
+      { name: 'X-Artracker-Key', type: 'string', required: true, desc: 'Project client API key starting with art_live_.' },
+    ],
+    responseSample: JSON.stringify({ screenshot_enabled: true, max_fps: 10 }, null, 2),
+    defaultHeaders: {
+      Accept: 'application/json',
+    },
+  },
+  {
     id: 'replay-chunk-url',
     title: 'Request Chunk Upload URL',
     category: 'SESSION REPLAY API',
@@ -740,6 +764,12 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
           'Each chunk is gzipped JSON. Web: an rrweb event array (or { "events": [...] }); the first chunk must contain a Meta (type 4) and FullSnapshot (type 2) event. Mobile: { "format": "artracker-mobile-v1", "platform": "ios" | "android", "frames": [{ "ts", "screen", "view_tree", "presentation"?, "masked_count"? }], "touches": [{ "ts", "x", "y", "name"? }] } with ts in epoch milliseconds and view_tree nodes shaped { "cls", "frame": [x, y, w, h], "text"?, "hidden"?, "children"? }.',
       },
       {
+        type: 'info',
+        title: 'Screenshot Chunks (artracker-screen-v1)',
+        content:
+          'Screenshot mode uploads real screen images: { "format": "artracker-screen-v1", "platform": "ios" | "android", "seq", "frames": [{ "ts", "screen", "w", "h", "vw", "vh", "mime": "image/jpeg", "data": <base64>, "masked" }], "touches": [{ "ts", "x", "y", "kind": "down" | "move" | "up" }] }. ts is epoch milliseconds; w/h are image pixels; vw/vh and touch coordinates are in dp (Android) or pt (iOS). Frames are sorted by ts, every frame is a complete image, and a chunk stays under 2 MB gzipped. Send "format": "artracker-screen-v1" in this request; chunk-ack event_count = frames + touches.',
+      },
+      {
         type: 'tip',
         title: 'Mobile View Trees Belong in Chunks',
         content:
@@ -757,6 +787,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
       { name: 'user_id', type: 'string', required: false, desc: 'Optional user identifier.' },
       { name: 'environment', type: 'string', required: false, desc: 'Environment name (default: production).' },
       { name: 'start_time', type: 'string (ISO-8601)', required: false, desc: 'Session initiation timestamp.' },
+      { name: 'format', type: 'string', required: false, desc: 'Chunk format about to be uploaded; send artracker-screen-v1 for screenshot replay. Answered with 403 screenshot_disabled when the project switch is off.' },
     ],
     defaultHeaders: {
       'Content-Type': 'application/json',

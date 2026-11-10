@@ -1,4 +1,5 @@
 import type { eventWithTime } from 'rrweb'
+import type { ScreenReplaySession } from './screenSession'
 
 /** Native view hierarchy node as captured by the iOS / Android SDKs. */
 export type ViewNode = {
@@ -39,5 +40,13 @@ export type ReplayModel =
       touches: TouchPoint[]
       startMs: number
       endMs: number
+    }
+  | {
+      /** Screenshot-mode replay (`artracker-screen-v1`): the device's own pixels, loaded progressively. */
+      kind: 'screen'
+      platform: 'ios' | 'android'
+      startMs: number
+      endMs: number
+      session: ScreenReplaySession
     }
   | { kind: 'none'; reason: 'no-chunks' | 'no-visual-data' | 'load-error'; detail?: string }

@@ -15,7 +15,9 @@ type Config struct {
 	FlushIntervalMs int
 	ProjectRPS      float64
 	ProjectEventsPS float64
-	KeyCacheTTLSec  int
+	// ReplayRPS is the per-project replay request rate (burst 2x); <= 0 means the default (100).
+	ReplayRPS      float64
+	KeyCacheTTLSec int
 }
 
 // Service is the unified manager for authentication caching, rate limiting,
@@ -34,7 +36,7 @@ type Service struct {
 func NewService(cfg Config, pool *pgxpool.Pool, customSink ...StorageSink) *Service {
 	metrics := NewMetrics(cfg.QueueSize, cfg.Workers)
 	keyCache := NewMemoryKeyCache(pool, time.Duration(cfg.KeyCacheTTLSec)*time.Second)
-	rateLimiter := NewProjectRateLimiter(cfg.ProjectRPS, cfg.ProjectEventsPS)
+	rateLimiter := NewProjectRateLimiterWithReplay(cfg.ProjectRPS, cfg.ProjectEventsPS, cfg.ReplayRPS)
 	decompress := NewDecompressor()
 
 	var sink StorageSink

@@ -66,6 +66,13 @@ func setupReplayTestApp(t *testing.T, withStore bool) (*fiber.App, string) {
 
 func setupReplayTestAppWithStore(t *testing.T, store storage.ReplayStore) (*fiber.App, string) {
 	t.Helper()
+	app, _, key := setupReplayTestHandler(t, store)
+	return app, key
+}
+
+// setupReplayTestHandler is setupReplayTestAppWithStore that also returns the Handler (project 88, key seeded).
+func setupReplayTestHandler(t *testing.T, store storage.ReplayStore) (*fiber.App, *Handler, string) {
+	t.Helper()
 
 	cfg := ingest.Config{
 		Workers:         2,
@@ -100,7 +107,7 @@ func setupReplayTestAppWithStore(t *testing.T, store storage.ReplayStore) (*fibe
 	app := fiber.New(fiber.Config{ErrorHandler: ErrorHandler})
 	h.Routes(app.Group("/api/v1"))
 
-	return app, plainKey
+	return app, h, plainKey
 }
 
 func TestReplayChunkURLValidation(t *testing.T) {
