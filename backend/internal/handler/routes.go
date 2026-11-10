@@ -16,11 +16,11 @@ func (h *Handler) Routes(api fiber.Router) {
 
 	api.Post("/ingest", h.VerifyIngestKey, h.RateLimitIngest, h.Ingest)
 	api.Post("/events", h.VerifyIngestKey, h.RateLimitAnalytics, h.IngestEvents)
-	api.Post("/replay/chunk-url", h.VerifyIngestKey, h.RateLimitIngest, h.GenerateChunkUploadURL)
-	api.Get("/replay/config", h.VerifyIngestKey, h.RateLimitIngest, h.GetReplayConfig)
+	api.Post("/replay/chunk-url", h.VerifyIngestKey, h.RateLimitReplay, h.GenerateChunkUploadURL)
+	api.Get("/replay/config", h.VerifyIngestKey, h.RateLimitReplay, h.GetReplayConfig)
 	api.Put("/replay/upload-chunk", h.UploadChunkProxy)
 	api.Get("/replay/download-chunk", h.DownloadChunkProxy)
-	api.Post("/replay/chunk-ack", h.VerifyIngestKey, h.RateLimitIngest, h.AcknowledgeChunk)
+	api.Post("/replay/chunk-ack", h.VerifyIngestKey, h.RateLimitReplay, h.AcknowledgeChunk)
 
 	if h.db == nil {
 		// SKIP_DB mode: only the in-memory artwork routes exist.

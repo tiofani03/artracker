@@ -24,6 +24,7 @@ type Config struct {
 	IngestBatchSize           int
 	IngestFlushIntervalMs     int
 	IngestProjectRPS          float64
+	ReplayRateRPS             float64
 	IngestProjectEventsPerSec float64
 	IngestKeyCacheTTLSec      int
 
@@ -76,6 +77,7 @@ func Load() Config {
 		IngestBatchSize:           envInt("INGEST_BATCH_SIZE", 500),
 		IngestFlushIntervalMs:     envInt("INGEST_FLUSH_INTERVAL_MS", 250),
 		IngestProjectRPS:          envFloat("INGEST_PROJECT_RPS", 50.0),
+		ReplayRateRPS:             envFloat("REPLAY_RATE_RPS", 100.0),
 		IngestProjectEventsPerSec: envFloat("INGEST_PROJECT_EVENTS_PER_SEC", 1000.0),
 		IngestKeyCacheTTLSec:      envInt("INGEST_KEY_CACHE_TTL_SEC", 60),
 

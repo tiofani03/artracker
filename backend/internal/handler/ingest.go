@@ -61,6 +61,27 @@ func (h *Handler) RateLimitIngest(c *fiber.Ctx) error {
 	return c.Next()
 }
 
+// RateLimitReplay checks the project's replay request quota (own bucket, separate from telemetry ingest).
+func (h *Handler) RateLimitReplay(c *fiber.Ctx) error {
+	projectID, ok := c.Locals("projectID").(int64)
+	if !ok || projectID <= 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	if h.ingestSvc == nil {
+		return c.Next()
+	}
+
+	allowed, retryAfter := h.ingestSvc.RateLimiter().AllowReplayRequest(projectID)
+	if !allowed {
+		c.Set("Retry-After", strconv.Itoa(retryAfter))
+		h.ingestSvc.Metrics().IncRejectedRequests()
+		return fiber.NewError(fiber.StatusTooManyRequests, "rate limit exceeded")
+	}
+
+	return c.Next()
+}
+
 // Ingest handles POST /api/v1/ingest.
 func (h *Handler) Ingest(c *fiber.Ctx) error {
 	projectID := c.Locals("projectID").(int64)

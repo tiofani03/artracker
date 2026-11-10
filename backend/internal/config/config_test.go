@@ -60,3 +60,15 @@ func TestLoadReplayLocalDir(t *testing.T) {
 		t.Fatalf("ReplayLocalDir default = %q, want empty", got)
 	}
 }
+
+func TestLoadReplayRateRPS(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("REPLAY_RATE_RPS", "")
+	if got := Load().ReplayRateRPS; got != 100 {
+		t.Fatalf("ReplayRateRPS default = %v, want 100", got)
+	}
+	t.Setenv("REPLAY_RATE_RPS", "250")
+	if got := Load().ReplayRateRPS; got != 250 {
+		t.Fatalf("ReplayRateRPS = %v, want 250", got)
+	}
+}

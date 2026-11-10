@@ -57,6 +57,7 @@ func main() {
 		BatchSize:       cfg.IngestBatchSize,
 		FlushIntervalMs: cfg.IngestFlushIntervalMs,
 		ProjectRPS:      cfg.IngestProjectRPS,
+		ReplayRPS:       cfg.ReplayRateRPS,
 		ProjectEventsPS: cfg.IngestProjectEventsPerSec,
 		KeyCacheTTLSec:  cfg.IngestKeyCacheTTLSec,
 	}, pool)
