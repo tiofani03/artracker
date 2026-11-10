@@ -22,13 +22,15 @@ type BucketPoint struct {
 }
 
 type ProjectStatsResponse struct {
-	Range         string        `json:"range"`
-	SessionsCount int64         `json:"sessions_count"`
-	EventsCount   int64         `json:"events_count"`
-	ErrorsCount   int64         `json:"errors_count"`
-	ErrorFreePct  string        `json:"error_free_pct"`
-	ErrorNote     string        `json:"error_note"`
-	Buckets       []BucketPoint `json:"buckets"`
+	Range                   string        `json:"range"`
+	SessionsCount           int64         `json:"sessions_count"`
+	EventsCount             int64         `json:"events_count"`
+	ErrorsCount             int64         `json:"errors_count"`
+	ErrorFreePct            string        `json:"error_free_pct"`
+	ErrorNote               string        `json:"error_note"`
+	OpenIssuesCount         int64         `json:"open_issues_count"`
+	FrustratedSessionsCount int64         `json:"frustrated_sessions_count"`
+	Buckets                 []BucketPoint `json:"buckets"`
 }
 
 type TelemetryEventItem struct {
@@ -61,93 +63,114 @@ func (h *Handler) GetProjectStats(c *fiber.Ctx) error {
 		return c.JSON(h.statsFromMemory(projectID, rangeKey))
 	}
 
-	var intervalStr, bucketGenSQL string
-	var sinceInterval string
+	var sinceInterval, stepInterval, labelFormat, seriesStartOffset, truncUnit string
 
 	switch rangeKey {
 	case "7d":
 		sinceInterval = "7 days"
-		intervalStr = "1 day"
-		bucketGenSQL = `
-			SELECT 
-				to_char(b, 'Dy') as label,
-				count(DISTINCT t.session_id) FILTER (WHERE t.session_id <> '') as sessions,
-				count(t.id) FILTER (WHERE t.kind = 'log' AND t.level IN ('error', 'fatal')) as errors
-			FROM generate_series(
-				date_trunc('day', now() - interval '6 days'),
-				date_trunc('day', now()),
-				interval '1 day'
-			) b
-			LEFT JOIN telemetry_events t 
-				ON t.project_id = $1 
-				AND t.event_timestamp >= b 
-				AND t.event_timestamp < b + interval '1 day'
-			GROUP BY b
-			ORDER BY b ASC`
+		stepInterval = "1 day"
+		labelFormat = "Dy"
+		seriesStartOffset = "6 days"
+		truncUnit = "day"
 	case "30d":
 		sinceInterval = "30 days"
-		intervalStr = "1 day"
-		bucketGenSQL = `
-			SELECT 
-				to_char(b, 'DD Mon') as label,
-				count(DISTINCT t.session_id) FILTER (WHERE t.session_id <> '') as sessions,
-				count(t.id) FILTER (WHERE t.kind = 'log' AND t.level IN ('error', 'fatal')) as errors
-			FROM generate_series(
-				date_trunc('day', now() - interval '29 days'),
-				date_trunc('day', now()),
-				interval '1 day'
-			) b
-			LEFT JOIN telemetry_events t 
-				ON t.project_id = $1 
-				AND t.event_timestamp >= b 
-				AND t.event_timestamp < b + interval '1 day'
-			GROUP BY b
-			ORDER BY b ASC`
+		stepInterval = "1 day"
+		labelFormat = "DD Mon"
+		seriesStartOffset = "29 days"
+		truncUnit = "day"
 	default: // 24h
 		sinceInterval = "24 hours"
-		intervalStr = "2 hours"
-		bucketGenSQL = `
-			SELECT 
-				to_char(b, 'HH24:00') as label,
-				count(DISTINCT t.session_id) FILTER (WHERE t.session_id <> '') as sessions,
-				count(t.id) FILTER (WHERE t.kind = 'log' AND t.level IN ('error', 'fatal')) as errors
-			FROM generate_series(
-				date_trunc('hour', now() - interval '22 hours'),
-				date_trunc('hour', now()),
-				interval '2 hours'
-			) b
-			LEFT JOIN telemetry_events t 
-				ON t.project_id = $1 
-				AND t.event_timestamp >= b 
-				AND t.event_timestamp < b + interval '2 hours'
-			GROUP BY b
-			ORDER BY b ASC`
+		stepInterval = "2 hours"
+		labelFormat = "HH24:00"
+		seriesStartOffset = "22 hours"
+		truncUnit = "hour"
 	}
-	_ = intervalStr
 
-	var sessionsCount, eventsCount, errorsCount int64
-	summarySQL := fmt.Sprintf(`
-		SELECT 
-			count(DISTINCT session_id) FILTER (WHERE session_id <> ''),
-			count(id),
-			count(id) FILTER (WHERE kind = 'log' AND level IN ('error', 'fatal'))
-		FROM telemetry_events
-		WHERE project_id = $1 AND event_timestamp >= now() - interval '%s'`, sinceInterval)
+	var sessionsCount, eventsCount, errorsCount, errorSessionsCount, openIssuesCount, frustratedSessionsCount int64
+	summarySQL := `
+		SELECT
+			(
+				SELECT count(DISTINCT s_id) FROM (
+					SELECT session_id AS s_id FROM telemetry_events
+					WHERE project_id = $1 AND event_timestamp >= now() - $2::interval AND session_id <> ''
+					UNION
+					SELECT id AS s_id FROM replay_sessions
+					WHERE project_id = $1 AND start_time >= now() - $2::interval
+					UNION
+					SELECT session_id AS s_id FROM events
+					WHERE project_id = $1 AND "timestamp" >= now() - $2::interval AND session_id <> ''
+				) u
+			),
+			(
+				(SELECT count(*) FROM telemetry_events
+				 WHERE project_id = $1
+				   AND event_timestamp >= now() - $2::interval
+				   AND name != 'replay_chunk'
+				   AND NOT (
+				     kind = 'log' AND (
+				       message LIKE '%/api/v1/replay/%' OR
+				       message LIKE '%/api/v1/ingest%' OR
+				       message LIKE '%/api/v1/events%' OR
+				       message LIKE '%.r2.cloudflarestorage.com%'
+				     )
+				   ))
+				+
+				(SELECT count(*) FROM events
+				 WHERE project_id = $1 AND "timestamp" >= now() - $2::interval)
+			),
+			(
+				(SELECT count(*) FROM telemetry_events
+				 WHERE project_id = $1
+				   AND event_timestamp >= now() - $2::interval
+				   AND kind = 'log' AND level IN ('error', 'fatal'))
+				+
+				(SELECT count(*) FROM replay_sessions rs
+				 WHERE rs.project_id = $1
+				   AND rs.start_time >= now() - $2::interval
+				   AND rs.has_error = true
+				   AND NOT EXISTS (
+				       SELECT 1 FROM telemetry_events t
+				       WHERE t.project_id = $1 AND t.session_id = rs.id
+				         AND t.kind = 'log' AND t.level IN ('error', 'fatal')
+				   ))
+			),
+			(
+				SELECT count(DISTINCT s_id) FROM (
+					SELECT session_id AS s_id FROM telemetry_events
+					WHERE project_id = $1
+					  AND event_timestamp >= now() - $2::interval
+					  AND kind = 'log' AND level IN ('error', 'fatal')
+					  AND session_id <> ''
+					UNION
+					SELECT id AS s_id FROM replay_sessions
+					WHERE project_id = $1
+					  AND start_time >= now() - $2::interval
+					  AND has_error = true
+					UNION
+					SELECT ie.session_id AS s_id FROM issue_events ie
+					JOIN issues i ON i.id = ie.issue_id
+					WHERE i.project_id = $1
+					  AND ie.created_at >= now() - $2::interval
+					  AND ie.session_id <> ''
+				) err_u
+			),
+			(SELECT count(*) FROM issues WHERE project_id = $1 AND status = 'open'),
+			(SELECT count(*) FROM replay_sessions
+			 WHERE project_id = $1
+			   AND start_time >= now() - $2::interval
+			   AND (has_error OR has_rage_click OR has_dead_click))`
 
-	err := h.db.QueryRow(ctx, summarySQL, projectID).Scan(&sessionsCount, &eventsCount, &errorsCount)
+	err := h.db.QueryRow(ctx, summarySQL, projectID, sinceInterval).Scan(
+		&sessionsCount,
+		&eventsCount,
+		&errorsCount,
+		&errorSessionsCount,
+		&openIssuesCount,
+		&frustratedSessionsCount,
+	)
 	if err != nil {
 		return err
 	}
-
-	var errorSessionsCount int64
-	errSessionsSQL := fmt.Sprintf(`
-		SELECT count(DISTINCT session_id)
-		FROM telemetry_events
-		WHERE project_id = $1 
-		  AND event_timestamp >= now() - interval '%s'
-		  AND kind = 'log' AND level IN ('error', 'fatal')
-		  AND session_id <> ''`, sinceInterval)
-	_ = h.db.QueryRow(ctx, errSessionsSQL, projectID).Scan(&errorSessionsCount)
 
 	errorFreePct := "100.0%"
 	if sessionsCount > 0 {
@@ -158,7 +181,47 @@ func (h *Handler) GetProjectStats(c *fiber.Ctx) error {
 		errorFreePct = fmt.Sprintf("%.2f%%", pct)
 	}
 
-	rows, err := h.db.Query(ctx, bucketGenSQL, projectID)
+	bucketGenSQL := `
+		WITH buckets AS (
+			SELECT b AS start_ts, b + $4::interval AS end_ts
+			FROM generate_series(
+				date_trunc($2, now() - $3::interval),
+				date_trunc($2, now()),
+				$4::interval
+			) b
+		)
+		SELECT
+			to_char(bk.start_ts, $5) AS label,
+			(
+				SELECT count(DISTINCT s_id) FROM (
+					SELECT t.session_id AS s_id FROM telemetry_events t
+					WHERE t.project_id = $1 AND t.event_timestamp >= bk.start_ts AND t.event_timestamp < bk.end_ts AND t.session_id <> ''
+					UNION
+					SELECT rs.id AS s_id FROM replay_sessions rs
+					WHERE rs.project_id = $1 AND rs.start_time >= bk.start_ts AND rs.start_time < bk.end_ts
+					UNION
+					SELECT ev.session_id AS s_id FROM events ev
+					WHERE ev.project_id = $1 AND ev."timestamp" >= bk.start_ts AND ev."timestamp" < bk.end_ts AND ev.session_id <> ''
+				) u
+			) AS sessions,
+			(
+				(SELECT count(*) FROM telemetry_events t
+				 WHERE t.project_id = $1 AND t.event_timestamp >= bk.start_ts AND t.event_timestamp < bk.end_ts
+				   AND t.kind = 'log' AND t.level IN ('error', 'fatal'))
+				+
+				(SELECT count(*) FROM replay_sessions rs
+				 WHERE rs.project_id = $1 AND rs.start_time >= bk.start_ts AND rs.start_time < bk.end_ts
+				   AND rs.has_error = true
+				   AND NOT EXISTS (
+				       SELECT 1 FROM telemetry_events t2
+				       WHERE t2.project_id = $1 AND t2.session_id = rs.id
+				         AND t2.kind = 'log' AND t2.level IN ('error', 'fatal')
+				   ))
+			) AS errors
+		FROM buckets bk
+		ORDER BY bk.start_ts ASC`
+
+	rows, err := h.db.Query(ctx, bucketGenSQL, projectID, truncUnit, seriesStartOffset, stepInterval, labelFormat)
 	if err != nil {
 		return err
 	}
@@ -179,13 +242,15 @@ func (h *Handler) GetProjectStats(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(ProjectStatsResponse{
-		Range:         rangeKey,
-		SessionsCount: sessionsCount,
-		EventsCount:   eventsCount,
-		ErrorsCount:   errorsCount,
-		ErrorFreePct:  errorFreePct,
-		ErrorNote:     errorNote,
-		Buckets:       buckets,
+		Range:                   rangeKey,
+		SessionsCount:           sessionsCount,
+		EventsCount:             eventsCount,
+		ErrorsCount:             errorsCount,
+		ErrorFreePct:            errorFreePct,
+		ErrorNote:               errorNote,
+		OpenIssuesCount:         openIssuesCount,
+		FrustratedSessionsCount: frustratedSessionsCount,
+		Buckets:                 buckets,
 	})
 }
 
@@ -193,9 +258,9 @@ func (h *Handler) GetProjectStats(c *fiber.Ctx) error {
 func (h *Handler) ListProjectEvents(c *fiber.Ctx) error {
 	projectID := c.Locals("projectID").(int64)
 	kindFilter := strings.ToLower(strings.TrimSpace(c.Query("kind", "all")))
-	limit, _ := strconv.Atoi(c.Query("limit", "50"))
-	if limit <= 0 || limit > 100 {
-		limit = 50
+	limit, _ := strconv.Atoi(c.Query("limit", "100"))
+	if limit <= 0 || limit > 500 {
+		limit = 100
 	}
 
 	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
@@ -206,21 +271,87 @@ func (h *Handler) ListProjectEvents(c *fiber.Ctx) error {
 	}
 
 	query := `
+		WITH unified_events AS (
+			SELECT 
+				id::text AS id,
+				kind,
+				name,
+				level,
+				message,
+				session_id,
+				user_id,
+				environment,
+				release_version,
+				event_timestamp,
+				attributes
+			FROM telemetry_events
+			WHERE project_id = $1
+			  AND name != 'replay_chunk'
+			  AND NOT (
+			    kind = 'log' AND (
+			      message LIKE '%/api/v1/replay/%' OR
+			      message LIKE '%/api/v1/ingest%' OR
+			      message LIKE '%/api/v1/events%' OR
+			      message LIKE '%.r2.cloudflarestorage.com%'
+			    )
+			  )
+			UNION ALL
+			SELECT
+				'ie_' || ie.id::text AS id,
+				'log' AS kind,
+				i.type AS name,
+				'error' AS level,
+				COALESCE(NULLIF(ie.message, ''), i.title) AS message,
+				ie.session_id,
+				ie.user_id,
+				'production' AS environment,
+				ie.release_version,
+				ie.created_at AS event_timestamp,
+				COALESCE(ie.device_info, '{}'::jsonb) || jsonb_build_object('issue_id', i.id, 'fingerprint', i.fingerprint) AS attributes
+			FROM issue_events ie
+			JOIN issues i ON i.id = ie.issue_id
+			WHERE i.project_id = $1
+			  AND NOT EXISTS (
+			    SELECT 1 FROM telemetry_events t
+			    WHERE t.project_id = $1
+			      AND t.session_id = ie.session_id
+			      AND t.session_id != ''
+			      AND t.kind = 'log'
+			      AND t.level IN ('error', 'fatal')
+			      AND ABS(EXTRACT(EPOCH FROM (t.event_timestamp - ie.created_at))) < 2
+			  )
+			UNION ALL
+			SELECT
+				e.id::text AS id,
+				'event' AS kind,
+				e.event_name AS name,
+				'info' AS level,
+				COALESCE(NULLIF(e.properties->>'url', ''), NULLIF(e.properties->>'path', ''), e.event_name) AS message,
+				e.session_id,
+				e.user_id,
+				'production' AS environment,
+				'' AS release_version,
+				e."timestamp" AS event_timestamp,
+				COALESCE(e.properties, '{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object(
+					'utm_source', NULLIF(e.utm_source, ''),
+					'utm_medium', NULLIF(e.utm_medium, ''),
+					'utm_campaign', NULLIF(e.utm_campaign, ''),
+					'browser', NULLIF(e.browser, ''),
+					'os', NULLIF(e.os, '')
+				)) AS attributes
+			FROM events e
+			WHERE e.project_id = $1
+			  AND NOT EXISTS (
+			    SELECT 1 FROM telemetry_events t
+			    WHERE t.project_id = $1
+			      AND t.id = e.id
+			  )
+		)
 		SELECT 
-			id::text, kind, name, level, message, session_id, user_id, 
+			id, kind, name, level, message, session_id, user_id, 
 			environment, release_version, event_timestamp, attributes
-		FROM telemetry_events
-		WHERE project_id = $1
-		  AND ($2 = '' OR kind = $2)
-		  AND name != 'replay_chunk'
-		  AND NOT (
-		    kind = 'log' AND (
-		      message LIKE '%/api/v1/replay/%' OR
-		      message LIKE '%/api/v1/ingest%' OR
-		      message LIKE '%/api/v1/events%' OR
-		      message LIKE '%.r2.cloudflarestorage.com%'
-		    )
-		  )
+		FROM unified_events
+		WHERE ($2 = '' OR kind = $2)
 		ORDER BY event_timestamp DESC
 		LIMIT $3`
 

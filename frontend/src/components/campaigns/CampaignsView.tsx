@@ -17,6 +17,8 @@ type CampaignRow = {
   channel: string
   visitors: number
   signups: number
+  addToCart: number
+  checkoutStart: number
   checkouts: number
   conversionRate: number
   status: 'Top Performer' | 'Healthy' | 'Low Conversion'
@@ -24,69 +26,11 @@ type CampaignRow = {
 
 type RangeOption = '7d' | '30d' | '90d'
 
-const DEFAULT_CAMPAIGNS: CampaignRow[] = [
-  {
-    id: 'c1',
-    name: 'utm_newsletter_nov',
-    source: 'email / ops-digest',
-    channel: 'Email',
-    visitors: 128,
-    signups: 52,
-    checkouts: 24,
-    conversionRate: 18.75,
-    status: 'Top Performer',
-  },
-  {
-    id: 'c2',
-    name: 'utm_launch_q4',
-    source: 'google / cpc',
-    channel: 'Google Ads',
-    visitors: 186,
-    signups: 65,
-    checkouts: 30,
-    conversionRate: 16.13,
-    status: 'Healthy',
-  },
-  {
-    id: 'c3',
-    name: 'utm_github_readme',
-    source: 'github / referral',
-    channel: 'GitHub',
-    visitors: 96,
-    signups: 38,
-    checkouts: 14,
-    conversionRate: 14.58,
-    status: 'Healthy',
-  },
-  {
-    id: 'c4',
-    name: 'utm_ig_reels',
-    source: 'instagram / paid',
-    channel: 'Instagram',
-    visitors: 142,
-    signups: 49,
-    checkouts: 18,
-    conversionRate: 12.68,
-    status: 'Healthy',
-  },
-  {
-    id: 'c5',
-    name: 'utm_twitter_thread',
-    source: 'twitter / organic',
-    channel: 'Twitter',
-    visitors: 100,
-    signups: 28,
-    checkouts: 8,
-    conversionRate: 8.0,
-    status: 'Low Conversion',
-  },
-]
-
 export default function CampaignsView({ project }: Props) {
   const [range, setRange] = useState<RangeOption>('30d')
   const [channelFilter, setChannelFilter] = useState('all')
   const [searchQuery, setSearchQuery] = useState('')
-  const [campaigns, setCampaigns] = useState<CampaignRow[]>(DEFAULT_CAMPAIGNS)
+  const [campaigns, setCampaigns] = useState<CampaignRow[]>([])
   const [selectedCampaign, setSelectedCampaign] = useState<CampaignRow | null>(null)
   const [loadingFunnel, setLoadingFunnel] = useState(false)
 
@@ -99,14 +43,16 @@ export default function CampaignsView({ project }: Props) {
 
   // Load real campaigns from backend breakdown
   useEffect(() => {
-    const targetPid = project?.id ?? 1
+    if (!project) return
+    let active = true
+    const targetPid = project.id
     const days = range === '7d' ? 7 : range === '90d' ? 90 : 30
     const from = new Date(Date.now() - days * 86400 * 1000).toISOString()
     const to = new Date().toISOString()
 
     analyticsApi
       .calculateFunnel(targetPid, {
-        steps: ['landing_view', 'purchase_completed'],
+        steps: ['landing_view', 'view_product', 'add_to_cart', 'checkout_start', 'purchase_completed'],
         from,
         to,
         window_seconds: 86400,
@@ -114,33 +60,49 @@ export default function CampaignsView({ project }: Props) {
         breakdown_by: 'utm_source',
       })
       .then((res) => {
-        if (!res.breakdowns || res.breakdowns.length === 0) return
-        const mapped: CampaignRow[] = res.breakdowns.map((bd, i) => {
-          const visitors = bd.step_counts[0] || 0
-          const checkouts = bd.step_counts[1] || 0
-          const rate = visitors > 0 ? (checkouts / visitors) * 100 : 0
-          const channelName =
-            bd.segment.charAt(0).toUpperCase() + bd.segment.slice(1)
-          const status: CampaignRow['status'] =
-            rate >= 18 ? 'Top Performer' : rate >= 12 ? 'Healthy' : 'Low Conversion'
+        if (!active) return
+        if (!res.breakdowns || res.breakdowns.length === 0) {
+          setCampaigns([])
+          setSelectedCampaign(null)
+          return
+        }
+        const mapped: CampaignRow[] = res.breakdowns
+          .filter((bd) => (bd.step_counts[0] || 0) > 0)
+          .map((bd, i) => {
+            const visitors = bd.step_counts[0] || 0
+            const signups = bd.step_counts[1] || 0
+            const addToCart = bd.step_counts[2] || 0
+            const checkoutStart = bd.step_counts[3] || 0
+            const checkouts = bd.step_counts[4] || 0
+            const rate = visitors > 0 ? (checkouts / visitors) * 100 : 0
+            const seg = bd.segment && bd.segment !== '(none)' ? bd.segment : 'organic'
+            const channelName = seg.charAt(0).toUpperCase() + seg.slice(1)
+            const status: CampaignRow['status'] =
+              rate >= 18 ? 'Top Performer' : rate >= 12 ? 'Healthy' : 'Low Conversion'
 
-          return {
-            id: 'real-c-' + i,
-            name: `utm_${bd.segment}_promo`,
-            source: `${bd.segment} / campaign`,
-            channel: channelName,
-            visitors,
-            signups: Math.round(visitors * 0.42),
-            checkouts,
-            conversionRate: Number(rate.toFixed(2)),
-            status,
-          }
-        })
+            return {
+              id: 'real-c-' + i,
+              name: seg.startsWith('utm_') ? seg : `utm_${seg}`,
+              source: `${seg} / campaign`,
+              channel: channelName,
+              visitors,
+              signups,
+              addToCart,
+              checkoutStart,
+              checkouts,
+              conversionRate: Number(rate.toFixed(2)),
+              status,
+            }
+          })
         setCampaigns(mapped)
       })
       .catch(() => {
-        // Fallback to default realistic campaigns if network fails
+        if (active) setCampaigns([])
       })
+
+    return () => {
+      active = false
+    }
   }, [project, range])
 
   // Filtered campaigns
@@ -448,11 +410,36 @@ export default function CampaignsView({ project }: Props) {
           ) : (
             <div className="campaigns-journey-steps">
               {[
-                { label: 'Landing Page View', event: 'landing_view', count: selectedCampaign.visitors, pct: 100 },
-                { label: 'Product Detail View', event: 'view_product', count: Math.round(selectedCampaign.visitors * 0.81), pct: 81.4 },
-                { label: 'Add to Cart', event: 'add_to_cart', count: Math.round(selectedCampaign.visitors * 0.63), pct: 62.9 },
-                { label: 'Begin Checkout', event: 'checkout_start', count: Math.round(selectedCampaign.visitors * 0.37), pct: 37.1 },
-                { label: 'Purchase Completed', event: 'purchase_completed', count: selectedCampaign.checkouts, pct: selectedCampaign.conversionRate },
+                {
+                  label: 'Landing Page View',
+                  event: 'landing_view',
+                  count: selectedCampaign.visitors,
+                  pct: 100,
+                },
+                {
+                  label: 'Product Detail View',
+                  event: 'view_product',
+                  count: selectedCampaign.signups,
+                  pct: selectedCampaign.visitors > 0 ? (selectedCampaign.signups / selectedCampaign.visitors) * 100 : 0,
+                },
+                {
+                  label: 'Add to Cart',
+                  event: 'add_to_cart',
+                  count: selectedCampaign.addToCart,
+                  pct: selectedCampaign.visitors > 0 ? (selectedCampaign.addToCart / selectedCampaign.visitors) * 100 : 0,
+                },
+                {
+                  label: 'Begin Checkout',
+                  event: 'checkout_start',
+                  count: selectedCampaign.checkoutStart,
+                  pct: selectedCampaign.visitors > 0 ? (selectedCampaign.checkoutStart / selectedCampaign.visitors) * 100 : 0,
+                },
+                {
+                  label: 'Purchase Completed',
+                  event: 'purchase_completed',
+                  count: selectedCampaign.checkouts,
+                  pct: selectedCampaign.conversionRate,
+                },
               ].map((st, idx, arr) => {
                 const isFinal = idx === arr.length - 1
                 return (

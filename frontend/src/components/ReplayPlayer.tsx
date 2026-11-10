@@ -32,15 +32,16 @@ import { chunkSignature } from '../replay/wireframe'
 import { detectSessionPlatform, type DetectedPlatform } from '../utils/platformDetector'
 import { MobileWireframeRenderer } from './MobileWireframeRenderer'
 import { ScreenReplayRenderer } from './ScreenReplayRenderer'
-
 export type TimelineMarker = {
   id: string
   offsetMs: number
   pct: number
   formattedTime: string
-  tone: 'error' | 'warn'
+  tone: 'error' | 'warn' | 'info'
   badgeLabel: string
   text: string
+  category: 'error' | 'network' | 'gesture' | 'other'
+  rawEvent?: TelemetryEvent
 }
 
 export type DeviceMode = 'auto' | 'web' | 'ios' | 'android'
@@ -69,45 +70,56 @@ function formatOffsetMs(ms: number): string {
   return `${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
 }
 
-function classifyMarker(ev: TelemetryEvent): { tone: 'error' | 'warn'; badgeLabel: string } {
+function classifyMarker(ev: TelemetryEvent): {
+  tone: 'error' | 'warn' | 'info'
+  badgeLabel: string
+  category: 'error' | 'network' | 'gesture' | 'other'
+} {
   const lvl = (ev.level || '').toLowerCase()
   const name = (ev.name || '').toLowerCase()
   const msg = (ev.message || '').toLowerCase()
+  const attrs = (ev.attributes || {}) as Record<string, unknown>
 
   if (
     lvl === 'error' ||
     lvl === 'fatal' ||
     name.includes('error') ||
     name.includes('exception') ||
-    name.includes('anr') ||
-    name.includes('hang') ||
-    msg.includes('anr') ||
-    msg.includes('hang') ||
-    msg.includes('typeerror') ||
-    msg.includes('502') ||
-    msg.includes('500')
+    name.includes('crash') ||
+    msg.includes('error') ||
+    msg.includes('uncaught') ||
+    msg.includes('exception') ||
+    msg.includes('typeerror')
   ) {
     if (name.includes('anr') || msg.includes('anr')) {
-      return { tone: 'error', badgeLabel: 'anr' }
+      return { tone: 'error', badgeLabel: 'anr', category: 'error' }
     }
     if (name.includes('hang') || msg.includes('hang')) {
-      return { tone: 'error', badgeLabel: 'ui hang' }
+      return { tone: 'error', badgeLabel: 'ui hang', category: 'error' }
     }
-    return { tone: 'error', badgeLabel: 'error' }
+    return { tone: 'error', badgeLabel: 'error', category: 'error' }
   }
-  if (name === 'rage_tap' || msg.includes('rage tap')) {
-    return { tone: 'warn', badgeLabel: 'rage tap' }
-  }
-  if (name === 'rage_click' || msg.includes('rage click')) {
-    return { tone: 'warn', badgeLabel: 'rage click' }
+  if (name === 'rage_tap' || msg.includes('rage tap') || name === 'rage_click' || msg.includes('rage click')) {
+    return { tone: 'warn', badgeLabel: 'rage click', category: 'gesture' }
   }
   if (name === 'dead_click' || msg.includes('dead click')) {
-    return { tone: 'warn', badgeLabel: 'dead click' }
+    return { tone: 'warn', badgeLabel: 'dead click', category: 'gesture' }
+  }
+  if (name === 'click' || name === 'touch' || Boolean(attrs.gesture)) {
+    return { tone: 'info', badgeLabel: 'tap', category: 'gesture' }
+  }
+  if (attrs.method || attrs.endpoint || attrs.status_code || name === 'network' || name.startsWith('http')) {
+    const status = typeof attrs.status_code === 'number' ? attrs.status_code : typeof attrs.status === 'number' ? attrs.status : 200
+    return {
+      tone: status >= 400 ? 'error' : 'info',
+      badgeLabel: `${attrs.method || 'HTTP'} ${status}`,
+      category: 'network',
+    }
   }
   if (lvl === 'warn' || lvl === 'warning') {
-    return { tone: 'warn', badgeLabel: 'warn' }
+    return { tone: 'warn', badgeLabel: 'warn', category: 'other' }
   }
-  return { tone: 'warn', badgeLabel: ev.kind === 'event' ? 'event' : 'log' }
+  return { tone: 'info', badgeLabel: ev.kind === 'event' ? 'event' : 'log', category: 'other' }
 }
 
 export default function ReplayPlayer({
@@ -426,7 +438,7 @@ export default function ReplayPlayer({
       }
 
       const pct = durationMs > 0 ? Math.min(99, Math.max(1, (offsetMs / durationMs) * 100)) : 50
-      const { tone, badgeLabel } = classifyMarker(ev)
+      const { tone, badgeLabel, category } = classifyMarker(ev)
       const text =
         ev.message && ev.name
           ? `${ev.name}: ${ev.message}`
@@ -440,9 +452,82 @@ export default function ReplayPlayer({
         tone,
         badgeLabel,
         text,
+        category,
+        rawEvent: ev,
       }
     })
   }, [timelineEvents, baseTimestampMs, durationMs])
+
+  // Screen spans from frames or telemetry
+  const screenSpans = useMemo(() => {
+    const raw: { screen: string; startMs: number; endMs: number }[] = []
+    if (model.kind === 'mobile' && model.frames.length > 0) {
+      for (let i = 0; i < model.frames.length; i++) {
+        const f = model.frames[i]
+        const next = model.frames[i + 1]
+        const start = Math.max(0, f.ts - baseTimestampMs)
+        const end = next ? Math.max(start + 500, next.ts - baseTimestampMs) : durationMs
+        raw.push({ screen: f.screen, startMs: start, endMs: Math.min(durationMs, end) })
+      }
+    } else if (model.kind === 'screen' && model.session.index.frames.length > 0) {
+      for (let i = 0; i < model.session.index.frames.length; i++) {
+        const f = model.session.index.frames[i]
+        const next = model.session.index.frames[i + 1]
+        const start = Math.max(0, f.ts - baseTimestampMs)
+        const end = next ? Math.max(start + 500, next.ts - baseTimestampMs) : durationMs
+        raw.push({ screen: f.screen, startMs: start, endMs: Math.min(durationMs, end) })
+      }
+    }
+    return raw.map((s) => ({
+      ...s,
+      durationMs: Math.max(1, s.endMs - s.startMs),
+      pctStart: durationMs > 0 ? (s.startMs / durationMs) * 100 : 0,
+      pctWidth: durationMs > 0 ? Math.max(2, ((s.endMs - s.startMs) / durationMs) * 100) : 100,
+    }))
+  }, [model, baseTimestampMs, durationMs])
+
+  // Real HTTP spans from telemetry
+  const networkSpans = useMemo(() => {
+    const spans: { id: string; method: string; url: string; statusCode: number; startMs: number; durationMs: number; pctStart: number; pctWidth: number }[] = []
+    for (const ev of timelineEvents) {
+      const attrs = (ev.attributes || {}) as Record<string, unknown>
+      const method = typeof attrs.method === 'string' ? attrs.method.toUpperCase() : null
+      const url = typeof attrs.url === 'string' ? attrs.url : typeof attrs.endpoint === 'string' ? attrs.endpoint : null
+      if (!method && !url && ev.name !== 'network' && !ev.name?.startsWith('http')) continue
+
+      const evTs = new Date(ev.event_timestamp).getTime()
+      const startMs = !Number.isNaN(evTs) && evTs >= baseTimestampMs ? Math.min(durationMs, Math.max(0, evTs - baseTimestampMs)) : 0
+      const latency = typeof attrs.latency_ms === 'number' ? attrs.latency_ms : typeof attrs.duration_ms === 'number' ? attrs.duration_ms : 300
+      const statusCode = typeof attrs.status_code === 'number' ? attrs.status_code : typeof attrs.status === 'number' ? attrs.status : (ev.level === 'error' ? 500 : 200)
+
+      spans.push({
+        id: ev.id,
+        method: method || 'HTTP',
+        url: url || ev.message || '/api',
+        statusCode,
+        startMs,
+        durationMs: latency,
+        pctStart: durationMs > 0 ? (startMs / durationMs) * 100 : 0,
+        pctWidth: durationMs > 0 ? Math.max(1.5, (latency / durationMs) * 100) : 2,
+      })
+    }
+    return spans
+  }, [timelineEvents, baseTimestampMs, durationMs])
+
+  const [activeFilter, setActiveFilter] = useState<'all' | 'error' | 'network' | 'gesture'>('all')
+  const [followPlayhead, setFollowPlayhead] = useState(true)
+  const [expandedEventId, setExpandedEventId] = useState<string | null>(null)
+  const activeItemRef = useRef<HTMLDivElement | null>(null)
+  const activityListRef = useRef<HTMLDivElement | null>(null)
+
+  const visibleMarkers = useMemo(() => {
+    if (activeFilter === 'all') return markers
+    return markers.filter((m) => m.category === activeFilter)
+  }, [markers, activeFilter])
+
+  const errorCount = useMemo(() => markers.filter((m) => m.category === 'error').length, [markers])
+  const gestureCount = useMemo(() => markers.filter((m) => m.category === 'gesture').length, [markers])
+  const networkCount = useMemo(() => markers.filter((m) => m.category === 'network').length, [markers])
 
   // Mount the rrweb player once per web event set; resizes go through $set below (Review Focus #4)
   useEffect(() => {
@@ -577,6 +662,14 @@ export default function ReplayPlayer({
     return past.length > 0 ? past[past.length - 1] : markers[0]
   }, [markers, currentTimeMs])
 
+  // Follow Playhead: auto-scroll current active event into view as video plays
+  useEffect(() => {
+    if (!followPlayhead || !isPlaying) return
+    if (activeItemRef.current) {
+      activeItemRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }
+  }, [activeMarker?.id, followPlayhead, isPlaying])
+
   const notice = fallbackNotice(model)
 
   const renderViewportContent = () => {
@@ -584,16 +677,10 @@ export default function ReplayPlayer({
     const screenPending = screenSession !== null && screenScanning && model.kind === 'none'
     if (loadingDetail || chunkLoading || screenPending) {
       return (
-        <div className="replay-player__viewport replay-player__state">
-          <div className="replay-state-box">
-            <strong className="replay-state-box__title">
-              {chunkLoading
-                ? `Fetching & decompressing ${presignedChunkCount} gzipped R2 chunk(s)…`
-                : 'Loading session metadata…'}
-            </strong>
-            <p className="replay-state-box__desc">
-              Streaming DOM snapshots and reconstructing pixel-accurate replay in worker.
-            </p>
+        <div className="replay-player__viewport replay-player__state" aria-label="Loading session replay">
+          <div className="replay-loading-spinner" role="status">
+            <div className="replay-spinner-ring" />
+            <div className="replay-spinner-glow" />
           </div>
         </div>
       )
@@ -887,25 +974,76 @@ export default function ReplayPlayer({
           )}
         </div>
 
-        {/* Integrated Modern Transport Controls Bar */}
+        {/* Unified Integrated Transport Bar & Multi-Lane Gantt Scrubber */}
         <div className="or-transport-bar">
-          <button
-            type="button"
-            className="or-transport-btn"
-            onClick={togglePlay}
-            aria-label={isPlaying ? 'Pause replay' : 'Play replay'}
-            title={isPlaying ? 'Pause replay (Space)' : 'Play replay (Space)'}
-          >
-            {isPlaying ? '⏸' : '▶'}
-          </button>
+          <div className="or-transport-bar__row">
+            <div className="or-transport-bar__actions">
+              <button
+                type="button"
+                className="or-transport-btn"
+                onClick={togglePlay}
+                aria-label={isPlaying ? 'Pause replay' : 'Play replay'}
+                title={isPlaying ? 'Pause replay (Space)' : 'Play replay (Space)'}
+              >
+                {isPlaying ? '⏸' : '▶'}
+              </button>
 
-          <span className="or-transport-time">
-            {formatOffsetMs(currentTimeMs)} / {formatOffsetMs(durationMs)}
-          </span>
+              <span className="or-transport-time">
+                {formatOffsetMs(currentTimeMs)} <span style={{ opacity: 0.35 }}>/</span> {formatOffsetMs(durationMs)}
+              </span>
 
+              <button
+                type="button"
+                className="or-transport-speed-btn"
+                onClick={cycleSpeed}
+                title="Playback Speed"
+              >
+                {playbackSpeed}x
+              </button>
+            </div>
+
+            {/* Quick Filter Badges for the Timeline */}
+            <div className="or-transport-filters" role="group" aria-label="Filter events">
+              <button
+                type="button"
+                className={`or-transport-filter-btn${activeFilter === 'all' ? ' is-active' : ''}`}
+                onClick={() => setActiveFilter('all')}
+              >
+                All ({markers.length})
+              </button>
+              {errorCount > 0 && (
+                <button
+                  type="button"
+                  className={`or-transport-filter-btn or-transport-filter-btn--error${activeFilter === 'error' ? ' is-active' : ''}`}
+                  onClick={() => setActiveFilter('error')}
+                >
+                  Errors ({errorCount})
+                </button>
+              )}
+              {networkCount > 0 && (
+                <button
+                  type="button"
+                  className={`or-transport-filter-btn or-transport-filter-btn--network${activeFilter === 'network' ? ' is-active' : ''}`}
+                  onClick={() => setActiveFilter('network')}
+                >
+                  Network ({networkCount})
+                </button>
+              )}
+              {gestureCount > 0 && (
+                <button
+                  type="button"
+                  className={`or-transport-filter-btn or-transport-filter-btn--gesture${activeFilter === 'gesture' ? ' is-active' : ''}`}
+                  onClick={() => setActiveFilter('gesture')}
+                >
+                  Gestures ({gestureCount})
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Integrated Multi-Lane Gantt Scrubber Track */}
           <div
-            className="replay-marker-track"
-            style={{ flex: 1, touchAction: 'none' }}
+            className="or-gantt-scrubber"
             role="slider"
             aria-label="Seek replay"
             aria-valuemin={0}
@@ -922,85 +1060,215 @@ export default function ReplayPlayer({
             }}
             onPointerUp={(e) => {
               scrubbingRef.current = false
-              e.currentTarget.releasePointerCapture(e.pointerId)
+              try {
+                e.currentTarget.releasePointerCapture(e.pointerId)
+              } catch {
+                // ignore
+              }
             }}
           >
-            <div className="replay-marker-track__rail" />
-            <div
-              className="replay-marker-track__fill"
-              style={{ width: `${progressPct}%` }}
-            />
-            {markers.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                className={`replay-marker-dot replay-marker-dot--${m.tone}`}
-                style={{ left: `${m.pct}%` }}
-                aria-label={`${m.formattedTime} ${m.badgeLabel}: ${m.text}`}
-                onClick={() => seekTo(m.offsetMs)}
-              >
-                <span className="replay-marker-tooltip" aria-hidden="true">
-                  <strong>{m.formattedTime}</strong> · {m.text}
-                </span>
-              </button>
-            ))}
+            {/* Lane 1: Route / Screens Span (if multiple screens) */}
+            {screenSpans.length > 1 && (
+              <div className="or-gantt-lane or-gantt-lane--screens" aria-hidden="true">
+                {screenSpans.map((s, idx) => (
+                  <div
+                    key={idx}
+                    className="or-gantt-screen-tag"
+                    style={{ left: `${s.pctStart}%`, width: `${s.pctWidth}%` }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      seekTo(s.startMs)
+                    }}
+                    title={`${s.screen} (${formatDurationMs(s.durationMs)})`}
+                  >
+                    <span>{s.screen}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Lane 2: Real Network Spans (if HTTP requests exist) */}
+            {networkSpans.length > 0 && (
+              <div className="or-gantt-lane or-gantt-lane--network" aria-hidden="true">
+                {networkSpans.slice(0, 15).map((net) => (
+                  <div
+                    key={net.id}
+                    className={`or-gantt-net-span${net.statusCode >= 400 ? ' is-error' : ''}`}
+                    style={{ left: `${net.pctStart}%`, width: `${net.pctWidth}%` }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      seekTo(net.startMs)
+                    }}
+                    title={`${net.method} ${net.url} (${net.statusCode}) · ${net.durationMs}ms`}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Primary Scrubber Rail with Progress Fill & Marker Dots */}
+            <div className="or-gantt-rail">
+              <div className="replay-marker-track__rail" />
+              <div
+                className="replay-marker-track__fill"
+                style={{ width: `${progressPct}%` }}
+              />
+
+              {visibleMarkers.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`replay-marker-dot replay-marker-dot--${m.tone}`}
+                  style={{ left: `${m.pct}%` }}
+                  aria-label={`${m.formattedTime} ${m.badgeLabel}: ${m.text}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    seekTo(m.offsetMs)
+                  }}
+                >
+                  <span className="replay-marker-tooltip" aria-hidden="true">
+                    <strong>{m.formattedTime}</strong> · {m.text}
+                  </span>
+                </button>
+              ))}
+
+              {/* Playhead Needle Line */}
+              <div
+                className="or-gantt-needle"
+                style={{ left: `${progressPct}%` }}
+                aria-hidden="true"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Synchronized Activity Stream (Bounded with Auto-Scroll, Eliminates Page Scroll) */}
+      <div className="or-activity-panel">
+        <div className="or-activity-panel__head">
+          <div className="or-activity-panel__head-left">
+            <span className="or-activity-panel__title">Correlated Activity Stream</span>
+            <span className="badge badge--role">{visibleMarkers.length} event{visibleMarkers.length === 1 ? '' : 's'}</span>
           </div>
 
-          <button
-            type="button"
-            className="or-transport-speed-btn"
-            onClick={cycleSpeed}
-            title="Playback Speed"
-          >
-            {playbackSpeed}x
-          </button>
+          <label className="or-activity-follow-label" title="Auto-scroll to follow video playhead">
+            <input
+              type="checkbox"
+              checked={followPlayhead}
+              onChange={(e) => setFollowPlayhead(e.target.checked)}
+            />
+            <span>Follow Playhead</span>
+          </label>
         </div>
-      </div>
 
-      {/* Legend & Correlated Timeline Events */}
-      <div className="replay-timeline-header">
-        <span className="replay-timeline-header__title">
-          Correlated Timeline ({markers.length} event{markers.length === 1 ? '' : 's'})
-        </span>
-        <div className="replay-marker-legend" aria-hidden="true">
-          <span className="replay-marker-legend__item">
-            <span className="replay-legend-dot replay-legend-dot--error" /> Error log
-          </span>
-          <span className="replay-marker-legend__item">
-            <span className="replay-legend-dot replay-legend-dot--warn" /> Warn / Click / Frustration
-          </span>
-        </div>
-      </div>
+        {visibleMarkers.length === 0 ? (
+          <p className="dash-empty" style={{ padding: '1.5rem 0', margin: 0 }}>
+            No events match the selected filter.
+          </p>
+        ) : (
+          <div className="or-activity-list" ref={activityListRef}>
+            {visibleMarkers.map((m) => {
+              const isCurrent = activeMarker?.id === m.id
+              const isExpanded = expandedEventId === m.id
+              const attrs = (m.rawEvent?.attributes || {}) as Record<string, unknown>
+              const hasDetails = Object.keys(attrs).length > 0 || Boolean(m.rawEvent?.environment)
 
-      {markers.length === 0 ? (
-        <p className="dash-empty" style={{ padding: '1rem 0', margin: 0 }}>
-          No correlated telemetry events recorded for session <code className="dash-code">{session.id}</code>.
-        </p>
-      ) : (
-        <div className="dash-list">
-          {markers.map((m) => {
-            const isNear = Math.abs(currentTimeMs - m.offsetMs) <= Math.max(1500, durationMs * 0.05)
-            return (
-              <button
-                key={m.id}
-                type="button"
-                className={`dash-step-row${isNear ? ' is-near' : ''}`}
-                onClick={() => seekTo(m.offsetMs)}
-              >
-                <span className="dash-code">{m.formattedTime}</span>
-                <span
-                  className={`badge ${
-                    m.tone === 'error' ? 'badge--exception' : 'badge--console'
-                  }`}
+              return (
+                <div
+                  key={m.id}
+                  ref={isCurrent ? activeItemRef : null}
+                  className={`or-activity-row${isCurrent ? ' is-active' : ''}${isExpanded ? ' is-expanded' : ''}`}
                 >
-                  {m.badgeLabel}
-                </span>
-                <span className="dash-step-row__text">{m.text}</span>
-              </button>
-            )
-          })}
-        </div>
-      )}
+                  <div
+                    className="or-activity-row__bar"
+                    onClick={() => seekTo(m.offsetMs)}
+                  >
+                    <span className="dash-code or-activity-time">{m.formattedTime}</span>
+                    <span
+                      className={`badge ${
+                        m.tone === 'error'
+                          ? 'badge--exception'
+                          : m.tone === 'warn'
+                            ? 'badge--console'
+                            : 'badge--network'
+                      }`}
+                    >
+                      {m.badgeLabel}
+                    </span>
+                    <span className="or-activity-text" title={m.text}>{m.text}</span>
+
+                    {hasDetails && (
+                      <button
+                        type="button"
+                        className="or-activity-expand-btn"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setExpandedEventId(isExpanded ? null : m.id)
+                        }}
+                        aria-expanded={isExpanded}
+                        title={isExpanded ? 'Collapse' : 'Inspect details'}
+                      >
+                        {isExpanded ? '▴' : '▾'}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Inline Technical Inspector */}
+                  {isExpanded && (
+                    <div className="or-activity-expanded">
+                      <div className="or-activity-meta-grid">
+                        {m.rawEvent?.environment && (
+                          <div className="or-activity-meta-item">
+                            <span className="or-activity-meta-k">Env:</span>
+                            <span className="or-activity-meta-v">{m.rawEvent.environment}</span>
+                          </div>
+                        )}
+                        {m.rawEvent?.release_version && (
+                          <div className="or-activity-meta-item">
+                            <span className="or-activity-meta-k">Release:</span>
+                            <span className="or-activity-meta-v">{m.rawEvent.release_version}</span>
+                          </div>
+                        )}
+                        {Object.entries(attrs)
+                          .filter(([k, v]) => v !== undefined && v !== null && k !== 'stack')
+                          .slice(0, 6)
+                          .map(([k, v]) => (
+                            <div key={k} className="or-activity-meta-item">
+                              <span className="or-activity-meta-k">{k}:</span>
+                              <span className="or-activity-meta-v" title={String(v)}>
+                                {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                              </span>
+                            </div>
+                          ))}
+                      </div>
+
+                      {typeof attrs.stack === 'string' && attrs.stack && (
+                        <div className="or-activity-stack-wrap">
+                          <div className="or-activity-stack-head">
+                            <span>Stack Trace</span>
+                            <button
+                              type="button"
+                              className="dash-btn dash-btn--sm"
+                              style={{ padding: '1px 6px', fontSize: '0.625rem' }}
+                              onClick={() => {
+                                void navigator.clipboard.writeText(String(attrs.stack))
+                              }}
+                            >
+                              Copy
+                            </button>
+                          </div>
+                          <pre className="dash-code or-activity-stack-pre">
+                            {String(attrs.stack)}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   analyticsApi,
+  issueApi,
   replayApi,
   telemetryApi,
+  type Issue,
   type Project,
   type ProjectStats,
   type ReplayChunkDetail,
@@ -40,63 +42,17 @@ type RangeStats = {
   errorNote: string
   conversions: string
   convRate: string
+  topCampaign: string
   buckets: BucketPoint[]
 }
 
-const RANGE_DATA: Record<RangeKey, RangeStats> = {
-  '24h': {
-    sessions: '1,482',
-    sessionsDelta: '+12.4%',
-    errorFree: '99.18%',
-    errorNote: '12 unhandled',
-    conversions: '314',
-    convRate: '4.8% conv.',
-    buckets: [
-      { label: '00:00', sessions: 64, errors: 1 },
-      { label: '02:00', sessions: 48, errors: 0 },
-      { label: '04:00', sessions: 41, errors: 0 },
-      { label: '06:00', sessions: 78, errors: 1 },
-      { label: '08:00', sessions: 124, errors: 1 },
-      { label: '10:00', sessions: 168, errors: 2 },
-      { label: '12:00', sessions: 192, errors: 1 },
-      { label: '14:00', sessions: 228, errors: 5 },
-      { label: '16:00', sessions: 196, errors: 1 },
-      { label: '18:00', sessions: 162, errors: 0 },
-      { label: '20:00', sessions: 134, errors: 0 },
-      { label: '22:00', sessions: 108, errors: 0 },
-    ],
-  },
-  '7d': {
-    sessions: '9,840',
-    sessionsDelta: '+8.7%',
-    errorFree: '99.34%',
-    errorNote: '65 unhandled',
-    conversions: '2,108',
-    convRate: '5.1% conv.',
-    buckets: [
-      { label: 'Mon', sessions: 1320, errors: 9 },
-      { label: 'Tue', sessions: 1480, errors: 8 },
-      { label: 'Wed', sessions: 1510, errors: 11 },
-      { label: 'Thu', sessions: 1690, errors: 16 },
-      { label: 'Fri', sessions: 1590, errors: 10 },
-      { label: 'Sat', sessions: 1180, errors: 6 },
-      { label: 'Sun', sessions: 1070, errors: 5 },
-    ],
-  },
-  '30d': {
-    sessions: '41,920',
-    sessionsDelta: '+19.2%',
-    errorFree: '99.41%',
-    errorNote: '247 unhandled',
-    conversions: '8,940',
-    convRate: '5.3% conv.',
-    buckets: [
-      { label: 'Week 1', sessions: 9420, errors: 62 },
-      { label: 'Week 2', sessions: 10180, errors: 58 },
-      { label: 'Week 3', sessions: 10840, errors: 69 },
-      { label: 'Week 4', sessions: 11480, errors: 58 },
-    ],
-  },
+type OverviewCampaignItem = {
+  name: string
+  source: string
+  visitors: string
+  signups: string
+  checkouts: string
+  conv: string
 }
 
 type ReplayFilter = 'all' | 'error' | 'rage' | 'dead'
@@ -179,235 +135,12 @@ type DevLogEntry = {
   durationMs?: number
   occurrences: number
   sessionId: string
+  issueId?: number
   environment?: string
   releaseVersion?: string
   userId?: string
   attributes?: Record<string, unknown>
 }
-
-const nowMs = Date.now()
-const getMockLogTime = (minutesAgo: number) => {
-  const date = new Date(nowMs - minutesAgo * 60 * 1000)
-  return {
-    time: `${minutesAgo}m ago`,
-    exactTime: formatExactTime(date),
-    exactTimeShort: formatExactTimeShort(date),
-    exactDateShort: formatExactDateShort(date),
-    rawTimestamp: date.toISOString(),
-  }
-}
-
-const DEV_LOGS: DevLogEntry[] = [
-  {
-    id: 'iss_104',
-    ...getMockLogTime(2),
-    kind: 'exception',
-    level: 'error',
-    title: 'TypeError: Cannot read properties of undefined (reading "charge_id")',
-    detail: 'PaymentForm.tsx:142:19 · Chrome 131',
-    occurrences: 12,
-    sessionId: 'ses_94k2p8',
-    environment: 'production',
-    releaseVersion: 'v2.4.1',
-    userId: 'usr_premium_88',
-    attributes: {
-      component: 'PaymentForm.tsx:142:19',
-      browser: 'Chrome 131.0.6778.86 (macOS)',
-      route: '/checkout/pay',
-      error_code: 'ERR_UNDEFINED_PROP',
-      runtime: 'React 18.3.1',
-    },
-  },
-  {
-    id: 'iss_103',
-    ...getMockLogTime(4),
-    kind: 'network',
-    level: 'error',
-    title: 'POST /api/v1/charge → 502 Bad Gateway (1,840 ms)',
-    detail: 'trace_id=tr_88a41f · payload PII redacted · status 502',
-    occurrences: 19,
-    sessionId: 'ses_94k2p8',
-    environment: 'production',
-    releaseVersion: 'v2.4.1',
-    userId: 'usr_premium_88',
-    attributes: {
-      method: 'POST',
-      endpoint: '/api/v1/charge',
-      status_code: 502,
-      latency_ms: 1840,
-      trace_id: 'tr_88a41f',
-      upstream: 'payment-gateway-service',
-    },
-  },
-  {
-    id: 'iss_102',
-    ...getMockLogTime(18),
-    kind: 'console',
-    level: 'warn',
-    title: 'console.warn: Slow template hydration exceeded 2000ms budget',
-    detail: 'route=/onboarding/workspace · p95=2,410 ms · iOS Safari 18',
-    occurrences: 7,
-    sessionId: 'ses_71m9x3',
-    environment: 'staging',
-    releaseVersion: 'v2.4.0',
-    userId: 'usr_onboard_12',
-    attributes: {
-      route: '/onboarding/workspace',
-      hydration_ms: 2410,
-      budget_ms: 2000,
-      client: 'iOS Safari 18.1',
-      platform: 'Mobile',
-    },
-  },
-  {
-    id: 'iss_101',
-    ...getMockLogTime(41),
-    kind: 'exception',
-    level: 'error',
-    title: 'UnhandledRejection: NetworkError when attempting to fetch resource',
-    detail: 'src/api.ts:52:25 · transient mobile handoff',
-    occurrences: 3,
-    sessionId: 'ses_71m9x3',
-    environment: 'production',
-    releaseVersion: 'v2.3.9',
-    userId: 'usr_onboard_12',
-    attributes: {
-      source: 'src/api.ts:52:25',
-      failure_reason: 'Mobile connection reset (transient cell handoff)',
-      retry_attempt: 2,
-    },
-  },
-  {
-    id: 'iss_100',
-    ...getMockLogTime(64),
-    kind: 'network',
-    level: 'error',
-    title: 'GET /api/v1/projects/1/stats → 504 Gateway Timeout (5,000 ms)',
-    detail: 'trace_id=tr_77e20a · database replica sync lag',
-    occurrences: 5,
-    sessionId: 'ses_83b1x9',
-    environment: 'production',
-    releaseVersion: 'v2.3.9',
-    attributes: {
-      method: 'GET',
-      endpoint: '/api/v1/projects/1/stats',
-      status_code: 504,
-      latency_ms: 5000,
-      trace_id: 'tr_77e20a',
-    },
-  },
-  {
-    id: 'iss_99',
-    ...getMockLogTime(85),
-    kind: 'exception',
-    level: 'error',
-    title: 'ReferenceError: window.analytics is not defined',
-    detail: 'tracker.ts:88:12 · Firefox 133 · AdBlock detected',
-    occurrences: 14,
-    sessionId: 'ses_83b1x9',
-    environment: 'production',
-    releaseVersion: 'v2.3.9',
-    attributes: {
-      component: 'tracker.ts:88:12',
-      browser: 'Firefox 133.0 (Linux)',
-      script_blocked: true,
-    },
-  },
-  {
-    id: 'iss_98',
-    ...getMockLogTime(110),
-    kind: 'console',
-    level: 'error',
-    title: 'console.error: Failed to load resource: net::ERR_CONNECTION_REFUSED',
-    detail: 'https://cdn.artracker.dev/sdk/v2.js · fallback initiated',
-    occurrences: 8,
-    sessionId: 'ses_52q7w1',
-    environment: 'staging',
-    releaseVersion: 'v2.3.8',
-    attributes: {
-      url: 'https://cdn.artracker.dev/sdk/v2.js',
-      network_error: 'ERR_CONNECTION_REFUSED',
-      fallback_used: true,
-    },
-  },
-  {
-    id: 'iss_97',
-    ...getMockLogTime(145),
-    kind: 'network',
-    level: 'warn',
-    title: 'POST /api/v1/ingest → 429 Too Many Requests',
-    detail: 'client rate limit threshold reached (100 req/s)',
-    occurrences: 22,
-    sessionId: 'ses_52q7w1',
-    environment: 'production',
-    releaseVersion: 'v2.3.8',
-    attributes: {
-      method: 'POST',
-      endpoint: '/api/v1/ingest',
-      status_code: 429,
-      rate_limit_bucket: 'client_ingest',
-    },
-  },
-  {
-    id: 'iss_96',
-    ...getMockLogTime(180),
-    kind: 'exception',
-    level: 'error',
-    title: 'SecurityError: Blocked a frame with origin from accessing a cross-origin frame',
-    detail: 'iframeBridge.ts:31:14 · Safari 17.6',
-    occurrences: 6,
-    sessionId: 'ses_41r8k2',
-    environment: 'production',
-    releaseVersion: 'v2.3.8',
-    attributes: {
-      component: 'iframeBridge.ts:31:14',
-      browser: 'Safari 17.6 (macOS)',
-      security_origin: 'https://checkout.partner.com',
-    },
-  },
-  {
-    id: 'iss_95',
-    ...getMockLogTime(230),
-    kind: 'console',
-    level: 'warn',
-    title: 'console.warn: WebGL context lost. Attempting auto-restore',
-    detail: 'three_canvas.tsx:64 · GPU memory pressure',
-    occurrences: 4,
-    sessionId: 'ses_33p2m8',
-    environment: 'production',
-    releaseVersion: 'v2.3.7',
-    attributes: {
-      component: 'three_canvas.tsx:64',
-      gpu_renderer: 'Apple M1',
-      context_restored: true,
-    },
-  },
-  {
-    id: 'iss_94',
-    ...getMockLogTime(310),
-    kind: 'network',
-    level: 'warn',
-    title: 'POST /api/v1/auth/refresh → 401 Unauthorized',
-    detail: 'refresh_token expired · auto re-auth scheduled',
-    occurrences: 11,
-    sessionId: 'ses_22k9j4',
-    environment: 'production',
-    releaseVersion: 'v2.3.7',
-    attributes: {
-      method: 'POST',
-      endpoint: '/api/v1/auth/refresh',
-      status_code: 401,
-      reason: 'Token expired',
-    },
-  },
-]
-
-const CAMPAIGNS = [
-  { name: 'utm_launch_q4', source: 'google / cpc', visitors: '186', signups: '65', checkouts: '30', conv: '16.13%' },
-  { name: 'utm_ig_reels', source: 'instagram / paid', visitors: '142', signups: '49', checkouts: '18', conv: '12.68%' },
-  { name: 'utm_newsletter_nov', source: 'email / ops-digest', visitors: '128', signups: '52', checkouts: '24', conv: '18.75%' },
-  { name: 'utm_github_readme', source: 'github / referral', visitors: '96', signups: '38', checkouts: '14', conv: '14.58%' },
-]
 
 type AlertRule = {
   id: string
@@ -418,38 +151,30 @@ type AlertRule = {
   lastTriggered: string
 }
 
-const INITIAL_ALERTS: AlertRule[] = [
+const ALERT_DEFINITIONS: Omit<AlertRule, 'status' | 'lastTriggered'>[] = [
   {
     id: 'al_1',
-    name: 'Checkout 5xx Spike',
-    condition: 'http.status >= 500 on /api/v1/charge > 15 events in 5m',
-    channel: 'Slack · #ops-payments',
-    status: 'firing',
-    lastTriggered: '4m ago',
+    name: '5xx HTTP Error Spike',
+    condition: 'http.status >= 500 on project endpoints in active window',
+    channel: 'Slack · #ops-alerts',
   },
   {
     id: 'al_2',
     name: 'Crash-Free Session Drop',
-    condition: 'error_free_rate < 98.5% over rolling 15m window',
+    condition: 'error_free_rate < 98.5% over active window',
     channel: 'Webhook · PagerDuty',
-    status: 'armed',
-    lastTriggered: '3d ago',
   },
   {
     id: 'al_3',
-    name: 'Campaign Conversion Anomaly',
-    condition: 'utm_launch_q4 signup rate drops > 40% vs 7d baseline',
-    channel: 'Discord · #growth-alerts',
-    status: 'armed',
-    lastTriggered: 'Never',
+    name: 'Open Crash / Exception Issues',
+    condition: 'open_issues > 0 or unhandled exception logged',
+    channel: 'Discord · #eng-alerts',
   },
   {
     id: 'al_4',
-    name: 'Rage Click Surge on Mobile',
-    condition: 'rage_click count > 25 sessions in 10m',
+    name: 'Frustrated Session Activity',
+    condition: 'rage_click or dead_click detected in recorded sessions',
     channel: 'Email · eng@company.com',
-    status: 'muted',
-    lastTriggered: '6d ago',
   },
 ]
 
@@ -616,9 +341,38 @@ function DashboardInner({
   const [seedingSessions, setSeedingSessions] = useState<boolean>(false)
 
   const [logFilter, setLogFilter] = useState<LogKind>('all')
+  const [logSearch, setLogSearch] = useState<string>('')
   const [logPage, setLogPage] = useState<number>(1)
+  const [logPageSize, setLogPageSize] = useState<number>(() => {
+    try {
+      const stored = localStorage.getItem('artracker.logs.pagesize')
+      const val = stored ? parseInt(stored, 10) : 50
+      return !isNaN(val) && val > 0 ? val : 50
+    } catch {
+      return 50
+    }
+  })
   const [expandedLogIds, setExpandedLogIds] = useState<Set<string>>(new Set())
-  const LOGS_PER_PAGE = 8
+
+  const activeReplaySession = useMemo(() => {
+    if (sessionDetail?.session) return sessionDetail.session
+    if (selectedSessionId) {
+      const found = replaySessions.find((s) => s.id === selectedSessionId)
+      if (found) return found
+    }
+    return replaySessions[0] ?? null
+  }, [sessionDetail, selectedSessionId, replaySessions])
+
+  const handleLogPageSizeChange = (size: number) => {
+    const validSize = Math.max(1, Math.min(500, size))
+    setLogPageSize(validSize)
+    setLogPage(1)
+    try {
+      localStorage.setItem('artracker.logs.pagesize', String(validSize))
+    } catch {
+      // storage unavailable
+    }
+  }
 
   const toggleLogExpanded = (id: string) => {
     setExpandedLogIds((prev) => {
@@ -629,10 +383,12 @@ function DashboardInner({
     })
   }
 
-  const [alerts, setAlerts] = useState<AlertRule[]>(INITIAL_ALERTS)
+  const [mutedAlertIds, setMutedAlertIds] = useState<Set<string>>(new Set())
   const [realStats, setRealStats] = useState<ProjectStats | null>(null)
   const [realEvents, setRealEvents] = useState<TelemetryEvent[]>([])
-  const [realCampaigns, setRealCampaigns] = useState<typeof CAMPAIGNS | null>(null)
+  const [realIssues, setRealIssues] = useState<Issue[]>([])
+  const [realCampaigns, setRealCampaigns] = useState<OverviewCampaignItem[]>([])
+  const [funnelSummary, setFunnelSummary] = useState<{ totalCheckouts: number; convPct: number } | null>(null)
 
   const targetPid = project?.id ?? 1
   // null while the shell is still resolving the selected project (demo mode supplies its own)
@@ -779,77 +535,86 @@ function DashboardInner({
     }
   }
 
-  const reloadTelemetry = () => {
-    const targetPid = project?.id ?? 1
-    Promise.all([
-      telemetryApi.getStats(targetPid, range).catch(() => null),
-      telemetryApi.listEvents(targetPid, 'all', 50).catch(() => ({ items: [] })),
-      analyticsApi
-        .calculateFunnel(targetPid, {
-          steps: ['landing_view', 'purchase_completed'],
-          breakdown_by: 'utm_campaign',
-          from: new Date(Date.now() - 30 * 86400000).toISOString(),
-          to: new Date().toISOString(),
-          window_seconds: 86400,
+  const fetchDashboardTelemetry = useCallback(
+    (pid: number, rangeArg: RangeKey) => {
+      const rangeDays = rangeArg === '24h' ? 1 : rangeArg === '7d' ? 7 : 30
+      return Promise.all([
+        telemetryApi.getStats(pid, rangeArg).catch(() => null),
+        telemetryApi.listEvents(pid, 'all', 250).catch(() => ({ items: [] as TelemetryEvent[] })),
+        issueApi.list(pid, { status: 'open', sort: 'frequency' }).catch(() => ({ items: [] as Issue[] })),
+        analyticsApi
+          .calculateFunnel(pid, {
+            steps: ['landing_view', 'view_product', 'purchase_completed'],
+            breakdown_by: 'utm_campaign',
+            from: new Date(Date.now() - rangeDays * 86400000).toISOString(),
+            to: new Date().toISOString(),
+            window_seconds: 86400,
+          })
+          .catch(() => null),
+      ])
+    },
+    [],
+  )
+
+  const applyDashboardTelemetry = useCallback(
+    ([statsData, eventsData, issuesData, funnelData]: Awaited<ReturnType<typeof fetchDashboardTelemetry>>) => {
+      setRealStats(statsData)
+      setRealEvents(eventsData?.items ?? [])
+      setRealIssues(issuesData?.items ?? [])
+
+      if (funnelData) {
+        const lastStepIdx = Math.max(0, (funnelData.steps?.length ?? 1) - 1)
+        const totalCheckouts = funnelData.steps?.[lastStepIdx]?.count ?? 0
+        setFunnelSummary({
+          totalCheckouts,
+          convPct: funnelData.overall_conversion_pct ?? 0,
         })
-        .catch(() => null),
-    ]).then(([statsData, eventsData, funnelData]) => {
-      if (statsData) setRealStats(statsData)
-      if (eventsData?.items && eventsData.items.length > 0) setRealEvents(eventsData.items)
-      if (funnelData?.breakdowns && funnelData.breakdowns.length > 0) {
-        setRealCampaigns(
-          funnelData.breakdowns.map((b) => ({
-            name: b.segment || 'direct / organic',
-            source: 'tracked UTM',
-            visitors: (b.step_counts[0] ?? 0).toLocaleString(),
-            signups: Math.round((b.step_counts[0] ?? 0) * 0.35).toLocaleString(),
-            checkouts: (b.step_counts[1] ?? 0).toLocaleString(),
-            conv: `${b.overall_conversion_pct.toFixed(2)}%`,
-          })),
+
+        const validBreakdowns = (funnelData.breakdowns ?? []).filter(
+          (b) => (b.step_counts[0] ?? 0) > 0,
         )
+        setRealCampaigns(
+          validBreakdowns.map((b) => {
+            const seg = b.segment && b.segment !== '(none)' ? b.segment : 'direct / organic'
+            const visitorsCount = b.step_counts[0] ?? 0
+            const signupsCount = b.step_counts.length >= 3 ? (b.step_counts[1] ?? 0) : visitorsCount
+            const checkoutsCount = b.step_counts[b.step_counts.length - 1] ?? 0
+            return {
+              name: seg,
+              source: b.segment && b.segment !== '(none)' ? 'tracked UTM' : 'direct traffic',
+              visitors: visitorsCount.toLocaleString(),
+              signups: signupsCount.toLocaleString(),
+              checkouts: checkoutsCount.toLocaleString(),
+              conv: `${b.overall_conversion_pct.toFixed(2)}%`,
+            }
+          }),
+        )
+      } else {
+        setFunnelSummary(null)
+        setRealCampaigns([])
       }
-    })
+    },
+    [],
+  )
+
+  const reloadTelemetry = () => {
+    if (!projectReady) return
+    void fetchDashboardTelemetry(targetPid, range).then(applyDashboardTelemetry)
   }
 
   const projectId = project?.id ?? null
   useEffect(() => {
     if (projectId == null) return
     let active = true
-    const targetPid = projectId
-    Promise.all([
-      telemetryApi.getStats(targetPid, range).catch(() => null),
-      telemetryApi.listEvents(targetPid, 'all', 50).catch(() => ({ items: [] })),
-      analyticsApi
-        .calculateFunnel(targetPid, {
-          steps: ['landing_view', 'purchase_completed'],
-          breakdown_by: 'utm_campaign',
-          from: new Date(Date.now() - 30 * 86400000).toISOString(),
-          to: new Date().toISOString(),
-          window_seconds: 86400,
-        })
-        .catch(() => null),
-    ]).then(([statsData, eventsData, funnelData]) => {
+    void fetchDashboardTelemetry(projectId, range).then((result) => {
       if (!active) return
-      if (statsData) setRealStats(statsData)
-      if (eventsData?.items && eventsData.items.length > 0) setRealEvents(eventsData.items)
-      if (funnelData?.breakdowns && funnelData.breakdowns.length > 0) {
-        setRealCampaigns(
-          funnelData.breakdowns.map((b) => ({
-            name: b.segment || 'direct / organic',
-            source: 'tracked UTM',
-            visitors: (b.step_counts[0] ?? 0).toLocaleString(),
-            signups: Math.round((b.step_counts[0] ?? 0) * 0.35).toLocaleString(),
-            checkouts: (b.step_counts[1] ?? 0).toLocaleString(),
-            conv: `${b.overall_conversion_pct.toFixed(2)}%`,
-          })),
-        )
-      }
+      applyDashboardTelemetry(result)
     })
 
     return () => {
       active = false
     }
-  }, [projectId, range])
+  }, [projectId, range, fetchDashboardTelemetry, applyDashboardTelemetry])
 
   const emptyBuckets: BucketPoint[] = [
     { label: '00:00', sessions: 0, errors: 0 },
@@ -860,46 +625,45 @@ function DashboardInner({
     { label: '20:00', sessions: 0, errors: 0 },
   ]
 
-  // Pure real database metrics when inside a project or demo project
-  const stats: RangeStats =
-    realStats && realStats.events_count > 0
-      ? {
-          sessions: (realStats?.sessions_count ?? 0).toLocaleString(),
-          sessionsDelta: `${(realStats?.events_count ?? 0).toLocaleString()} events`,
-          errorFree: realStats?.error_free_pct ?? '100.0%',
-          errorNote: realStats?.error_note ?? '0 unhandled',
-          conversions: (realStats?.sessions_count ?? 0).toLocaleString(),
-          convRate: realStats && realStats.sessions_count > 0 ? '100% active' : '0%',
-          buckets:
-            realStats?.buckets && realStats.buckets.length > 0
-              ? realStats.buckets
-              : emptyBuckets,
-        }
-      : RANGE_DATA[range]
+  // Pure real database metrics from PostgreSQL
+  const stats: RangeStats = {
+    sessions: (realStats?.sessions_count ?? 0).toLocaleString(),
+    sessionsDelta: `${(realStats?.events_count ?? 0).toLocaleString()} events`,
+    errorFree: realStats?.error_free_pct ?? '100.0%',
+    errorNote: realStats?.error_note ?? '0 unhandled',
+    conversions: (funnelSummary?.totalCheckouts ?? 0).toLocaleString(),
+    convRate: `${(funnelSummary?.convPct ?? 0).toFixed(1)}% conv.`,
+    topCampaign:
+      realCampaigns.length > 0 ? `Top: ${realCampaigns[0].name}` : 'No active campaigns',
+    buckets:
+      realStats?.buckets && realStats.buckets.length > 0
+        ? realStats.buckets
+        : emptyBuckets,
+  }
 
   // Pure real events from PostgreSQL
-  const displayLogs: DevLogEntry[] =
-    realEvents && realEvents.length > 0
-      ? realEvents
-          .filter((e) => {
-            if (e.name === 'replay_chunk') return false
-            const msg = (e.message || '').toLowerCase()
-            const rawUrl = String(e.attributes?.url || '').toLowerCase()
-            if (
-              msg.includes('/api/v1/replay/') ||
-              msg.includes('/api/v1/ingest') ||
-              msg.includes('/api/v1/events') ||
-              msg.includes('r2.cloudflarestorage.com') ||
-              rawUrl.includes('/api/v1/replay/') ||
-              rawUrl.includes('/api/v1/ingest') ||
-              rawUrl.includes('/api/v1/events') ||
-              rawUrl.includes('r2.cloudflarestorage.com')
-            ) {
-              return false
-            }
-            return true
-          })
-          .map((e) => {
+  const displayLogs: DevLogEntry[] = useMemo(
+    () =>
+      realEvents
+        .filter((e) => {
+          if (e.name === 'replay_chunk') return false
+          const msg = (e.message || '').toLowerCase()
+          const rawUrl = String(e.attributes?.url || '').toLowerCase()
+          if (
+            msg.includes('/api/v1/replay/') ||
+            msg.includes('/api/v1/ingest') ||
+            msg.includes('/api/v1/events') ||
+            msg.includes('r2.cloudflarestorage.com') ||
+            rawUrl.includes('/api/v1/replay/') ||
+            rawUrl.includes('/api/v1/ingest') ||
+            rawUrl.includes('/api/v1/events') ||
+            rawUrl.includes('r2.cloudflarestorage.com')
+          ) {
+            return false
+          }
+          return true
+        })
+        .map((e) => {
           let kind: Exclude<LogKind, 'all'> = 'console'
           if (e.kind === 'log' && (e.level === 'error' || e.level === 'fatal')) {
             kind = 'exception'
@@ -915,7 +679,10 @@ function DashboardInner({
           // MoEngage-style smart headline extraction
           const method = (e.attributes?.method as string) || ''
           const rawUrl = (e.attributes?.url as string) || ''
-          const status = (e.attributes?.status as number | string) || (e.attributes?.status_code as number | string) || undefined
+          const status =
+            (e.attributes?.status as number | string) ||
+            (e.attributes?.status_code as number | string) ||
+            undefined
           const duration = typeof e.attributes?.duration_ms === 'number' ? e.attributes.duration_ms : undefined
 
           let title = e.name || e.message || `${e.kind} event`
@@ -963,22 +730,147 @@ function DashboardInner({
             userId: e.user_id,
             attributes: e.attributes,
           }
-        })
-      : DEV_LOGS
+        }),
+    [realEvents],
+  )
 
-  const filteredLogs = logFilter === 'all' ? displayLogs : displayLogs.filter((l) => l.kind === logFilter)
+  // Real unresolved issues combining open crash/exception issues and error/5xx telemetry logs
+  const unresolvedItems: DevLogEntry[] = useMemo(() => {
+    const fromIssues: DevLogEntry[] = realIssues.map((iss) => {
+      const isNetwork =
+        iss.type.toLowerCase().includes('network') ||
+        iss.title.includes('50') ||
+        iss.title.includes('HTTP')
+      return {
+        id: `issue_${iss.id}`,
+        issueId: iss.id,
+        time: formatAgo(iss.last_seen),
+        exactTime: formatExactTime(iss.last_seen),
+        exactTimeShort: formatExactTimeShort(iss.last_seen),
+        exactDateShort: formatExactDateShort(iss.last_seen),
+        rawTimestamp: iss.last_seen,
+        kind: isNetwork ? 'network' : 'exception',
+        level: 'error',
+        title: iss.title,
+        detail: iss.latest_message && iss.latest_message !== iss.title ? iss.latest_message : iss.type,
+        occurrences: iss.count,
+        sessionId: '',
+      }
+    })
+
+    const issueTitles = new Set(realIssues.map((i) => i.title))
+    const fromErrorLogs = displayLogs.filter(
+      (l) =>
+        !issueTitles.has(l.title) &&
+        (l.kind === 'exception' ||
+          l.level === 'error' ||
+          l.level === 'fatal' ||
+          (l.statusCode !== undefined && Number(l.statusCode) >= 500)),
+    )
+
+    return [...fromIssues, ...fromErrorLogs]
+  }, [realIssues, displayLogs])
+
+  // Real-time alert rule evaluation against PostgreSQL project data
+  const alerts: AlertRule[] = useMemo(() => {
+    const http5xxLog = displayLogs.find(
+      (l) =>
+        (l.statusCode !== undefined && Number(l.statusCode) >= 500) ||
+        /\b50[0234]\b/.test(l.title) ||
+        /\b50[0234]\b/.test(l.detail),
+    )
+    const http5xxIssue = realIssues.find((i) => /\b50[0234]\b/.test(i.title))
+
+    const errorFreeNum = realStats ? parseFloat(realStats.error_free_pct) : 100
+    const crashFreeDropped =
+      realStats != null && realStats.sessions_count > 0 && !Number.isNaN(errorFreeNum) && errorFreeNum < 98.5
+
+    const latestIssue = realIssues[0]
+    const latestErrorLog = displayLogs.find((l) => l.kind === 'exception' || l.level === 'error')
+    const hasOpenIssuesOrErrors =
+      realIssues.length > 0 || (realStats?.open_issues_count ?? 0) > 0 || (realStats?.errors_count ?? 0) > 0
+
+    const frustratedSession = replaySessions.find((s) => s.has_rage_click || s.has_dead_click || s.has_error)
+    const hasFrustrated =
+      frustratedSession != null || (realStats?.frustrated_sessions_count ?? 0) > 0
+
+    return ALERT_DEFINITIONS.map((def) => {
+      if (mutedAlertIds.has(def.id)) {
+        return { ...def, status: 'muted', lastTriggered: 'Muted' }
+      }
+      if (def.id === 'al_1') {
+        const firing = Boolean(http5xxLog || http5xxIssue)
+        const lastTriggered = http5xxLog
+          ? http5xxLog.time
+          : http5xxIssue
+            ? formatAgo(http5xxIssue.last_seen)
+            : 'Never'
+        return { ...def, status: firing ? 'firing' : 'armed', lastTriggered }
+      }
+      if (def.id === 'al_2') {
+        const lastTriggered = crashFreeDropped
+          ? (latestErrorLog?.time ?? (latestIssue ? formatAgo(latestIssue.last_seen) : 'Active window'))
+          : 'Never'
+        return { ...def, status: crashFreeDropped ? 'firing' : 'armed', lastTriggered }
+      }
+      if (def.id === 'al_3') {
+        const lastTriggered = latestIssue
+          ? formatAgo(latestIssue.last_seen)
+          : latestErrorLog
+            ? latestErrorLog.time
+            : hasOpenIssuesOrErrors
+              ? 'Active window'
+              : 'Never'
+        return { ...def, status: hasOpenIssuesOrErrors ? 'firing' : 'armed', lastTriggered }
+      }
+      const lastTriggered = frustratedSession
+        ? formatAgo(frustratedSession.start_time)
+        : hasFrustrated
+          ? 'Active window'
+          : 'Never'
+      return { ...def, status: hasFrustrated ? 'firing' : 'armed', lastTriggered }
+    })
+  }, [displayLogs, realIssues, realStats, replaySessions, mutedAlertIds])
+
+  const logCounts = useMemo(
+    () => ({
+      all: displayLogs.length,
+      exception: displayLogs.filter((l) => l.kind === 'exception').length,
+      network: displayLogs.filter((l) => l.kind === 'network').length,
+      console: displayLogs.filter((l) => l.kind === 'console').length,
+    }),
+    [displayLogs],
+  )
+
+  const filteredLogs = useMemo(() => {
+    const byKind = logFilter === 'all' ? displayLogs : displayLogs.filter((l) => l.kind === logFilter)
+    const q = logSearch.trim().toLowerCase()
+    if (!q) return byKind
+    return byKind.filter(
+      (l) =>
+        l.title.toLowerCase().includes(q) ||
+        l.detail.toLowerCase().includes(q) ||
+        (l.eventName && l.eventName.toLowerCase().includes(q)) ||
+        (l.sessionId && l.sessionId.toLowerCase().includes(q)) ||
+        (l.environment && l.environment.toLowerCase().includes(q)) ||
+        (l.statusCode !== undefined && String(l.statusCode).includes(q)),
+    )
+  }, [displayLogs, logFilter, logSearch])
   const totalLogs = filteredLogs.length
-  const totalLogPages = Math.max(1, Math.ceil(totalLogs / LOGS_PER_PAGE))
+  const totalLogPages = Math.max(1, Math.ceil(totalLogs / logPageSize))
   const currentLogPage = Math.min(logPage, totalLogPages)
   const paginatedLogs = filteredLogs.slice(
-    (currentLogPage - 1) * LOGS_PER_PAGE,
-    currentLogPage * LOGS_PER_PAGE,
+    (currentLogPage - 1) * logPageSize,
+    currentLogPage * logPageSize,
   )
 
   const toggleAlert = (id: string) => {
-    setAlerts((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, status: a.status === 'muted' ? 'armed' : 'muted' } : a)),
-    )
+    setMutedAlertIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   }
 
   const goSection = (path: string) => navigate(isDemo ? `${path}?demo=1` : path)
@@ -1024,7 +916,7 @@ function DashboardInner({
                       <span className="badge badge--network">{stats.convRate}</span>
                     </div>
                     <strong className="metric-cell__value">{stats.conversions}</strong>
-                    <span className="metric-cell__sub">Top: utm_launch_q4</span>
+                    <span className="metric-cell__sub">{stats.topCampaign}</span>
                   </div>
 
                   <div className="metric-cell">
@@ -1070,25 +962,25 @@ function DashboardInner({
                         <h2 className="dash-card__title">Unresolved Issues</h2>
                         <p className="dash-card__desc">Correlated stacktraces &amp; 5xx network failures.</p>
                       </div>
-                      <button type="button" className="dash-btn" onClick={() => goSection('/dashboard/logs')}>
-                        All logs →
+                      <button type="button" className="dash-btn" onClick={() => goSection('/dashboard/issues')}>
+                        All issues →
                       </button>
                     </div>
 
                     <div className="dash-list">
-                      {displayLogs.length === 0 ? (
+                      {unresolvedItems.length === 0 ? (
                         <div style={{ padding: '2.5rem 1rem', textAlign: 'center', color: 'var(--color-fg-muted)' }}>
                           <p style={{ fontWeight: 500, margin: '0 0 0.25rem 0', color: 'var(--color-fg)' }}>
                             No unresolved issues
                           </p>
                           <p style={{ fontSize: '0.8125rem', margin: 0 }}>
-                            {!isDemo && project && (realStats?.events_count ?? 0) === 0
+                            {!isDemo && project && (realStats?.events_count ?? 0) === 0 && (realStats?.sessions_count ?? 0) === 0
                               ? 'No telemetry events ingested yet for this project.'
                               : 'All recorded sessions in this window are clean.'}
                           </p>
                         </div>
                       ) : (
-                        displayLogs.slice(0, 3).map((item) => (
+                        unresolvedItems.slice(0, 3).map((item) => (
                           <div key={item.id} className="dash-list__row">
                             <div className="dash-list__main">
                               <div className="dash-list__top">
@@ -1101,13 +993,23 @@ function DashboardInner({
                               <p className="dash-list__title">{item.title}</p>
                               <p className="dash-list__sub dash-code">{item.detail}</p>
                             </div>
-                            <button
-                              type="button"
-                              className="dash-btn"
-                              onClick={() => openReplay(item.sessionId)}
-                            >
-                              Replay →
-                            </button>
+                            {item.issueId ? (
+                              <button
+                                type="button"
+                                className="dash-btn"
+                                onClick={() => goSection(`/dashboard/issues/${item.issueId}`)}
+                              >
+                                Inspect →
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="dash-btn"
+                                onClick={() => openReplay(item.sessionId)}
+                              >
+                                Replay →
+                              </button>
+                            )}
                           </div>
                         ))
                       )}
@@ -1136,19 +1038,34 @@ function DashboardInner({
                           </tr>
                         </thead>
                         <tbody>
-                          {(realCampaigns && realCampaigns.length > 0 ? realCampaigns : CAMPAIGNS).map((c) => (
-                            <tr key={c.name}>
-                              <td data-label="Campaign">
-                                <strong className="dash-code">{c.name}</strong>
-                                <div className="dash-cell-sub">{c.source}</div>
-                              </td>
-                              <td data-label="Visitors">{c.visitors}</td>
-                              <td data-label="Checkouts">{c.checkouts}</td>
-                              <td data-label="Conv.">
-                                <span className="badge badge--role">{c.conv}</span>
+                          {realCampaigns.length === 0 ? (
+                            <tr>
+                              <td
+                                colSpan={4}
+                                style={{
+                                  padding: '2.5rem 1rem',
+                                  textAlign: 'center',
+                                  color: 'var(--color-fg-muted)',
+                                }}
+                              >
+                                No marketing campaign traffic recorded in this window.
                               </td>
                             </tr>
-                          ))}
+                          ) : (
+                            realCampaigns.map((c) => (
+                              <tr key={c.name}>
+                                <td data-label="Campaign">
+                                  <strong className="dash-code">{c.name}</strong>
+                                  <div className="dash-cell-sub">{c.source}</div>
+                                </td>
+                                <td data-label="Visitors">{c.visitors}</td>
+                                <td data-label="Checkouts">{c.checkouts}</td>
+                                <td data-label="Conv.">
+                                  <span className="badge badge--role">{c.conv}</span>
+                                </td>
+                              </tr>
+                            ))
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -1193,9 +1110,17 @@ function DashboardInner({
                 )}
 
                 {replayLoading && replaySessions.length === 0 ? (
-                  <section className="dash-card dash-card--compact" style={{ padding: '3.5rem 1.5rem', textAlign: 'center' }}>
-                    <p className="dash-empty">Loading recorded sessions from database…</p>
-                  </section>
+                  <div className="replay-queue-skeleton" role="status" aria-label="Loading recorded sessions">
+                    {[1, 2, 3, 4, 5].map((i) => (
+                      <div key={i} className="replay-queue-skeleton__item">
+                        <div className="replay-queue-skeleton__dot" />
+                        <div className="replay-queue-skeleton__body">
+                          <div className="replay-queue-skeleton__bar replay-queue-skeleton__bar--title" />
+                          <div className="replay-queue-skeleton__bar replay-queue-skeleton__bar--sub" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 ) : replaySessions.length === 0 ? (
                   <section className="dash-card dash-card--compact" style={{ padding: '3.5rem 1.5rem', textAlign: 'center' }}>
                     <div style={{ maxWidth: 440, margin: '0 auto' }}>
@@ -1329,21 +1254,90 @@ function DashboardInner({
 
                     {/* Right Column: OpenReplay Unified Studio Theater */}
                     <div style={{ minWidth: 0, flex: 1 }} aria-label="Session player">
-                      {sessionDetail ? (
+                      {activeReplaySession ? (
                         <ReplayPlayer
-                          session={sessionDetail.session}
-                          chunks={sessionDetail.chunks}
-                          timelineEvents={sessionDetail.timelineEvents}
+                          session={activeReplaySession}
+                          chunks={
+                            sessionDetail && sessionDetail.session.id === activeReplaySession.id
+                              ? sessionDetail.chunks
+                              : []
+                          }
+                          timelineEvents={
+                            sessionDetail && sessionDetail.session.id === activeReplaySession.id
+                              ? sessionDetail.timelineEvents
+                              : []
+                          }
                           overrideEvents={
-                            liveCapture && liveCapture.sessionId === sessionDetail.session.id
+                            liveCapture && liveCapture.sessionId === activeReplaySession.id
                               ? liveCapture.events
                               : null
                           }
-                          loadingDetail={detailLoading}
+                          loadingDetail={
+                            detailLoading ||
+                            !sessionDetail ||
+                            sessionDetail.session.id !== activeReplaySession.id
+                          }
                           projectPlatform={project?.platform}
                           deviceMode={replayDeviceMode}
                           onDeviceModeChange={setReplayDeviceMode}
                         />
+                      ) : replayLoading ? (
+                        <div className="or-theater or-theater--placeholder" role="status" aria-label="Loading session replay">
+                          <div className="or-unified-header">
+                            <div className="or-unified-header__left">
+                              <span className="or-user-avatar or-user-avatar--skeleton" aria-hidden="true" />
+                              <span className="replay-queue-skeleton__bar replay-queue-skeleton__bar--title" style={{ width: 140, height: 16 }} />
+                            </div>
+                            <div className="or-unified-header__right">
+                              <span className="or-res-chip">Loading…</span>
+                            </div>
+                          </div>
+                          <div className="or-stage">
+                            {replayDeviceMode === 'web' || project?.platform === 'web' ? (
+                              <div className="or-web-frame">
+                                <div className="or-web-frame__chrome">
+                                  <div className="or-web-dots" aria-hidden="true">
+                                    <span className="or-web-dot or-web-dot--red" />
+                                    <span className="or-web-dot or-web-dot--yellow" />
+                                    <span className="or-web-dot or-web-dot--green" />
+                                  </div>
+                                  <div className="or-url-pill">Loading session…</div>
+                                </div>
+                                <div className="replay-player__viewport replay-player__state">
+                                  <div className="replay-loading-spinner">
+                                    <div className="replay-spinner-ring" />
+                                    <div className="replay-spinner-glow" />
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className={`or-phone-frame ${replayDeviceMode === 'android' || project?.platform === 'android' ? 'or-phone-frame--android' : 'or-phone-frame--ios'}`}>
+                                <div className="or-phone-statusbar">
+                                  <span>9:41</span>
+                                  <div className="or-phone-status-icons">
+                                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <path d="M5 12.55a11 11 0 0 1 14.08 0" />
+                                      <path d="M1.42 9a16 16 0 0 1 21.16 0" />
+                                    </svg>
+                                    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                                      <rect x="2" y="7" width="16" height="10" rx="2" ry="2" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                                      <rect x="4" y="9" width="10" height="6" rx="1" ry="1" />
+                                    </svg>
+                                  </div>
+                                </div>
+                                <div className="replay-player__viewport replay-player__state">
+                                  <div className="replay-loading-spinner">
+                                    <div className="replay-spinner-ring" />
+                                    <div className="replay-spinner-glow" />
+                                  </div>
+                                </div>
+                                <div className="or-phone-homebar">
+                                  <div className="or-phone-pill" />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       ) : (
                         <section className="dash-card dash-card--compact" style={{ padding: '3.5rem 1rem', textAlign: 'center' }}>
                           <p className="dash-empty">Select a session from the queue to start replay.</p>
@@ -1357,56 +1351,187 @@ function DashboardInner({
 
             {/* ==================== EVENT LOG ==================== */}
             {section === 'logs' && (
-              <section className="dash-card dash-card--compact">
-                <div className="dash-card__head">
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <section className="dash-card dash-card--compact mo-stream-shell">
+                <div className="mo-stream-header">
+                  <div className="mo-stream-header__title-wrap">
+                    <div className="mo-stream-header__title-row">
                       <h2 className="dash-card__title">Event &amp; Error Stream</h2>
-                      <span className="badge badge--role">{totalLogs} events</span>
+                      <span className="badge badge--role mo-stream-count-badge">
+                        {totalLogs} {totalLogs === 1 ? 'event' : 'events'}
+                      </span>
                     </div>
                     <p className="dash-card__desc">
                       Exceptions, HTTP spans, and telemetry warnings with exact timestamps and correlated session replays.
                     </p>
                   </div>
-                  <div className="dash-seg" role="group" aria-label="Filter log type">
-                    {(
-                      [
-                        { id: 'all', label: 'All' },
-                        { id: 'exception', label: 'Exceptions' },
-                        { id: 'network', label: 'Network' },
-                        { id: 'console', label: 'Console' },
-                      ] as { id: LogKind; label: string }[]
-                    ).map((f) => (
+
+                  <div className="mo-stream-header__controls">
+                    <div className="dash-seg mo-stream-seg" role="group" aria-label="Filter log type">
+                      {(
+                        [
+                          { id: 'all', label: 'All', count: logCounts.all },
+                          { id: 'exception', label: 'Exceptions', count: logCounts.exception },
+                          { id: 'network', label: 'Network', count: logCounts.network },
+                          { id: 'console', label: 'Console', count: logCounts.console },
+                        ] as { id: LogKind; label: string; count: number }[]
+                      ).map((f) => (
+                        <button
+                          key={f.id}
+                          type="button"
+                          className={`dash-seg__btn mo-stream-seg__btn${logFilter === f.id ? ' is-active' : ''}`}
+                          aria-pressed={logFilter === f.id}
+                          onClick={() => {
+                            setLogFilter(f.id)
+                            setLogPage(1)
+                          }}
+                        >
+                          <span>{f.label}</span>
+                          <span className="mo-stream-seg__count">{f.count}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    <button
+                      type="button"
+                      className="dash-btn dash-btn--sm"
+                      onClick={reloadTelemetry}
+                      title="Refresh event stream"
+                    >
+                      Refresh
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mo-stream-toolbar">
+                  <div className="mo-stream-search">
+                    <svg
+                      className="mo-stream-search__icon"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <circle cx="11" cy="11" r="8" />
+                      <path d="m21 21-4.3-4.3" />
+                    </svg>
+                    <input
+                      type="search"
+                      className="mo-stream-search__input"
+                      placeholder="Filter by event name, message, HTTP status, environment, or session ID..."
+                      value={logSearch}
+                      onChange={(e) => {
+                        setLogSearch(e.target.value)
+                        setLogPage(1)
+                      }}
+                    />
+                    {logSearch && (
                       <button
-                        key={f.id}
                         type="button"
-                        className={`dash-seg__btn${logFilter === f.id ? ' is-active' : ''}`}
-                        aria-pressed={logFilter === f.id}
+                        className="mo-stream-search__clear"
                         onClick={() => {
-                          setLogFilter(f.id)
+                          setLogSearch('')
                           setLogPage(1)
                         }}
+                        aria-label="Clear search"
                       >
-                        {f.label}
+                        ×
                       </button>
-                    ))}
+                    )}
+                  </div>
+
+                  <div className="mo-stream-summary" aria-label="Event category summary">
+                    <span className="mo-stream-summary__pill">
+                      <span className="mo-card__indicator mo-card__indicator--exception" />
+                      <span>Exceptions</span>
+                      <strong>{logCounts.exception}</strong>
+                    </span>
+                    <span className="mo-stream-summary__pill">
+                      <span className="mo-card__indicator mo-card__indicator--network" />
+                      <span>Network</span>
+                      <strong>{logCounts.network}</strong>
+                    </span>
+                    <span className="mo-stream-summary__pill">
+                      <span className="mo-card__indicator mo-card__indicator--console" />
+                      <span>Console</span>
+                      <strong>{logCounts.console}</strong>
+                    </span>
                   </div>
                 </div>
 
                 {filteredLogs.length === 0 ? (
-                  <div style={{ padding: '3rem 1rem', textAlign: 'center', color: 'var(--color-fg-muted)' }}>
-                    <p style={{ fontWeight: 500, margin: '0 0 0.5rem 0', color: 'var(--color-fg)' }}>
-                      No telemetry logs found in PostgreSQL
-                    </p>
-                    <p style={{ fontSize: '0.8125rem', margin: 0 }}>
-                      {!isDemo && project && (realStats?.events_count ?? 0) === 0
-                        ? 'Send events using your SDK client key to POST /api/v1/ingest or send a live test event.'
-                        : 'No events match the selected filter.'}
-                    </p>
+                  <div className="mo-empty-state" role="status">
+                    <div className="mo-empty-state__icon" aria-hidden="true">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4 6h16M4 12h16M4 18h10" />
+                        <circle cx="18" cy="18" r="3" />
+                      </svg>
+                    </div>
+                    {displayLogs.length === 0 ? (
+                      <>
+                        <h3 className="mo-empty-state__title">No telemetry events ingested yet</h3>
+                        <p className="mo-empty-state__desc">
+                          Exceptions, HTTP network spans, and custom telemetry events sent from your application SDK will stream here in real time.
+                        </p>
+                        <div className="mo-empty-state__meta">
+                          <span className="dash-code">POST /api/v1/ingest</span>
+                          {project && <span className="dash-code">project: {project.slug}</span>}
+                        </div>
+                        <div className="mo-empty-state__actions">
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn--sm"
+                            onClick={reloadTelemetry}
+                          >
+                            Refresh Stream
+                          </button>
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn--sm dash-btn--primary"
+                            onClick={() => goSection('/dashboard/settings')}
+                          >
+                            API Keys &amp; SDK Setup →
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <h3 className="mo-empty-state__title">No events match the active filter</h3>
+                        <p className="mo-empty-state__desc">
+                          Showing 0 of {displayLogs.length} ingested events
+                          {logFilter !== 'all' ? ` in "${logFilter}"` : ''}
+                          {logSearch.trim() ? ` matching "${logSearch.trim()}"` : ''}.
+                        </p>
+                        <div className="mo-empty-state__actions">
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn--sm"
+                            onClick={() => {
+                              setLogFilter('all')
+                              setLogSearch('')
+                              setLogPage(1)
+                            }}
+                          >
+                            Reset Filters
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <>
                     <div className="mo-stream">
+                      <div className="mo-stream__cols" aria-hidden="true">
+                        <span>Type</span>
+                        <span>Event &amp; Message</span>
+                        <span>Session / Env</span>
+                        <span style={{ textAlign: 'right' }}>Timestamp</span>
+                        <span style={{ textAlign: 'right' }}>Actions</span>
+                      </div>
                       {paginatedLogs.map((entry) => {
                         const isExpanded = expandedLogIds.has(entry.id)
                         const hasAttributes = entry.attributes && Object.keys(entry.attributes).length > 0
@@ -1419,65 +1544,77 @@ function DashboardInner({
                               className="mo-card__body"
                               onClick={() => toggleLogExpanded(entry.id)}
                             >
-                              <div className="mo-card__left">
+                              <div className="mo-card__col-type">
                                 <span className={`mo-card__indicator mo-card__indicator--${entry.kind}`} />
-
-                                <div className="mo-card__content">
-                                  <div className="mo-card__title-row">
-                                    <span className={`badge badge--${entry.kind}`}>{entry.kind}</span>
-                                    {entry.statusCode && (
-                                      <span
-                                        className={`badge ${
-                                          Number(entry.statusCode) >= 400 ? 'badge--exception' : 'badge--active'
-                                        }`}
-                                      >
-                                        {entry.statusCode} {Number(entry.statusCode) === 200 ? 'OK' : ''}
-                                      </span>
-                                    )}
-                                    <h3 className="mo-card__title">{entry.title}</h3>
-                                  </div>
-
-                                  <p className="mo-card__subtitle">
-                                    {entry.detail}
-                                    {entry.sessionId && entry.sessionId !== 'n/a'
-                                      ? ` · session: ${entry.sessionId}`
-                                      : ''}
-                                  </p>
-                                </div>
+                                <span className={`badge badge--${entry.kind} mo-card__type-badge`}>{entry.kind}</span>
                               </div>
 
-                              <div className="mo-card__right" onClick={(e) => e.stopPropagation()}>
-                                <div
-                                  className="mo-card__time"
-                                  title={`Exact timestamp: ${entry.exactTime}${entry.rawTimestamp ? ` (${entry.rawTimestamp})` : ''}`}
-                                >
-                                  <span className="mo-card__time-exact">
-                                    {entry.exactDateShort}, {entry.exactTimeShort}
-                                  </span>
-                                  <span className="mo-card__time-ago">{entry.time}</span>
+                              <div className="mo-card__content">
+                                <div className="mo-card__title-row">
+                                  {entry.statusCode && (
+                                    <span
+                                      className={`badge ${
+                                        Number(entry.statusCode) >= 400 ? 'badge--exception' : 'badge--active'
+                                      }`}
+                                    >
+                                      {entry.statusCode} {Number(entry.statusCode) === 200 ? 'OK' : ''}
+                                    </span>
+                                  )}
+                                  <h3 className="mo-card__title">{entry.title}</h3>
+                                  {entry.durationMs !== undefined && (
+                                    <span className="mo-card__duration">{entry.durationMs}ms</span>
+                                  )}
                                 </div>
 
-                                <div className="mo-card__actions">
-                                  {entry.sessionId && entry.sessionId !== 'n/a' && (
-                                    <button
-                                      type="button"
-                                      className="dash-btn dash-btn--sm"
-                                      onClick={() => openReplay(entry.sessionId)}
-                                      title={`Inspect session replay for ${entry.sessionId}`}
-                                    >
-                                      Replay →
-                                    </button>
-                                  )}
+                                <p className="mo-card__subtitle">
+                                  {entry.detail || entry.eventName || 'Telemetry event'}
+                                </p>
+                              </div>
+
+                              <div className="mo-card__col-meta">
+                                {entry.sessionId && entry.sessionId !== 'n/a' ? (
+                                  <span className="mo-card__session-chip" title={entry.sessionId}>
+                                    {entry.sessionId.length > 14
+                                      ? `${entry.sessionId.slice(0, 12)}…`
+                                      : entry.sessionId}
+                                  </span>
+                                ) : (
+                                  <span className="mo-card__session-empty">—</span>
+                                )}
+                                {entry.environment && (
+                                  <span className="mo-card__env-tag">{entry.environment}</span>
+                                )}
+                              </div>
+
+                              <div
+                                className="mo-card__time"
+                                title={`Exact timestamp: ${entry.exactTime}${entry.rawTimestamp ? ` (${entry.rawTimestamp})` : ''}`}
+                              >
+                                <span className="mo-card__time-exact">
+                                  {entry.exactDateShort}, {entry.exactTimeShort}
+                                </span>
+                                <span className="mo-card__time-ago">{entry.time}</span>
+                              </div>
+
+                              <div className="mo-card__actions" onClick={(e) => e.stopPropagation()}>
+                                {entry.sessionId && entry.sessionId !== 'n/a' && (
                                   <button
                                     type="button"
                                     className="dash-btn dash-btn--sm"
-                                    onClick={() => toggleLogExpanded(entry.id)}
-                                    title="Toggle event details"
-                                    style={{ padding: '0 6px' }}
+                                    onClick={() => openReplay(entry.sessionId)}
+                                    title={`Inspect session replay for ${entry.sessionId}`}
                                   >
-                                    <span className="mo-card__expand-icon">▾</span>
+                                    Replay →
                                   </button>
-                                </div>
+                                )}
+                                <button
+                                  type="button"
+                                  className="dash-btn dash-btn--sm mo-card__expand-btn"
+                                  onClick={() => toggleLogExpanded(entry.id)}
+                                  title="Toggle event details"
+                                >
+                                  <span className="mo-card__expand-icon">▾</span>
+                                </button>
                               </div>
                             </div>
 
@@ -1580,31 +1717,89 @@ function DashboardInner({
                       })}
                     </div>
 
-                    {/* MoEngage-Style Stream Pagination */}
-                    {totalLogs > LOGS_PER_PAGE && (
+                    {/* Precision Stream Pagination */}
+                    {totalLogs > 0 && (
                       <div className="mo-pagination">
-                        <span className="mo-pagination__info">
-                          Showing <strong>{(currentLogPage - 1) * LOGS_PER_PAGE + 1}–{Math.min(currentLogPage * LOGS_PER_PAGE, totalLogs)}</strong> of <strong>{totalLogs}</strong> events
-                        </span>
+                        <div className="mo-pagination__left">
+                          <span className="mo-pagination__info">
+                            Showing <strong>{(currentLogPage - 1) * logPageSize + 1}–{Math.min(currentLogPage * logPageSize, totalLogs)}</strong> of <strong>{totalLogs}</strong> events
+                          </span>
+
+                          <div className="mo-pagination__size-control">
+                            <span className="mo-pagination__size-label">Per page:</span>
+                            <div className="dash-seg mo-pagination__seg" role="group" aria-label="Page size options">
+                              {[10, 25, 50, 100].map((size) => (
+                                <button
+                                  key={size}
+                                  type="button"
+                                  className={`dash-seg__btn mo-pagination__seg-btn${logPageSize === size ? ' is-active' : ''}`}
+                                  aria-pressed={logPageSize === size}
+                                  onClick={() => handleLogPageSizeChange(size)}
+                                >
+                                  {size}
+                                </button>
+                              ))}
+                            </div>
+
+                            <div className="mo-pagination__custom-wrap" title="Custom items per page (5-500)">
+                              <input
+                                type="number"
+                                min={5}
+                                max={500}
+                                step={5}
+                                placeholder="Custom"
+                                className="mo-pagination__custom-input"
+                                value={[10, 25, 50, 100].includes(logPageSize) ? '' : logPageSize}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value, 10)
+                                  if (!isNaN(val) && val > 0) {
+                                    handleLogPageSizeChange(val)
+                                  }
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+
                         <div className="mo-pagination__nav">
                           <button
                             type="button"
                             className="dash-btn dash-btn--sm"
                             disabled={currentLogPage <= 1}
+                            onClick={() => setLogPage(1)}
+                            title="First page"
+                          >
+                            « First
+                          </button>
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn--sm"
+                            disabled={currentLogPage <= 1}
                             onClick={() => setLogPage((p) => Math.max(1, p - 1))}
+                            title="Previous page"
                           >
                             ← Prev
                           </button>
                           <span className="mo-pagination__pages">
-                            Page {currentLogPage} of {totalLogPages}
+                            Page <strong>{currentLogPage}</strong> of <strong>{totalLogPages}</strong>
                           </span>
                           <button
                             type="button"
                             className="dash-btn dash-btn--sm"
                             disabled={currentLogPage >= totalLogPages}
                             onClick={() => setLogPage((p) => Math.min(totalLogPages, p + 1))}
+                            title="Next page"
                           >
                             Next →
+                          </button>
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn--sm"
+                            disabled={currentLogPage >= totalLogPages}
+                            onClick={() => setLogPage(totalLogPages)}
+                            title="Last page"
+                          >
+                            Last »
                           </button>
                         </div>
                       </div>

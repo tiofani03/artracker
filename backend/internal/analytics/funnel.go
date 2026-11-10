@@ -412,6 +412,9 @@ func extractSegmentValue(r EventRow, breakdownBy string) string {
 		if r.UTMSource != "" {
 			return r.UTMSource
 		}
+		if r.UTMCampaign != "" {
+			return r.UTMCampaign
+		}
 		return "(none)"
 	case "utm_medium":
 		if r.UTMMedium != "" {
@@ -421,6 +424,9 @@ func extractSegmentValue(r EventRow, breakdownBy string) string {
 	case "utm_campaign":
 		if r.UTMCampaign != "" {
 			return r.UTMCampaign
+		}
+		if r.UTMSource != "" {
+			return r.UTMSource
 		}
 		return "(none)"
 	case "browser":

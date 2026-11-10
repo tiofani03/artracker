@@ -39,18 +39,37 @@ function deviceRows(d: DeviceInfo): [string, string][] {
 }
 
 function StackTraceViewer({ event }: { event: IssueEvent }) {
+  const [copied, setCopied] = useState(false)
   const trace = event.stack_trace_resolved || event.stack_trace
   if (!trace) {
     return <p className="dash-empty">No stack trace captured for this occurrence.</p>
   }
   const lines = trace.split('\n')
   const [head, ...frames] = lines
+
+  const copyTrace = () => {
+    navigator.clipboard?.writeText(trace).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
   return (
-    <div className="stack-viewer">
-      <div className="stack-viewer__head">{head}</div>
-      <ol className="stack-viewer__frames">
+    <div className="stack-viewer fb-stack-viewer">
+      <div className="stack-viewer__head fb-stack-head">
+        <span className="fb-stack-head__title">{head}</span>
+        <button
+          type="button"
+          className="dash-btn dash-btn--sm fb-stack-copy-btn"
+          onClick={copyTrace}
+          title="Copy raw stack trace to clipboard"
+        >
+          {copied ? '✓ Copied' : 'Copy Stack'}
+        </button>
+      </div>
+      <ol className="stack-viewer__frames fb-stack-frames">
         {frames.map((line, i) => (
-          <li key={i} className="stack-viewer__frame">
+          <li key={i} className="stack-viewer__frame fb-stack-frame">
             {line || '\u00a0'}
           </li>
         ))}
@@ -123,84 +142,163 @@ function IssueDetailView({ projectId, issueId }: { projectId: number; issueId: n
   const latest = detail.events[0]
   const breadcrumbs = latest ? latest.breadcrumbs.slice(-10) : []
   const device = latest ? deviceRows(latest.device_info) : []
+  const isFatal =
+    detail.type.toLowerCase().includes('fatal') ||
+    detail.type.toLowerCase().includes('crash') ||
+    detail.type.toLowerCase().includes('typeerror') ||
+    detail.type.toLowerCase().includes('referenceerror')
 
   return (
-    <>
-      <section className="dash-card dash-card--compact">
-        <div className="dash-card__head">
-          <div>
-            <div className="dash-list__top">
-              <span className="badge badge--exception">{detail.type}</span>
-              <span className={`badge badge--${detail.status}`}>{detail.status}</span>
-              <span className="badge badge--network">{detail.count.toLocaleString()} events</span>
-              {detail.assigned_to && (
-                <span className="badge badge--role">
-                  {detail.assigned_to.name || detail.assigned_to.email}
-                </span>
-              )}
+    <div className="fb-detail-view">
+      {/* Top Breadcrumb & Action Banner */}
+      <div className="fb-detail-top">
+        <Link to="/dashboard/issues" className="dash-btn dash-btn--sm fb-back-btn">
+          ← Back to Issues
+        </Link>
+        <span className="fb-crumb-sep">/</span>
+        <span className="fb-crumb-cluster">Cluster #{detail.id}</span>
+      </div>
+
+      {/* Main Issue Header Card */}
+      <section className="dash-card dash-card--compact fb-card fb-detail-header-card">
+        <div className="fb-detail-header__main">
+          <div className="fb-detail-header__badges">
+            <span className={`fb-badge-severity fb-badge-severity--${isFatal ? 'fatal' : 'nonfatal'}`}>
+              {isFatal ? 'Fatal Crash' : 'Non-fatal Exception'}
+            </span>
+            <span className={`fb-status-tag fb-status-tag--${detail.status}`}>
+              {detail.status === 'resolved' ? 'Closed' : detail.status === 'ignored' ? 'Muted' : 'Open'}
+            </span>
+            <span className="fb-tag-type">{detail.type}</span>
+            {latest?.release_version && (
+              <span className="fb-tag-release">v{latest.release_version}</span>
+            )}
+            {detail.assigned_to && (
+              <span className="fb-assignee-chip">
+                Assigned: @{detail.assigned_to.name || detail.assigned_to.email.split('@')[0]}
+              </span>
+            )}
+          </div>
+
+          <h2 className="fb-detail-title">{detail.title}</h2>
+          {detail.latest_message && detail.latest_message !== detail.title && (
+            <p className="fb-detail-msg">{detail.latest_message}</p>
+          )}
+
+          <div className="fb-detail-stats-strip">
+            <div className="fb-detail-stat">
+              <span className="fb-detail-stat__label">Total Events</span>
+              <strong className="fb-detail-stat__val">{detail.count.toLocaleString()}</strong>
             </div>
-            <h2 className="dash-card__title">{detail.title}</h2>
-            <p className="dash-card__desc">
-              First seen {formatAgo(detail.first_seen)} · Last seen {formatAgo(detail.last_seen)}
-            </p>
+            <div className="fb-detail-stat">
+              <span className="fb-detail-stat__label">First Seen</span>
+              <strong className="fb-detail-stat__val" title={detail.first_seen}>{formatAgo(detail.first_seen)}</strong>
+            </div>
+            <div className="fb-detail-stat">
+              <span className="fb-detail-stat__label">Last Seen</span>
+              <strong className="fb-detail-stat__val" title={detail.last_seen}>{formatAgo(detail.last_seen)}</strong>
+            </div>
+            <div className="fb-detail-stat">
+              <span className="fb-detail-stat__label">Fingerprint</span>
+              <span className="fb-detail-stat__code">{detail.fingerprint.slice(0, 12)}…</span>
+            </div>
           </div>
-          <div className="dash-issue-actions">
-            {detail.status === 'open' && (
-              <>
-                <button type="button" className="dash-btn" disabled={busy} onClick={() => void setStatus('resolved')}>
-                  Mark as Resolved
-                </button>
-                <button type="button" className="dash-btn" disabled={busy} onClick={() => void setStatus('ignored')}>
-                  Ignore
-                </button>
-              </>
-            )}
-            {detail.status !== 'open' && (
-              <button type="button" className="dash-btn" disabled={busy} onClick={() => void setStatus('open')}>
-                Reopen
+        </div>
+
+        <div className="fb-detail-actions">
+          {detail.status === 'open' && (
+            <>
+              <button
+                type="button"
+                className="dash-btn dash-btn--sm dash-btn--primary"
+                disabled={busy}
+                onClick={() => void setStatus('resolved')}
+              >
+                ✓ Mark as Closed
               </button>
-            )}
-            <button type="button" className="dash-btn" disabled={busy} onClick={() => void assign()}>
-              {detail.assigned_to ? 'Reassign' : 'Assign'}
+              <button
+                type="button"
+                className="dash-btn dash-btn--sm"
+                disabled={busy}
+                onClick={() => void setStatus('ignored')}
+              >
+                Mute Notifications
+              </button>
+            </>
+          )}
+          {detail.status !== 'open' && (
+            <button
+              type="button"
+              className="dash-btn dash-btn--sm"
+              disabled={busy}
+              onClick={() => void setStatus('open')}
+            >
+              Reopen Issue
             </button>
-          </div>
+          )}
+          <button
+            type="button"
+            className="dash-btn dash-btn--sm"
+            disabled={busy}
+            onClick={() => void assign()}
+          >
+            {detail.assigned_to ? 'Reassign' : 'Assign to Me'}
+          </button>
         </div>
       </section>
 
+      {/* Correlated Replay Quick Banner if session_id is available */}
+      {latest?.session_id && (
+        <div className="fb-replay-banner">
+          <div className="fb-replay-banner__info">
+            <span className="fb-replay-banner__badge">SESSION REPLAY</span>
+            <span>Recorded session <strong>{latest.session_id}</strong> captured right before this crash occurred.</span>
+          </div>
+          <Link
+            to={`/dashboard/replays?session=${encodeURIComponent(latest.session_id)}`}
+            className="dash-btn dash-btn--sm dash-btn--primary fb-replay-banner__btn"
+          >
+            Watch Session Replay →
+          </Link>
+        </div>
+      )}
+
       {latest && (
-        <div className="dash-split">
-          <section className="dash-card dash-card--compact">
+        <div className="dash-split fb-split">
+          <section className="dash-card dash-card--compact fb-card">
             <div className="dash-card__head">
               <div>
-                <h2 className="dash-card__title">Stack Trace</h2>
+                <h3 className="dash-card__title">Stack Trace</h3>
                 <p className="dash-card__desc">
-                  {latest.stack_trace_resolved !== latest.stack_trace
-                    ? 'Source-mapped to original source lines.'
-                    : 'Minified stack trace (upload a source map to demangle).'}
+                  {latest.stack_trace_resolved !== latest.stack_trace ? (
+                    <span className="fb-pill fb-pill--green" style={{ fontSize: '0.65rem' }}>Source-mapped to original lines</span>
+                  ) : (
+                    <span>Minified stack trace (upload source map in Settings to demangle).</span>
+                  )}
                 </p>
               </div>
             </div>
             <StackTraceViewer event={latest} />
           </section>
 
-          <section className="dash-card dash-card--compact">
+          <section className="dash-card dash-card--compact fb-card">
             <div className="dash-card__head">
               <div>
-                <h2 className="dash-card__title">Breadcrumbs</h2>
-                <p className="dash-card__desc">Last {breadcrumbs.length} activities before the crash.</p>
+                <h3 className="dash-card__title">User Activity &amp; Breadcrumbs</h3>
+                <p className="dash-card__desc">Last {breadcrumbs.length} activities before this crash occurred.</p>
               </div>
             </div>
             {breadcrumbs.length === 0 ? (
-              <p className="dash-empty">No breadcrumbs recorded.</p>
+              <p className="dash-empty">No breadcrumbs recorded for this occurrence.</p>
             ) : (
-              <ol className="crumb-timeline">
+              <ol className="crumb-timeline fb-timeline">
                 {breadcrumbs.map((b, i) => (
-                  <li key={i} className="crumb-timeline__item">
-                    <span className="crumb-timeline__dot" aria-hidden="true" />
-                    <div className="crumb-timeline__body">
-                      <strong className="crumb-timeline__label">{breadcrumbLabel(b)}</strong>
+                  <li key={i} className="crumb-timeline__item fb-timeline__item">
+                    <span className="crumb-timeline__dot fb-timeline__dot" aria-hidden="true" />
+                    <div className="crumb-timeline__body fb-timeline__body">
+                      <strong className="crumb-timeline__label fb-timeline__label">{breadcrumbLabel(b)}</strong>
                       {b.timestamp && (
-                        <span className="crumb-timeline__time">{formatAgo(b.timestamp)}</span>
+                        <span className="crumb-timeline__time fb-timeline__time">{formatAgo(b.timestamp)}</span>
                       )}
                     </div>
                   </li>
@@ -212,21 +310,21 @@ function IssueDetailView({ projectId, issueId }: { projectId: number; issueId: n
       )}
 
       {latest && (
-        <section className="dash-card dash-card--compact">
+        <section className="dash-card dash-card--compact fb-card">
           <div className="dash-card__head">
             <div>
-              <h2 className="dash-card__title">Device &amp; Browser Context</h2>
-              <p className="dash-card__desc">Environment of the most recent occurrence.</p>
+              <h3 className="dash-card__title">Device &amp; Browser Context</h3>
+              <p className="dash-card__desc">Runtime telemetry captured on occurrence #{latest.id}.</p>
             </div>
           </div>
           {device.length === 0 ? (
             <p className="dash-empty">No device context recorded.</p>
           ) : (
-            <div className="device-grid">
+            <div className="device-grid fb-device-grid">
               {device.map(([k, v]) => (
-                <div key={k} className="device-grid__cell">
-                  <span className="device-grid__key">{k}</span>
-                  <span className="device-grid__value">{v}</span>
+                <div key={k} className="device-grid__cell fb-device-cell">
+                  <span className="device-grid__key fb-device-key">{k}</span>
+                  <span className="device-grid__value fb-device-val">{v}</span>
                 </div>
               ))}
             </div>
@@ -234,28 +332,42 @@ function IssueDetailView({ projectId, issueId }: { projectId: number; issueId: n
         </section>
       )}
 
-      <section className="dash-card dash-card--compact">
+      <section className="dash-card dash-card--compact fb-card">
         <div className="dash-card__head">
           <div>
-            <h2 className="dash-card__title">Occurrences</h2>
-            <p className="dash-card__desc">Every recorded crash for this issue.</p>
+            <h3 className="dash-card__title">Recent Crash Occurrences</h3>
+            <p className="dash-card__desc">Chronological log of events clustered under this fingerprint.</p>
           </div>
+          <span className="badge badge--role">{detail.events.length} occurrences recorded</span>
         </div>
-        <div className="dash-list">
+        <div className="fb-occurrences-list">
           {detail.events.map((ev) => (
-            <div key={ev.id} className="dash-list__row">
-              <div className="dash-list__main">
-                <p className="dash-list__title">{ev.message}</p>
-                <p className="dash-list__sub">
-                  {formatAgo(ev.created_at)} · session {ev.session_id || 'n/a'}
-                  {ev.release_version ? ` · release ${ev.release_version}` : ''}
-                </p>
+            <div key={ev.id} className="fb-occurrence-row">
+              <div className="fb-occurrence-row__left">
+                <span className="fb-occurrence-row__dot" aria-hidden="true" />
+                <div>
+                  <strong className="fb-occurrence-row__msg">{ev.message || detail.title}</strong>
+                  <div className="fb-occurrence-row__meta">
+                    <span>{formatAgo(ev.created_at)}</span>
+                    {ev.session_id && <span>· session: <code>{ev.session_id}</code></span>}
+                    {ev.release_version && <span>· release: v{ev.release_version}</span>}
+                    {ev.user_id && <span>· user: {ev.user_id}</span>}
+                  </div>
+                </div>
               </div>
+              {ev.session_id && (
+                <Link
+                  to={`/dashboard/replays?session=${encodeURIComponent(ev.session_id)}`}
+                  className="dash-btn dash-btn--sm"
+                >
+                  Replay →
+                </Link>
+              )}
             </div>
           ))}
         </div>
       </section>
-    </>
+    </div>
   )
 }
 

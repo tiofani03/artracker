@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -145,4 +146,43 @@ func TestTelemetryQueryEndpoints(t *testing.T) {
 
 func cBackground() context.Context {
 	return context.Background()
+}
+
+func TestProjectStatsReflectsReplayAndTelemetryData(t *testing.T) {
+	e := newTestEnv(t)
+	org := e.addOrg(t, "acme-stats")
+	uid, hdr := e.addUser(t, "statsviewer")
+	e.addMember(t, org, uid, "viewer")
+	pid := e.addProject(t, org, "stats-app")
+
+	e.addReplaySession(t, pid, "rep-err-1", "1 hour", true, false, false)
+	e.addReplaySession(t, pid, "rep-clean-1", "2 hours", false, true, false)
+	e.addIssue(t, pid, "fp-open-1", "open")
+
+	resp := e.do(t, "GET", fmt.Sprintf("/api/v1/projects/%d/stats?range=24h", pid), nil, hdr)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var got ProjectStatsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.SessionsCount != 2 {
+		t.Errorf("sessions_count = %d, want 2", got.SessionsCount)
+	}
+	if got.ErrorsCount != 1 {
+		t.Errorf("errors_count = %d, want 1", got.ErrorsCount)
+	}
+	if got.ErrorFreePct != "50.00%" {
+		t.Errorf("error_free_pct = %q, want 50.00%%", got.ErrorFreePct)
+	}
+	if got.OpenIssuesCount != 1 {
+		t.Errorf("open_issues_count = %d, want 1", got.OpenIssuesCount)
+	}
+	if got.FrustratedSessionsCount != 2 {
+		t.Errorf("frustrated_sessions_count = %d, want 2", got.FrustratedSessionsCount)
+	}
+	if len(got.Buckets) == 0 {
+		t.Errorf("expected non-empty buckets")
+	}
 }
