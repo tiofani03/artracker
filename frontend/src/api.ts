@@ -124,6 +124,8 @@ export type Project = {
   slug: string
   platform: Platform
   created_at: string
+  /** Server-side switch: whether mobile SDKs may upload screenshot-mode replay (artracker-screen-v1). */
+  replay_screenshot_enabled: boolean
 }
 
 export type KeyType = 'public_client' | 'secret_admin'
@@ -156,6 +158,11 @@ export const keyApi = {
   create: (projectId: number, keyType: KeyType) => post<CreatedKey>(`/projects/${projectId}/keys`, { key_type: keyType }),
   revoke: (projectId: number, keyId: number) => post<ApiKey>(`/projects/${projectId}/keys/${keyId}/revoke`),
   rotate: (projectId: number, keyId: number) => post<CreatedKey>(`/projects/${projectId}/keys/${keyId}/rotate`),
+}
+
+export const projectApi = {
+  setReplaySettings: (projectId: number, body: { screenshot_enabled: boolean }) =>
+    request<Project>(`/projects/${projectId}/replay-settings`, { method: 'PATCH', body: JSON.stringify(body) }),
 }
 
 export type BucketPoint = {
