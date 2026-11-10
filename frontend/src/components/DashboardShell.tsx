@@ -10,6 +10,7 @@ import { ToastProvider } from './Toast'
 
 const ORG_KEY = 'artracker.org'
 const PROJECT_KEY = 'artracker.project'
+const SIDEBAR_COLLAPSED_KEY = 'artracker.sidebar.collapsed'
 
 const DEMO_ORG: OrgMembership = {
   id: 1,
@@ -165,8 +166,27 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
   const [projectId, setProjectId] = useState<number | null>(() => readStoredNumber(PROJECT_KEY))
   const [error, setError] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
   const [dbHealth, setDbHealth] = useState<'checking' | 'up' | 'disabled' | 'down'>('checking')
   const [navState, setNavState] = useState<{ projectId: number; counts: NavCounts } | null>(null)
+
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0')
+      } catch {
+        // storage unavailable
+      }
+      return next
+    })
+  }
 
   const effectiveUser = authUser ?? (isDemo ? DEMO_USER : null)
   const orgs = effectiveUser?.orgs ?? []
@@ -287,7 +307,7 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
 
   return (
     <ToastProvider>
-      <div className="console-layout">
+      <div className={`console-layout${sidebarCollapsed ? ' is-collapsed' : ''}`}>
         {sidebarOpen && (
           <div
             className="console-backdrop"
@@ -297,9 +317,12 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
         )}
 
         {/* Left Sidebar */}
-        <aside className={`console-sidebar${sidebarOpen ? ' is-open' : ''}`} aria-label="Workspace navigation">
+        <aside
+          className={`console-sidebar${sidebarOpen ? ' is-open' : ''}${sidebarCollapsed ? ' is-collapsed' : ''}`}
+          aria-label="Workspace navigation"
+        >
           <div className="console-sidebar__brand">
-            <Link to="/" className="dash-brand" aria-label="ARTracker home">
+            <Link to="/" className="dash-brand" aria-label="ARTracker home" title="ARTracker">
               <span className="sso-logo-badge" aria-hidden="true">
                 <svg className="sso-logo-badge__svg" viewBox="0 0 24 24" fill="none">
                   <path d="M4 19L12 4L20 19M7.5 14H16.5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="square" />
@@ -307,7 +330,22 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
               </span>
               <span className="dash-brand__name">ARTracker</span>
             </Link>
-            <span className="console-sidebar__ver">Console</span>
+            <div className="console-sidebar__brand-actions">
+              <span className="console-sidebar__ver">Console</span>
+              <button
+                type="button"
+                className="dash-icon-btn console-sidebar__collapse-btn"
+                onClick={toggleSidebarCollapsed}
+                aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="3" y="4" width="18" height="16" rx="2" />
+                  <path d="M9 4v16" />
+                  {sidebarCollapsed ? <path d="m13 9 3 3-3 3" /> : <path d="m15 9-3 3 3 3" />}
+                </svg>
+              </button>
+            </div>
           </div>
 
           {/* Organization & Project Switchers inside Sidebar */}
@@ -359,6 +397,7 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
                           onClick={() => setSidebarOpen(false)}
                           className={`console-nav__item${active ? ' is-active' : ''}`}
                           aria-current={active ? 'page' : undefined}
+                          title={sidebarCollapsed ? item.label : undefined}
                         >
                           <span className="console-nav__item-left">
                             <svg
@@ -393,20 +432,10 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
             })}
           </nav>
 
-          {/* Bottom DB Status & Account */}
+          {/* Bottom Account */}
           <div className="console-sidebar__foot">
-            <div className="console-db-pill">
-              <span
-                className={`console-db-dot${
-                  dbHealth === 'up' ? ' is-up' : dbHealth === 'down' ? ' is-down' : ''
-                }`}
-                aria-hidden="true"
-              />
-              <span>PostgreSQL · {dbHealth === 'up' ? 'Connected' : dbHealth}</span>
-            </div>
-
             <div className="console-account">
-              <span className="console-account__avatar" aria-hidden="true">
+              <span className="console-account__avatar" aria-hidden="true" title={effectiveUser.email}>
                 {userInitial}
               </span>
               <div className="console-account__meta">
@@ -466,7 +495,7 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
                   </>
                 )}
                 <strong className="console-crumbs__current">{sectionTitle}</strong>
-                {allowDemo && <span className="badge badge--preview">Preview Data</span>}
+                {isDemo && <span className="badge badge--preview">Preview Data</span>}
               </div>
             </div>
 

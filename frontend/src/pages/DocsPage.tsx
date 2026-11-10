@@ -7,6 +7,7 @@ import {
 } from '../api'
 import { useAuth } from '../auth/AuthContext'
 import { Link } from '../router'
+import CustomSelect from '../components/CustomSelect'
 import '../docs.css'
 
 function renderInline(text: string): ReactNode {
@@ -1910,31 +1911,25 @@ print(response.status_code, response.json())`
           <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
             {/* Presets and Key Configuration */}
             {activeSection.presets && activeSection.presets.length > 0 && (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0.5rem 0' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', margin: '0.5rem 0' }}>
                 <span style={{ fontSize: '0.6875rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                   Payload Preset
                 </span>
-                <select
-                  style={{
-                    background: 'rgba(255,255,255,0.06)',
-                    color: '#f8fafc',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    borderRadius: '4px',
-                    padding: '0.25rem 0.5rem',
-                    fontSize: '0.75rem',
-                    outline: 'none',
-                  }}
-                  onChange={(e) => {
-                    const pr = activeSection.presets?.find((x) => x.name === e.target.value)
-                    if (pr) setRequestBody(pr.body)
-                  }}
-                >
-                  {activeSection.presets.map((pr) => (
-                    <option key={pr.name} value={pr.name} style={{ background: '#090d16', color: '#fff' }}>
-                      {pr.name}
-                    </option>
-                  ))}
-                </select>
+                <div style={{ minWidth: '150px' }}>
+                  <CustomSelect<string>
+                    size="sm"
+                    options={activeSection.presets.map((pr) => ({
+                      value: pr.name,
+                      label: pr.name,
+                    }))}
+                    value={activeSection.presets[0]?.name ?? ''}
+                    onChange={(val) => {
+                      const pr = activeSection.presets?.find((x) => x.name === val)
+                      if (pr) setRequestBody(pr.body)
+                    }}
+                    ariaLabel="Select payload preset"
+                  />
+                </div>
               </div>
             )}
 

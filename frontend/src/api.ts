@@ -184,6 +184,8 @@ export type ProjectStats = {
   errors_count: number
   error_free_pct: string
   error_note: string
+  open_issues_count?: number
+  frustrated_sessions_count?: number
   buckets: BucketPoint[]
 }
 

@@ -20,235 +20,14 @@ type Props = {
 type AnalyticsTab = 'funnels' | 'cohorts'
 type DateRange = '7d' | '30d' | '90d'
 
-const DEMO_STEPS = ['landing_view', 'view_product', 'add_to_cart', 'checkout_start', 'purchase_completed']
-
-const DEMO_FUNNEL_RESPONSE: FunnelQueryResponse = {
-  execution_ms: 38,
-  window_seconds: 86400,
-  counting_mode: 'users',
-  overall_conversion_pct: 20.0,
-  steps: [
-    {
-      step: 1,
-      event_name: 'landing_view',
-      count: 70,
-      overall_pct: 100.0,
-      step_conv_pct: 100.0,
-      drop_off_count: 0,
-      drop_off_pct: 0.0,
-      median_seconds: 0,
-    },
-    {
-      step: 2,
-      event_name: 'view_product',
-      count: 57,
-      overall_pct: 81.4,
-      step_conv_pct: 81.4,
-      drop_off_count: 13,
-      drop_off_pct: 18.6,
-      median_seconds: 120,
-    },
-    {
-      step: 3,
-      event_name: 'add_to_cart',
-      count: 44,
-      overall_pct: 62.9,
-      step_conv_pct: 77.2,
-      drop_off_count: 13,
-      drop_off_pct: 22.8,
-      median_seconds: 240,
-    },
-    {
-      step: 4,
-      event_name: 'checkout_start',
-      count: 26,
-      overall_pct: 37.1,
-      step_conv_pct: 59.1,
-      drop_off_count: 18,
-      drop_off_pct: 40.9,
-      median_seconds: 330,
-    },
-    {
-      step: 5,
-      event_name: 'purchase_completed',
-      count: 14,
-      overall_pct: 20.0,
-      step_conv_pct: 53.8,
-      drop_off_count: 12,
-      drop_off_pct: 46.2,
-      median_seconds: 210,
-    },
-  ],
-  breakdowns: [
-    {
-      segment: 'twitter',
-      overall_conversion_pct: 20.0,
-      step_counts: [15, 12, 10, 7, 3],
-    },
-    {
-      segment: 'email',
-      overall_conversion_pct: 28.6,
-      step_counts: [14, 13, 10, 6, 4],
-    },
-    {
-      segment: 'google',
-      overall_conversion_pct: 18.2,
-      step_counts: [11, 9, 5, 3, 2],
-    },
-    {
-      segment: 'facebook',
-      overall_conversion_pct: 27.3,
-      step_counts: [11, 10, 8, 4, 3],
-    },
-    {
-      segment: 'instagram',
-      overall_conversion_pct: 10.0,
-      step_counts: [10, 5, 5, 1, 1],
-    },
-    {
-      segment: 'github',
-      overall_conversion_pct: 11.1,
-      step_counts: [9, 8, 6, 5, 1],
-    },
-  ],
-}
-
-const DEMO_COHORT_RESPONSE: CohortResponse = {
-  granularity: 'week',
-  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Jakarta',
-  start_event: 'landing_view',
-  return_event: '',
-  weighted_averages: [100.0, 38.1, 32.2, 18.0, 15.4, 55.6, 47.1, 25.0],
-  cohorts: [
-    {
-      cohort_label: 'Wk of 14 Sep',
-      cohort_date: '2026-09-14T00:00:00Z',
-      cohort_size: 8,
-      cells: [
-        { period: 0, retained_users: 8, percentage: 100.0, is_future: false },
-        { period: 1, retained_users: 3, percentage: 37.5, is_future: false },
-        { period: 2, retained_users: 3, percentage: 37.5, is_future: false },
-        { period: 3, retained_users: 4, percentage: 50.0, is_future: false },
-        { period: 4, retained_users: 0, percentage: null, is_future: false },
-        { period: 5, retained_users: 3, percentage: 37.5, is_future: false },
-        { period: 6, retained_users: 4, percentage: 50.0, is_future: false },
-        { period: 7, retained_users: 2, percentage: 25.0, is_future: false },
-      ],
-    },
-    {
-      cohort_label: 'Wk of 21 Sep',
-      cohort_date: '2026-09-21T00:00:00Z',
-      cohort_size: 9,
-      cells: [
-        { period: 0, retained_users: 9, percentage: 100.0, is_future: false },
-        { period: 1, retained_users: 3, percentage: 33.3, is_future: false },
-        { period: 2, retained_users: 1, percentage: 11.1, is_future: false },
-        { period: 3, retained_users: 1, percentage: 11.1, is_future: false },
-        { period: 4, retained_users: 3, percentage: 33.3, is_future: false },
-        { period: 5, retained_users: 6, percentage: 66.7, is_future: false },
-        { period: 6, retained_users: 4, percentage: 44.4, is_future: false },
-        { period: 7, retained_users: 0, percentage: null, is_future: true },
-      ],
-    },
-    {
-      cohort_label: 'Wk of 28 Sep',
-      cohort_date: '2026-09-28T00:00:00Z',
-      cohort_size: 7,
-      cells: [
-        { period: 0, retained_users: 7, percentage: 100.0, is_future: false },
-        { period: 1, retained_users: 3, percentage: 42.9, is_future: false },
-        { period: 2, retained_users: 4, percentage: 57.1, is_future: false },
-        { period: 3, retained_users: 2, percentage: 28.6, is_future: false },
-        { period: 4, retained_users: 1, percentage: 14.3, is_future: false },
-        { period: 5, retained_users: 3, percentage: 42.9, is_future: false },
-        { period: 6, retained_users: 0, percentage: null, is_future: true },
-        { period: 7, retained_users: 0, percentage: null, is_future: true },
-      ],
-    },
-    {
-      cohort_label: 'Wk of 05 Oct',
-      cohort_date: '2026-10-05T00:00:00Z',
-      cohort_size: 8,
-      cells: [
-        { period: 0, retained_users: 8, percentage: 100.0, is_future: false },
-        { period: 1, retained_users: 3, percentage: 37.5, is_future: false },
-        { period: 2, retained_users: 3, percentage: 37.5, is_future: false },
-        { period: 3, retained_users: 1, percentage: 12.5, is_future: false },
-        { period: 4, retained_users: 1, percentage: 12.5, is_future: false },
-        { period: 5, retained_users: 0, percentage: null, is_future: true },
-        { period: 6, retained_users: 0, percentage: null, is_future: true },
-        { period: 7, retained_users: 0, percentage: null, is_future: true },
-      ],
-    },
-    {
-      cohort_label: 'Wk of 12 Oct',
-      cohort_date: '2026-10-12T00:00:00Z',
-      cohort_size: 8,
-      cells: [
-        { period: 0, retained_users: 8, percentage: 100.0, is_future: false },
-        { period: 1, retained_users: 3, percentage: 37.5, is_future: false },
-        { period: 2, retained_users: 2, percentage: 25.0, is_future: false },
-        { period: 3, retained_users: 1, percentage: 12.5, is_future: false },
-        { period: 4, retained_users: 0, percentage: null, is_future: true },
-        { period: 5, retained_users: 0, percentage: null, is_future: true },
-        { period: 6, retained_users: 0, percentage: null, is_future: true },
-        { period: 7, retained_users: 0, percentage: null, is_future: true },
-      ],
-    },
-    {
-      cohort_label: 'Wk of 19 Oct',
-      cohort_date: '2026-10-19T00:00:00Z',
-      cohort_size: 9,
-      cells: [
-        { period: 0, retained_users: 9, percentage: 100.0, is_future: false },
-        { period: 1, retained_users: 4, percentage: 44.4, is_future: false },
-        { period: 2, retained_users: 2, percentage: 22.2, is_future: false },
-        { period: 3, retained_users: 0, percentage: null, is_future: true },
-        { period: 4, retained_users: 0, percentage: null, is_future: true },
-        { period: 5, retained_users: 0, percentage: null, is_future: true },
-        { period: 6, retained_users: 0, percentage: null, is_future: true },
-        { period: 7, retained_users: 0, percentage: null, is_future: true },
-      ],
-    },
-    {
-      cohort_label: 'Wk of 26 Oct',
-      cohort_date: '2026-10-26T00:00:00Z',
-      cohort_size: 4,
-      cells: [
-        { period: 0, retained_users: 4, percentage: 100.0, is_future: false },
-        { period: 1, retained_users: 1, percentage: 25.0, is_future: false },
-        { period: 2, retained_users: 0, percentage: null, is_future: true },
-        { period: 3, retained_users: 0, percentage: null, is_future: true },
-        { period: 4, retained_users: 0, percentage: null, is_future: true },
-        { period: 5, retained_users: 0, percentage: null, is_future: true },
-        { period: 6, retained_users: 0, percentage: null, is_future: true },
-        { period: 7, retained_users: 0, percentage: null, is_future: true },
-      ],
-    },
-    {
-      cohort_label: 'Wk of 02 Nov',
-      cohort_date: '2026-11-02T00:00:00Z',
-      cohort_size: 7,
-      cells: [
-        { period: 0, retained_users: 7, percentage: 100.0, is_future: false },
-        { period: 1, retained_users: 0, percentage: null, is_future: true },
-        { period: 2, retained_users: 0, percentage: null, is_future: true },
-        { period: 3, retained_users: 0, percentage: null, is_future: true },
-        { period: 4, retained_users: 0, percentage: null, is_future: true },
-        { period: 5, retained_users: 0, percentage: null, is_future: true },
-        { period: 6, retained_users: 0, percentage: null, is_future: true },
-        { period: 7, retained_users: 0, percentage: null, is_future: true },
-      ],
-    },
-  ],
-}
+const DEFAULT_STEPS = ['landing_view', 'view_product', 'add_to_cart', 'checkout_start', 'purchase_completed']
 
 export default function GrowthAnalyticsView({ project, isDemo = false }: Props) {
   const [tab, setTab] = useState<AnalyticsTab>('funnels')
   const [dateRange, setDateRange] = useState<DateRange>('30d')
 
   // Funnel Builder State
-  const [steps, setSteps] = useState<string[]>(DEMO_STEPS)
+  const [steps, setSteps] = useState<string[]>(DEFAULT_STEPS)
   const [windowSeconds, setWindowSeconds] = useState(86400)
   const [countingMode, setCountingMode] = useState<'users' | 'sessions'>('users')
   const [breakdownBy, setBreakdownBy] = useState('utm_source')
@@ -269,7 +48,8 @@ export default function GrowthAnalyticsView({ project, isDemo = false }: Props) 
 
   // Load Catalog & Saved Funnels directly from backend
   const loadMetadata = useCallback(async () => {
-    const targetPid = project?.id ?? 1
+    if (!project) return
+    const targetPid = project.id
     try {
       const [cat, sf] = await Promise.all([
         analyticsApi.catalog(targetPid),
@@ -277,13 +57,13 @@ export default function GrowthAnalyticsView({ project, isDemo = false }: Props) 
       ])
       setCatalog(cat)
       setSavedFunnels(sf.items || [])
-      if (sf.items && sf.items.length > 0 && steps === DEMO_STEPS) {
+      if (sf.items && sf.items.length > 0 && steps === DEFAULT_STEPS) {
         const first = sf.items[0]
         setSteps(first.steps)
         setWindowSeconds(first.window_seconds)
         setBreakdownBy(first.breakdown_by)
         setCountingMode(first.counting_mode as 'users' | 'sessions')
-      } else if (cat.event_names && cat.event_names.length >= 2 && steps === DEMO_STEPS) {
+      } else if (cat.event_names && cat.event_names.length >= 2 && steps === DEFAULT_STEPS) {
         // Adapt default steps to real project events if catalog is available
         setSteps(cat.event_names.slice(0, Math.min(cat.event_names.length, 5)).map((e) => e.name))
       }
@@ -298,7 +78,8 @@ export default function GrowthAnalyticsView({ project, isDemo = false }: Props) 
 
   // Run Funnel Query
   const runFunnel = useCallback(async () => {
-    const targetPid = project?.id ?? 1
+    if (!project) return
+    const targetPid = project.id
     const validSteps = steps.filter((s) => s.trim() !== '')
     if (validSteps.length < 2) {
       setError('A funnel requires at least 2 steps (e.g. Step 1 to Step 2) to calculate conversion rates.')
@@ -320,9 +101,9 @@ export default function GrowthAnalyticsView({ project, isDemo = false }: Props) 
         breakdown_by: breakdownBy,
       })
       setFunnelData(res)
-    } catch {
-      // Fallback to real-data computed mock if network fails
-      setFunnelData(DEMO_FUNNEL_RESPONSE)
+    } catch (err) {
+      setFunnelData(null)
+      setError(err instanceof Error ? err.message : 'Failed to calculate conversion funnel')
     } finally {
       setLoading(false)
     }
@@ -330,7 +111,8 @@ export default function GrowthAnalyticsView({ project, isDemo = false }: Props) 
 
   // Run Cohort Query
   const runCohort = useCallback(async () => {
-    const targetPid = project?.id ?? 1
+    if (!project) return
+    const targetPid = project.id
     setLoading(true)
     setError('')
     try {
@@ -342,9 +124,9 @@ export default function GrowthAnalyticsView({ project, isDemo = false }: Props) 
         tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Jakarta',
       })
       setCohortData(res)
-    } catch {
-      // Fallback to real-data computed mock if network fails
-      setCohortData(DEMO_COHORT_RESPONSE)
+    } catch (err) {
+      setCohortData(null)
+      setError(err instanceof Error ? err.message : 'Failed to calculate cohort retention')
     } finally {
       setLoading(false)
     }

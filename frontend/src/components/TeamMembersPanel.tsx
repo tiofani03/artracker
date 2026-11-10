@@ -7,6 +7,7 @@ import {
   type Role,
 } from '../api'
 import Modal from './Modal'
+import CustomSelect from './CustomSelect'
 
 function formatAgo(timestamp: string): string {
   const diffMs = Date.now() - new Date(timestamp).getTime()
@@ -229,21 +230,19 @@ export default function TeamMembersPanel({
                       </td>
                       <td data-label="Role">
                         {isOwner && m.role !== 'owner' ? (
-                          <select
-                            className="dash-input"
-                            style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
-                            value={m.role}
-                            onChange={(e) =>
-                              void handleUpdateRole(
-                                m.user_id,
-                                e.target.value as 'admin' | 'member' | 'viewer',
-                              )
-                            }
-                          >
-                            <option value="admin">Admin</option>
-                            <option value="member">Member</option>
-                            <option value="viewer">Viewer</option>
-                          </select>
+                          <div style={{ minWidth: 104, maxWidth: 120 }}>
+                            <CustomSelect<'admin' | 'member' | 'viewer'>
+                              size="sm"
+                              options={[
+                                { value: 'admin', label: 'Admin' },
+                                { value: 'member', label: 'Member' },
+                                { value: 'viewer', label: 'Viewer' },
+                              ]}
+                              value={m.role as 'admin' | 'member' | 'viewer'}
+                              onChange={(val) => void handleUpdateRole(m.user_id, val)}
+                              ariaLabel={`Role for ${m.name || m.email}`}
+                            />
+                          </div>
                         ) : (
                           <span
                             className={`badge ${
@@ -424,17 +423,18 @@ export default function TeamMembersPanel({
                 <label htmlFor="invite-role" style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.375rem' }}>
                   Assign Role
                 </label>
-                <select
+                <CustomSelect<'admin' | 'member' | 'viewer'>
                   id="invite-role"
-                  className="dash-input"
-                  style={{ width: '100%' }}
+                  size="md"
+                  options={[
+                    { value: 'member', label: 'Member', meta: 'Can manage issues, funnels, and recordings' },
+                    { value: 'admin', label: 'Admin', meta: 'Full project & SDK key management' },
+                    { value: 'viewer', label: 'Viewer', meta: 'Read-only access to charts & telemetry' },
+                  ]}
                   value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value as 'admin' | 'member' | 'viewer')}
-                >
-                  <option value="member">Member — Can manage issues, funnels, and recordings</option>
-                  <option value="admin">Admin — Full project & SDK key management</option>
-                  <option value="viewer">Viewer — Read-only access to charts & telemetry</option>
-                </select>
+                  onChange={(val) => setInviteRole(val)}
+                  ariaLabel="Assign role"
+                />
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>

@@ -222,9 +222,20 @@ export default function CustomSelect<T extends string | number = string>({
             <span className="cselect__placeholder">{placeholder}</span>
           )}
         </span>
-        <span className="cselect__state-indicator" aria-hidden="true">
-          {isOpen ? 'Close' : 'Select'}
-        </span>
+        <svg
+          className={`cselect__chevron${isOpen ? ' is-open' : ''}`}
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
       </button>
 
       {isOpen && (
@@ -278,8 +289,19 @@ export default function CustomSelect<T extends string | number = string>({
                     </div>
                     {opt.meta && <span className="cselect__option-meta">{opt.meta}</span>}
                     {isSelected && (
-                      <span className="cselect__selected-tag" aria-hidden="true">
-                        Active
+                      <span className="cselect__check-icon" aria-hidden="true">
+                        <svg
+                          width="12"
+                          height="12"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
                       </span>
                     )}
                   </li>
