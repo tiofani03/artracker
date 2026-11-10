@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { eventWithTime } from 'rrweb'
 import type { TelemetryEvent } from '../api'
-import { buildReplayModel, extractMobileFrames, normalizeWebEvents } from './normalize'
+import { buildReplayModel, extractMobileFrames, flattenNestedAdds, normalizeWebEvents } from './normalize'
 
 // rrweb EventType: 2 = FullSnapshot, 3 = IncrementalSnapshot, 4 = Meta
 const ev = (type: number, timestamp: number, data: unknown = {}) =>
@@ -377,5 +377,76 @@ describe('buildReplayModel with synthetic mobile rrweb events', () => {
 
     expect(exiting.attributes.style).toContain('display:none')
     expect(entering.attributes.style).toContain('background-color:#fafafa')
+  })
+})
+
+// --- nested rrweb adds (Android SDK serialises whole subtrees inside one `adds` entry) ---
+
+type TestNode = { type: number; id: number; tagName?: string; textContent?: string; attributes?: object; childNodes?: TestNode[] }
+type TestAdd = { parentId: number; nextId: number | null; node: TestNode }
+
+const el = (id: number, childNodes: TestNode[] = []): TestNode => ({ type: 2, id, tagName: 'div', attributes: {}, childNodes })
+const txt = (id: number, textContent: string): TestNode => ({ type: 3, id, textContent })
+const mutation = (ts: number, adds: TestAdd[]) => ev(3, ts, { source: 0, texts: [], attributes: [], removes: [], adds })
+const addsOf = (e: eventWithTime) => (e.data as { adds: TestAdd[] }).adds
+
+describe('flattenNestedAdds', () => {
+  it('splits a nested add into pre-order flat adds', () => {
+    const nested = el(87, [txt(88, 'x'), el(89, [txt(90, 'y')])])
+    const out = flattenNestedAdds([mutation(10, [{ parentId: 16, nextId: 48, node: nested }])])
+    const adds = addsOf(out[0])
+
+    expect(adds.map((a) => a.node.id)).toEqual([87, 88, 89, 90])
+    expect(adds.map((a) => [a.parentId, a.nextId])).toEqual([
+      [16, 48],
+      [87, null],
+      [87, null],
+      [89, null],
+    ])
+    for (const a of adds) {
+      if (a.node.type === 2) expect(a.node.childNodes).toEqual([])
+    }
+    expect(adds[1].node.textContent).toBe('x')
+  })
+
+  it('returns the same event object when nothing is nested, and leaves other events alone', () => {
+    const flat = mutation(10, [{ parentId: 16, nextId: null, node: el(87) }])
+    const full = ev(2, 5, { node: { type: 0, id: 1, childNodes: [el(2, [el(3)])] } })
+    const touch = ev(3, 20, { source: 2, type: 7, id: 4, x: 1, y: 2 })
+    const out = flattenNestedAdds([full, flat, touch])
+    expect(out[0]).toBe(full)
+    expect(out[1]).toBe(flat)
+    expect(out[2]).toBe(touch)
+  })
+
+  it('keeps the text of a node added together with its text child (session 01a1c339 shape)', () => {
+    const out = flattenNestedAdds([
+      mutation(14637, [{ parentId: 105, nextId: null, node: el(120, [txt(121, 'Item #4')]) }]),
+    ])
+    const adds = addsOf(out[0])
+    expect(adds.map((a) => [a.node.id, a.parentId])).toEqual([
+      [120, 105],
+      [121, 120],
+    ])
+    expect(adds[1].node.textContent).toBe('Item #4')
+  })
+
+  it('does not mutate its input', () => {
+    const nested = el(87, [txt(88, 'x')])
+    flattenNestedAdds([mutation(10, [{ parentId: 16, nextId: null, node: nested }])])
+    expect(nested.childNodes).toHaveLength(1)
+  })
+})
+
+describe('normalizeWebEvents with nested adds', () => {
+  it('flattens nested adds in its result', () => {
+    const out = normalizeWebEvents([
+      ev(4, 200),
+      ev(2, 201),
+      mutation(300, [{ parentId: 16, nextId: null, node: el(87, [txt(88, 'x')]) }]),
+    ])
+    const mut = out?.find((e) => e.type === 3)
+    expect(addsOf(mut!).map((a) => a.node.id)).toEqual([87, 88])
+    expect(addsOf(mut!).every((a) => a.node.type !== 2 || a.node.childNodes?.length === 0)).toBe(true)
   })
 })
