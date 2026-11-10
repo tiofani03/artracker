@@ -469,6 +469,11 @@ export const replayApi = {
     request<ReplaySessionDetailResponse>(
       `/projects/${projectId}/sessions/${encodeURIComponent(sessionId)}`,
     ),
+  /** Freshly signed URLs for chunks `fromSeq..toSeq` of a session (used after earlier URLs expired). */
+  listSessionChunks: (projectId: number, sessionId: string, fromSeq: number, toSeq: number) =>
+    request<{ chunks: ReplayChunkDetail[] }>(
+      `/projects/${projectId}/sessions/${encodeURIComponent(sessionId)}/chunks?from_seq=${fromSeq}&to_seq=${toSeq}`,
+    ),
 }
 
 export type OrganizationMember = {
