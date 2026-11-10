@@ -160,7 +160,13 @@ export const keyApi = {
   rotate: (projectId: number, keyId: number) => post<CreatedKey>(`/projects/${projectId}/keys/${keyId}/rotate`),
 }
 
+export type NavCounts = {
+  frustrated_replays_24h: number
+  open_issues: number
+}
+
 export const projectApi = {
+  navCounts: (projectId: number) => request<NavCounts>(`/projects/${projectId}/nav-counts`),
   setReplaySettings: (projectId: number, body: { screenshot_enabled: boolean }) =>
     request<Project>(`/projects/${projectId}/replay-settings`, { method: 'PATCH', body: JSON.stringify(body) }),
 }

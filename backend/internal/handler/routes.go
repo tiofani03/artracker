@@ -80,6 +80,7 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Delete("/projects/:projectID/analytics/funnels/:funnelID", h.RequireAuth, h.RequireProjectRole(auth.RoleMember), h.DeleteSavedFunnel)
 
 	// Error tracking & crash diagnostics & release artifacts
+	api.Get("/projects/:projectID/nav-counts", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetNavCounts)
 	api.Get("/projects/:projectID/issues", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListIssues)
 	api.Get("/projects/:projectID/issues/:issueID", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetIssue)
 	api.Patch("/projects/:projectID/issues/:issueID", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.UpdateIssueStatus)

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { orgApi, type OrgMembership, type Platform, type Project, type User } from '../api'
+import { orgApi, projectApi, type NavCounts, type OrgMembership, type Platform, type Project, type User } from '../api'
 import { useAuth } from '../auth/AuthContext'
 import { Link, Redirect, useLocation } from '../router'
 import OrgSwitcher from './OrgSwitcher'
 import ProjectSelector from './ProjectSelector'
 import ThemeToggle from './ThemeToggle'
+import { formatNavBadge } from '../utils/navBadge'
 import { ToastProvider } from './Toast'
 
 const ORG_KEY = 'artracker.org'
@@ -64,11 +65,14 @@ export type WorkspaceContext = {
   selectProject: (id: number) => void
 }
 
+const NAV_COUNTS_REFRESH_MS = 60_000
+
 type NavItem = {
   to: string
   label: string
   icon: string
-  badge?: string
+  /** Which live count (GET /projects/:id/nav-counts) this item shows as its badge. */
+  badgeKey?: 'replays' | 'issues'
   badgeTone?: 'alert' | 'neutral'
   demoAllowed?: boolean
 }
@@ -87,7 +91,7 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
         to: '/dashboard/replays',
         label: 'Session Replay',
         icon: 'M5 5.5A1.5 1.5 0 0 1 7.3 4.2l11 6.5a1.5 1.5 0 0 1 0 2.6l-11 6.5A1.5 1.5 0 0 1 5 18.5v-13Z',
-        badge: '3',
+        badgeKey: 'replays',
         badgeTone: 'neutral',
         demoAllowed: true,
       },
@@ -101,6 +105,8 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
         to: '/dashboard/issues',
         label: 'Issues',
         icon: 'M12 8v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z',
+        badgeKey: 'issues',
+        badgeTone: 'alert',
         demoAllowed: true,
       },
     ],
@@ -124,8 +130,6 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
         to: '/dashboard/alerts',
         label: 'Custom Alerts',
         icon: 'M12 4a6 6 0 0 0-6 6v3.5L4.5 16h15L18 13.5V10a6 6 0 0 0-6-6Zm-2 14a2 2 0 1 0 4 0',
-        badge: '1',
-        badgeTone: 'alert',
         demoAllowed: true,
       },
     ],
@@ -162,6 +166,7 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
   const [error, setError] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [dbHealth, setDbHealth] = useState<'checking' | 'up' | 'disabled' | 'down'>('checking')
+  const [navState, setNavState] = useState<{ projectId: number; counts: NavCounts } | null>(null)
 
   const effectiveUser = authUser ?? (isDemo ? DEMO_USER : null)
   const orgs = effectiveUser?.orgs ?? []
@@ -216,6 +221,30 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
     if (activeOrgId !== null) void loadProjects(activeOrgId)
   }, [activeOrgId, loadProjects])
 
+  // Live sidebar badges: refreshed every minute while the tab is visible, and when it becomes visible again.
+  const countsProjectId = isDemo ? null : projectId
+  useEffect(() => {
+    if (countsProjectId === null) return
+    let cancelled = false
+    const load = async () => {
+      if (document.hidden) return
+      try {
+        const next = await projectApi.navCounts(countsProjectId)
+        if (!cancelled) setNavState({ projectId: countsProjectId, counts: next })
+      } catch {
+        // keep the last known counts; a badge is never worth an error banner
+      }
+    }
+    void load()
+    const timer = window.setInterval(() => void load(), NAV_COUNTS_REFRESH_MS)
+    document.addEventListener('visibilitychange', load)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', load)
+    }
+  }, [countsProjectId])
+
   if (loading && !isDemoQuery) return null
   if (!effectiveUser) return <Redirect to="/login" />
 
@@ -249,6 +278,12 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
 
   const userInitial = (effectiveUser.name || effectiveUser.email || 'A').trim().charAt(0).toUpperCase()
   const withDemo = (to: string) => (isDemo ? `${to}?demo=1` : to)
+  const badgeFor = (item: NavItem) => {
+    // Counts of a previously selected project are never shown for the current one.
+    const navCounts = navState && navState.projectId === countsProjectId ? navState.counts : null
+    if (!navCounts || !item.badgeKey) return undefined
+    return formatNavBadge(item.badgeKey === 'replays' ? navCounts.frustrated_replays_24h : navCounts.open_issues)
+  }
 
   return (
     <ToastProvider>
@@ -340,13 +375,13 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
                             </svg>
                             <span>{item.label}</span>
                           </span>
-                          {item.badge && (
+                          {badgeFor(item) && (
                             <span
                               className={`console-nav__badge${
                                 item.badgeTone === 'alert' ? ' console-nav__badge--alert' : ''
                               }`}
                             >
-                              {item.badge}
+                              {badgeFor(item)}
                             </span>
                           )}
                         </Link>
