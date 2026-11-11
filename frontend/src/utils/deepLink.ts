@@ -18,3 +18,12 @@ export function stripWorkspaceParams(search: string): string {
   const rest = params.toString()
   return rest ? `?${rest}` : ''
 }
+
+export type SettingsTab = 'keys' | 'team' | 'replay'
+const SETTINGS_TABS: readonly SettingsTab[] = ['keys', 'team', 'replay']
+
+/** The Settings tab a link asks for (?tab=team); the API keys tab when absent or unknown. */
+export function initialSettingsTab(search: string): SettingsTab {
+  const tab = new URLSearchParams(search).get('tab')
+  return SETTINGS_TABS.find((t) => t === tab) ?? 'keys'
+}

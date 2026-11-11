@@ -8,6 +8,8 @@ import {
 } from '../../api'
 import { Link } from '../../router'
 import {
+  BOT_SETTINGS_PATH,
+  CHAT_ID_HELP,
   SPIKE_WINDOWS,
   buildRulePatch,
   canShowTest,
@@ -257,7 +259,7 @@ function ChannelsCard({ projectId, canManage }: Props) {
               {canManage && (
                 <>
                   {' '}
-                  <Link to="/dashboard/settings">Open Settings</Link>
+                  <Link to={BOT_SETTINGS_PATH}>Open Settings</Link>
                 </>
               )}
             </p>
@@ -266,8 +268,7 @@ function ChannelsCard({ projectId, canManage }: Props) {
           {canManage && !showLinkFlow(data.mode) && (
             <div className="dash-form">
               <p className="dash-list__sub" id="alert-add-chat-help">
-                Add your bot to the chat or group and send a message there, then enter the chat id (or @channel_username)
-                below.
+                {CHAT_ID_HELP}
               </p>
               <div className="dash-list__top">
                 <input

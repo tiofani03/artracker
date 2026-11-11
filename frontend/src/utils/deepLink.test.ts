@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readWorkspaceFromSearch, stripWorkspaceParams } from './deepLink'
+import { initialSettingsTab, readWorkspaceFromSearch, stripWorkspaceParams } from './deepLink'
 
 describe('readWorkspaceFromSearch', () => {
   it('reads org and project', () => {
@@ -30,5 +30,28 @@ describe('stripWorkspaceParams', () => {
 
   it('leaves an unrelated query unchanged', () => {
     expect(stripWorkspaceParams('?session=abc&demo=1')).toBe('?session=abc&demo=1')
+  })
+})
+
+describe('initialSettingsTab', () => {
+  it('opens the tab the query names', () => {
+    expect(initialSettingsTab('?tab=team')).toBe('team')
+    expect(initialSettingsTab('?tab=replay')).toBe('replay')
+    expect(initialSettingsTab('?tab=keys')).toBe('keys')
+    expect(initialSettingsTab('?org=3&tab=team')).toBe('team')
+  })
+  it('falls back to the API keys tab', () => {
+    expect(initialSettingsTab('')).toBe('keys')
+    expect(initialSettingsTab('?tab=')).toBe('keys')
+    expect(initialSettingsTab('?tab=Team')).toBe('keys')
+    expect(initialSettingsTab('?tab=billing')).toBe('keys')
+    expect(initialSettingsTab('?tab=team%20')).toBe('keys')
+  })
+})
+
+describe('stripWorkspaceParams keeps the settings tab', () => {
+  it('drops org and project only', () => {
+    expect(stripWorkspaceParams('?org=1&project=2&tab=team')).toBe('?tab=team')
+    expect(stripWorkspaceParams('?tab=team')).toBe('?tab=team')
   })
 })

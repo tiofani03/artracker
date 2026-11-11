@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { AlertBot, AlertChannel, AlertIncident, AlertRule } from '../../api'
 import {
+  BOT_SETTINGS_PATH,
+  CHAT_ID_HELP,
   botBannerText,
   canShowTest,
   countActiveChannels,
@@ -189,7 +191,7 @@ describe('buildRulePatch', () => {
 describe('notifyLabel', () => {
   it('labels the undelivered states', () => {
     expect(notifyLabel('pending')).toBe('sending…')
-    expect(notifyLabel('skipped')).toBe('not sent (no channel or Telegram off)')
+    expect(notifyLabel('skipped')).toBe('not sent (no channel, or no working bot for 24 h)')
     expect(notifyLabel('failed')).toBe('delivery failed')
   })
   it('hides sent and unknown states', () => {
@@ -462,5 +464,25 @@ describe('legacy backend tolerance', () => {
   it('detects the missing bot endpoint', () => {
     expect(isBotEndpointMissing(new Error('404 Not Found'))).toBe(true)
     expect(isBotEndpointMissing(new Error('500 Internal'))).toBe(false)
+  })
+})
+
+describe('CHAT_ID_HELP', () => {
+  it('explains getUpdates in a private window without involving this app or third-party bots', () => {
+    expect(CHAT_ID_HELP).toBe(
+      'How to find the chat id: add your bot to the chat and send any message there. Then, in a private browser window, open https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates (replace <YOUR_TOKEN> with your bot\'s token) and look for "chat":{"id":...}. Groups and channels have ids that start with -100. Close the window afterwards and do not share that link. For a public channel you can enter @channelusername instead of a number.',
+    )
+    for (const phrase of ['private browser window', '-100', '@channelusername', '<YOUR_TOKEN>', 'do not share that link']) {
+      expect(CHAT_ID_HELP).toContain(phrase)
+    }
+    for (const banned of ['@userinfobot', 'RawDataBot', '@getidsbot']) {
+      expect(CHAT_ID_HELP).not.toContain(banned)
+    }
+  })
+})
+
+describe('BOT_SETTINGS_PATH', () => {
+  it('opens Settings on the Team & Members tab, where the bot card is', () => {
+    expect(BOT_SETTINGS_PATH).toBe('/dashboard/settings?tab=team')
   })
 })

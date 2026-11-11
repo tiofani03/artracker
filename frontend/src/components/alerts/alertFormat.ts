@@ -84,7 +84,7 @@ export function notifyLabel(state: string): string | null {
     case 'pending':
       return 'sending…'
     case 'skipped':
-      return 'not sent (no channel or Telegram off)'
+      return 'not sent (no channel, or no working bot for 24 h)'
     case 'failed':
       return 'delivery failed'
     default:
@@ -163,6 +163,16 @@ export function buildRulePatch(rule: AlertRule, draft: RuleDraft): AlertRulePatc
 const CHAT_ID = /^-?[1-9][0-9]{4,19}$/
 const CHAT_USERNAME = /^@[A-Za-z][A-Za-z0-9_]{4,31}$/
 const BOT_TOKEN = /^[0-9]{5,15}:[A-Za-z0-9_-]{30,}$/
+
+/** Where the Telegram bot card lives: Settings, Team & Members tab. */
+export const BOT_SETTINGS_PATH = '/dashboard/settings?tab=team'
+
+/**
+ * How an admin finds a chat id without giving this app anything: Telegram's own getUpdates,
+ * opened by the admin. <YOUR_TOKEN> is literal text; a real token is never put in here.
+ */
+export const CHAT_ID_HELP =
+  'How to find the chat id: add your bot to the chat and send any message there. Then, in a private browser window, open https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates (replace <YOUR_TOKEN> with your bot\'s token) and look for "chat":{"id":...}. Groups and channels have ids that start with -100. Close the window afterwards and do not share that link. For a public channel you can enter @channelusername instead of a number.'
 
 /** Mirrors the backend; surrounding whitespace is not allowed. */
 export function validateChat(input: string): string | null {
