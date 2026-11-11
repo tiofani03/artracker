@@ -30,6 +30,7 @@ function BotCardInner({ orgId, canManage }: Props) {
   const [replacing, setReplacing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [unavailable, setUnavailable] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const mounted = useRef(true)
 
   useEffect(() => {
@@ -102,7 +103,6 @@ function BotCardInner({ orgId, canManage }: Props) {
 
   const remove = async () => {
     if (busy) return
-    if (!window.confirm('Remove the Telegram bot? Alerts will stop until a new bot is connected.')) return
     setBusy(true)
     setError('')
     try {
@@ -112,6 +112,7 @@ function BotCardInner({ orgId, canManage }: Props) {
       setBot(res)
       setLevel(res.detail_level)
       setReplacing(false)
+      setConfirmDelete(false)
       setToken('')
     } catch (err) {
       if (mounted.current) setError(errMsg(err, 'Failed to remove the bot'))
@@ -121,52 +122,65 @@ function BotCardInner({ orgId, canManage }: Props) {
   }
 
   const tokenForm = (
-    <div className="dash-form">
-      <input
-        type="password"
-        className="dash-input"
-        aria-label="Telegram bot token"
-        aria-describedby={tokenProblem ? 'tg-bot-token-error' : undefined}
-        // keep password managers from offering to save or fill the bot token
-        autoComplete="new-password"
-        data-1p-ignore
-        data-lpignore="true"
-        data-bwignore
-        data-form-type="other"
-        spellCheck={false}
-        placeholder="123456789:AA..."
-        value={token}
-        disabled={busy}
-        onChange={(e) => setToken(e.target.value)}
-      />
-      {tokenProblem && (
-        <p id="tg-bot-token-error" className="dash-error">
-          {tokenProblem}
-        </p>
-      )}
-      {!bot?.configured && (
-        <select
-          className="dash-input"
-          aria-label="Alert detail level"
-          value={level}
+    <div className="dash-form" style={{ marginTop: 'var(--space-sm)' }}>
+      <div className="alert-form-field">
+        <label htmlFor="tg-token-input" className="alert-form-field__label">
+          Telegram Bot Token
+        </label>
+        <input
+          id="tg-token-input"
+          type="password"
+          className={`dash-input alert-form-field__input${tokenProblem ? ' is-invalid' : ''}`}
+          aria-label="Telegram bot token"
+          aria-describedby={tokenProblem ? 'tg-bot-token-error' : undefined}
+          autoComplete="new-password"
+          data-1p-ignore
+          data-lpignore="true"
+          data-bwignore
+          data-form-type="other"
+          spellCheck={false}
+          placeholder="e.g. 123456789:AAEhBP0av28kPo..."
+          value={token}
           disabled={busy}
-          onChange={(e) => setLevel(e.target.value as AlertDetailLevel)}
-        >
-          {LEVELS.map((l) => (
-            <option key={l} value={l}>
-              {detailLevelLabel(l)}
-            </option>
-          ))}
-        </select>
+          onChange={(e) => setToken(e.target.value)}
+        />
+        {tokenProblem && (
+          <p id="tg-bot-token-error" className="dash-error alert-form-field__error">
+            {tokenProblem}
+          </p>
+        )}
+      </div>
+
+      {!bot?.configured && (
+        <div className="alert-form-field">
+          <label htmlFor="tg-level-select" className="alert-form-field__label">
+            Alert Message Detail Level
+          </label>
+          <select
+            id="tg-level-select"
+            className="dash-input"
+            aria-label="Alert detail level"
+            value={level}
+            disabled={busy}
+            onChange={(e) => setLevel(e.target.value as AlertDetailLevel)}
+          >
+            {LEVELS.map((l) => (
+              <option key={l} value={l}>
+                {detailLevelLabel(l)}
+              </option>
+            ))}
+          </select>
+        </div>
       )}
-      <div className="dash-list__top">
+
+      <div className="dash-actions" style={{ justifyContent: 'flex-start' }}>
         <button
           type="button"
-          className="dash-btn"
+          className="dash-btn dash-btn--primary"
           disabled={busy || token === '' || tokenProblem !== null}
           onClick={() => void connect()}
         >
-          {busy ? 'Connecting…' : bot?.configured ? 'Replace bot' : 'Connect'}
+          {busy ? 'Connecting…' : bot?.configured ? 'Update Bot Token' : 'Connect Telegram Bot'}
         </button>
         {replacing && (
           <button
@@ -192,9 +206,9 @@ function BotCardInner({ orgId, canManage }: Props) {
       <div className="dash-card__head">
         <div>
           <h2 id="tg-bot-title" className="dash-card__title">
-            Telegram bot
+            Organization Telegram Bot
           </h2>
-          <p className="dash-card__desc">The bot that sends alerts for this organisation.</p>
+          <p className="dash-card__desc">Connect a dedicated bot to deliver error alerts to your team channels.</p>
         </div>
       </div>
 
@@ -205,55 +219,113 @@ function BotCardInner({ orgId, canManage }: Props) {
       )}
 
       {unavailable ? (
-        <p className="dash-empty">The Telegram bot settings are not available on this server.</p>
+        <div className="alert-callout">
+          <p className="dash-empty">Telegram bot settings are not available in this deployment.</p>
+        </div>
       ) : bot === null ? (
-        !error && <p className="dash-empty">Loading…</p>
+        !error && <p className="dash-empty">Loading bot configuration…</p>
       ) : bot.mode === 'shared' ? (
-        <p className="dash-empty">The Telegram bot is managed by the server in this deployment.</p>
+        <div className="alert-callout">
+          <p className="dash-empty">The Telegram alert bot is managed centrally by the server in this deployment.</p>
+        </div>
       ) : !bot.configured ? (
         <>
-          <p className="dash-list__sub">
-            Create a bot with @BotFather in Telegram, then copy its token. Alerts are sent from your own bot.
-          </p>
+          <div className="bot-guide-box">
+            <h3 className="bot-guide-box__title">How to set up your Telegram Bot</h3>
+            <ol className="bot-guide-steps">
+              <li>Open Telegram and search for <code>@BotFather</code>.</li>
+              <li>Send the command <code>/newbot</code> and follow the instructions to set a display name and username (e.g. <code>MyOrgAlertBot</code>).</li>
+              <li>Copy the HTTP API token provided by BotFather and paste it below.</li>
+            </ol>
+          </div>
+
           {canManage ? tokenForm : <p className="dash-empty">An organisation admin needs to connect a Telegram bot.</p>}
         </>
       ) : (
         <>
-          <div className="dash-list__row">
-            <div className="dash-list__main">
-              <div className="dash-list__top">
-                <p className="dash-list__title">@{bot.bot_username}</p>
-                {badge && <span className={`badge ${badge.className}`}>{badge.text}</span>}
+          <div className="bot-connected-card">
+            <div className="bot-connected-card__left">
+              <div className="bot-connected-card__icon" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm4.5 7.5-2 9a.75.75 0 0 1-1.2.3l-2.8-2.3-1.6 1.5a.5.5 0 0 1-.9-.3l.3-3.6 6.5-6a.5.5 0 0 0-.7-.7l-8 5.2-3.1-1a.75.75 0 0 1 0-1.4l12-4.5a.75.75 0 0 1 1 .9z" />
+                </svg>
               </div>
-              {canManage ? (
-                <select
-                  className="dash-input"
-                  aria-label="Alert detail level"
-                  value={bot.detail_level}
-                  disabled={busy}
-                  onChange={(e) => void changeLevel(e.target.value as AlertDetailLevel)}
-                >
-                  {LEVELS.map((l) => (
-                    <option key={l} value={l}>
-                      {detailLevelLabel(l)}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <p className="dash-list__sub">{detailLevelLabel(bot.detail_level)}</p>
+              <div className="bot-connected-card__meta">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <h3 className="bot-connected-card__handle">@{bot.bot_username}</h3>
+                  {badge && <span className={`badge ${badge.className}`}>{badge.text}</span>}
+                </div>
+                <span className="dash-cell-sub">
+                  Detail Level: {detailLevelLabel(bot.detail_level)}
+                </span>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)', flexWrap: 'wrap' }}>
+              {canManage && (
+                <>
+                  <div style={{ minWidth: 160 }}>
+                    <select
+                      className="dash-input"
+                      aria-label="Alert detail level"
+                      value={bot.detail_level}
+                      disabled={busy}
+                      onChange={(e) => void changeLevel(e.target.value as AlertDetailLevel)}
+                    >
+                      {LEVELS.map((l) => (
+                        <option key={l} value={l}>
+                          {detailLevelLabel(l)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {!replacing && !confirmDelete && (
+                    <>
+                      <button
+                        type="button"
+                        className="dash-btn"
+                        disabled={busy}
+                        onClick={() => setReplacing(true)}
+                      >
+                        Replace Token
+                      </button>
+                      <button
+                        type="button"
+                        className="dash-btn"
+                        disabled={busy}
+                        onClick={() => setConfirmDelete(true)}
+                      >
+                        Disconnect
+                      </button>
+                    </>
+                  )}
+
+                  {confirmDelete && (
+                    <>
+                      <button
+                        type="button"
+                        className="dash-btn dash-btn--danger"
+                        disabled={busy}
+                        onClick={() => void remove()}
+                      >
+                        Confirm Disconnect
+                      </button>
+                      <button
+                        type="button"
+                        className="dash-btn"
+                        disabled={busy}
+                        onClick={() => setConfirmDelete(false)}
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  )}
+                </>
               )}
             </div>
-            {canManage && (
-              <div className="dash-list__top">
-                <button type="button" className="dash-btn" disabled={busy || replacing} onClick={() => setReplacing(true)}>
-                  Replace
-                </button>
-                <button type="button" className="dash-btn" disabled={busy} onClick={() => void remove()}>
-                  Remove
-                </button>
-              </div>
-            )}
           </div>
+
           {canManage && replacing && tokenForm}
         </>
       )}

@@ -117,6 +117,8 @@ func (f *fakeBotAPI) handle(w http.ResponseWriter, r *http.Request) {
 			rep = botAPIReply{http.StatusOK, `{"ok":true,"result":{"message_id":1}}`}
 		case "getMe":
 			rep = botAPIReply{http.StatusOK, `{"ok":true,"result":{"id":424242,"username":"TestBot"}}`}
+		case "getUpdates":
+			rep = botAPIReply{http.StatusOK, `{"ok":true,"result":[]}`}
 		case "getChat":
 			rep = botAPIReply{http.StatusOK, `{"ok":true,"result":{"id":-100123,"title":"Ops","type":"supergroup"}}`}
 		default:
@@ -996,5 +998,35 @@ func TestTwoOrgBotsStaySeparate(t *testing.T) {
 		if strings.Contains(string(body), hBotToken) || strings.Contains(string(body), hBotTokenB) {
 			t.Fatalf("channels list leaks a token: %s", body)
 		}
+	}
+}
+
+func TestDiscoverAlertChats(t *testing.T) {
+	b := newBotEnv(t, "discover_chats")
+	b.putBot(t)
+
+	b.api.set("getUpdates", http.StatusOK, `{
+		"ok": true,
+		"result": [
+			{"update_id": 100, "message": {"chat": {"id": -100456, "title": "Dev Channel", "type": "supergroup"}}}
+		]
+	}`)
+
+	code, body := b.call(t, "GET", fmt.Sprintf("/api/v1/projects/%d/alerts/channels/discover", b.pid), "", b.admin)
+	if code != 200 {
+		t.Fatalf("GET discover = %d %s", code, body)
+	}
+	var out struct {
+		BotUsername string                  `json:"bot_username"`
+		Chats       []alerts.DiscoveredChat `json:"chats"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.BotUsername != "TestBot" {
+		t.Errorf("expected TestBot, got %s", out.BotUsername)
+	}
+	if len(out.Chats) != 1 || out.Chats[0].ID != -100456 || out.Chats[0].Title != "Dev Channel" {
+		t.Errorf("unexpected chats: %+v", out.Chats)
 	}
 }

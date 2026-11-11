@@ -672,6 +672,7 @@ function DashboardInner({
   const projectId = project?.id ?? null
   useEffect(() => {
     if (projectId == null) return
+    if (section !== 'overview' && section !== 'logs') return
     let active = true
     void fetchDashboardTelemetry(projectId, range).then((result) => {
       if (!active) return
@@ -681,7 +682,7 @@ function DashboardInner({
     return () => {
       active = false
     }
-  }, [projectId, range, fetchDashboardTelemetry, applyDashboardTelemetry])
+  }, [projectId, range, section, fetchDashboardTelemetry, applyDashboardTelemetry])
 
   const emptyBuckets: BucketPoint[] = [
     { label: '00:00', sessions: 0, errors: 0 },
@@ -1876,12 +1877,18 @@ function DashboardInner({
             {/* ==================== ALERTS ==================== */}
             {section === 'alerts' &&
               (isDemo ? (
-                <section className="dash-card dash-card--compact">
-                  <p className="dash-empty">Alerts need a signed-in workspace.</p>
+                <section className="dash-card">
+                  <h2 className="dash-card__title">Sign in to manage alerts</h2>
+                  <p className="dash-card__desc">
+                    You are viewing the console in preview mode. Authenticate with Google SSO to configure Telegram channels, customize alert trigger rules, and monitor incidents.
+                  </p>
                 </section>
               ) : project == null ? (
-                <section className="dash-card dash-card--compact">
-                  <p className="dash-empty">Select a project to manage alerts.</p>
+                <section className="dash-card">
+                  <h2 className="dash-card__title">No project selected</h2>
+                  <p className="dash-card__desc">
+                    Select or create a project from the left sidebar to manage its alert rules and notification channels.
+                  </p>
                 </section>
               ) : (
                 <AlertsView projectId={project.id} orgId={project.org_id} canManage={canManage} />
@@ -1893,7 +1900,9 @@ function DashboardInner({
 export default function DashboardPage({ section }: { section: ConsoleSection }) {
   const [range, setRange] = useState<RangeKey>('24h')
 
-  const toolbar = (
+  const showRangeToolbar = section === 'overview' || section === 'logs' || section === 'replays'
+
+  const toolbar = showRangeToolbar ? (
     <div className="dash-seg" role="group" aria-label="Time range">
       {(['24h', '7d', '30d'] as RangeKey[]).map((r) => (
         <button
@@ -1907,7 +1916,7 @@ export default function DashboardPage({ section }: { section: ConsoleSection }) 
         </button>
       ))}
     </div>
-  )
+  ) : undefined
 
   return (
     <DashboardShell sectionTitle={SECTION_TITLES[section]} toolbar={toolbar} allowDemo>

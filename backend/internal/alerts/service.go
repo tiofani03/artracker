@@ -50,6 +50,32 @@ func (s *Service) BotUsername() string {
 // notifier exists and the bot's username is known.
 func (s *Service) TelegramConfigured() bool { return s.n != nil && s.BotUsername() != "" }
 
+// DiscoverChats queries recent updates to find chats observed by the organisation's bot
+// (or the shared bot in shared mode).
+func (s *Service) DiscoverChats(ctx context.Context, orgID int64) ([]DiscoveredChat, string, error) {
+	if s.mode == ModeTenant {
+		bot, err := s.workingBot(ctx, orgID)
+		if err != nil {
+			return nil, "", err
+		}
+		if bot == nil {
+			return nil, "", ErrBotNotFound
+		}
+		chats, err := bot.tg.DiscoverChats(ctx)
+		return chats, bot.username, err
+	}
+	// Shared mode
+	if s.n == nil {
+		return nil, "", ErrTelegramDisabled
+	}
+	tg, ok := s.n.(*Telegram)
+	if !ok {
+		return nil, s.BotUsername(), nil
+	}
+	chats, err := tg.DiscoverChats(ctx)
+	return chats, s.BotUsername(), err
+}
+
 // OnIssue opens a firing incident when an enabled rule of the signal's kind
 // matches the environment. A duplicate for an issue that already has a firing
 // incident of that kind is absorbed by the partial unique index.

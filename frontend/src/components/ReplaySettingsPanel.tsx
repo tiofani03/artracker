@@ -28,31 +28,62 @@ export default function ReplaySettingsPanel({ project, canManage, onChange }: Pr
   }
 
   return (
-    <section className="dash-card" aria-labelledby="replay-settings-title">
-      <div className="dash-card__head">
-        <div>
-          <h2 id="replay-settings-title" className="dash-card__title">
-            Screenshot replay
-          </h2>
-          <p className="dash-card__desc">
-            Lets the mobile SDKs of {project.name} upload real screen images for session replay. The app must also
-            enable <code>SCREENSHOT</code> mode in its SDK config; turning this off stops uploads for every app version
-            without a release.
-          </p>
+    <div className="dash-panel-stack">
+      <section className="dash-card dash-card--compact" aria-labelledby="replay-settings-title">
+        <div className="dash-card__head">
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <h2 id="replay-settings-title" className="dash-card__title">
+                Mobile Screenshot Replay
+              </h2>
+              <span className={`badge ${enabled ? 'badge--active' : 'badge--revoked'}`}>
+                {enabled ? 'Active' : 'Disabled'}
+              </span>
+            </div>
+            <p className="dash-card__desc">
+              Controls visual session replay image ingestion for <strong>{project.name}</strong>.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            role="switch"
+            aria-checked={enabled}
+            aria-label="Screenshot replay"
+            className={`dash-switch${enabled ? ' is-on' : ''}`}
+            disabled={!canManage || busy}
+            onClick={() => void toggle()}
+          >
+            <span className="dash-switch__knob" />
+          </button>
         </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={enabled}
-          aria-label="Screenshot replay"
-          className={`dash-switch${enabled ? ' is-on' : ''}`}
-          disabled={!canManage || busy}
-          onClick={() => void toggle()}
-        >
-          <span className="dash-switch__knob" />
-        </button>
-      </div>
-      {!canManage && <p className="dash-note">Only admins and owners can change this setting.</p>}
-    </section>
+
+        <p className="dash-list__sub" style={{ lineHeight: 1.6 }}>
+          Allows native Android and iOS mobile SDKs to capture and upload periodic UI frames to reconstruct user sessions in the replay theater. Turning this off acts as an immediate killswitch, rejecting screenshot uploads from all app versions without requiring a client store release.
+        </p>
+
+        {!canManage && (
+          <p className="dash-note" style={{ marginTop: 'var(--space-xs)' }}>
+            Only organization admins and owners can modify project replay settings.
+          </p>
+        )}
+
+        <div className="replay-features-grid">
+          <div className="replay-feature-card">
+            <h3 className="replay-feature-card__title">On-Device Privacy Masking</h3>
+            <p className="replay-feature-card__desc">
+              Password inputs, card numbers, and views with sensitive tags are redacted directly on the device before any image data is compressed or uploaded.
+            </p>
+          </div>
+
+          <div className="replay-feature-card">
+            <h3 className="replay-feature-card__title">Bandwidth &amp; Battery Optimized</h3>
+            <p className="replay-feature-card__desc">
+              Screenshots are captured at an adaptive 2 fps rate, compressed with gzip chunks, and synced over WiFi or unmetered connections to preserve battery.
+            </p>
+          </div>
+        </div>
+      </section>
+    </div>
   )
 }

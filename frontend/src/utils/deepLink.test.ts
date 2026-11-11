@@ -37,6 +37,7 @@ describe('initialSettingsTab', () => {
   it('opens the tab the query names', () => {
     expect(initialSettingsTab('?tab=team')).toBe('team')
     expect(initialSettingsTab('?tab=replay')).toBe('replay')
+    expect(initialSettingsTab('?tab=bot')).toBe('bot')
     expect(initialSettingsTab('?tab=keys')).toBe('keys')
     expect(initialSettingsTab('?org=3&tab=team')).toBe('team')
   })

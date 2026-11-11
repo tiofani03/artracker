@@ -273,3 +273,34 @@ RETURNING `+channelCols, projectID, *in.Chat, *in.Label, createdBy))
 	ch.applyMode(alerts.ModeTenant)
 	return c.Status(fiber.StatusCreated).JSON(ch)
 }
+
+// DiscoverAlertChats queries the project's Telegram bot to return recently active chats
+// so admins can pick a chat without having to manually look up numeric IDs.
+func (h *Handler) DiscoverAlertChats(c *fiber.Ctx) error {
+	projectID := c.Locals("projectID").(int64)
+	ctx, cancel := context.WithTimeout(c.Context(), alertQueryBudget)
+	defer cancel()
+
+	orgID, err := h.projectOrg(ctx, projectID)
+	if err != nil {
+		return err
+	}
+
+	chats, botUsername, err := h.alertsSvc.DiscoverChats(ctx, orgID)
+	if errors.Is(err, alerts.ErrBotNotFound) {
+		return fiber.NewError(fiber.StatusConflict, errConnectBot)
+	}
+	if errors.Is(err, alerts.ErrTelegramDisabled) {
+		return fiber.NewError(fiber.StatusServiceUnavailable, errTelegramOff)
+	}
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadGateway, "failed to query Telegram updates: "+err.Error())
+	}
+	if chats == nil {
+		chats = []alerts.DiscoveredChat{}
+	}
+	return c.JSON(fiber.Map{
+		"bot_username": botUsername,
+		"chats":        chats,
+	})
+}
