@@ -11,3 +11,4 @@ bin/
 
 .superpowers/
 .replay-data/
+/graphify-out/

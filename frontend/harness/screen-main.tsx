@@ -1,9 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
-import type { ReplayChunkDetail, ReplaySessionItem } from '../src/api'
+import type { ReplayChunkDetail, ReplaySessionItem, SessionPerfResponse } from '../src/api'
 import ReplayPlayer from '../src/components/ReplayPlayer'
 import { ScreenReplayRenderer } from '../src/components/ScreenReplayRenderer'
 import { ScreenReplaySession } from '../src/replay/screenSession'
+import { useFillHeight } from '../src/replay/useFillHeight'
+// Same stylesheet order as src/main.tsx, so tokens (spacing, colours) resolve exactly as in the app
+import '../src/tokens.css'
+import '../src/base.css'
+import '../src/index.css'
 import '../src/dashboard.css'
 
 // Fixture: 40 solid-colour frames, 500 ms apart, 10 per chunk. The colour encodes the frame index, so a test
@@ -144,6 +149,42 @@ const sessionItem = {
   updated_at: new Date(BASE).toISOString(),
 } as ReplaySessionItem
 
+// Profiling fixture for ?perfFixture=1: 19 one-second samples over the 19.5 s session. CPU is pinned at 95 % for
+// samples 5-8 (a high_cpu breach) and FPS drops to 18 for samples 12-14 (a low_fps breach on a 60 Hz display).
+function perfFixture(downsampled = false): SessionPerfResponse {
+  return {
+    interval_ms: 1000,
+    device: { ram_mb: 4096, cores: 8, refresh_hz: 60 },
+    metrics: ['cpu', 'mem_mb', 'fps'],
+    downsampled,
+    samples: Array.from({ length: 19 }, (_, i) => ({
+      t: BASE + i * 1000,
+      cpu: i >= 5 && i <= 8 ? 95 : 12,
+      mem_mb: 200 + i * 2,
+      fps: i >= 12 && i <= 14 ? 18 : 58,
+    })),
+  }
+}
+
+// The dashboard's real page chrome (sticky topbar + padded content) around the replay container, using the real
+// useFillHeight hook, so e2e can assert the PAGE itself never overflows the viewport.
+function ShellWrap({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const height = useFillHeight(ref, true)
+  return (
+    <>
+      <div className="console-topbar" />
+      <main className="console-content">
+        <div className="dash-replay-container" ref={ref} style={height ? { height } : undefined}>
+          <div className="dash-replay-grid" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
+            <div className="or-player-col">{children}</div>
+          </div>
+        </div>
+      </main>
+    </>
+  )
+}
+
 const playerChunks: ReplayChunkDetail[] = Array.from({ length: FRAMES / PER_CHUNK }, (_, k) => ({
   chunk_seq: k,
   object_key: `chunk_${k}.gz`,
@@ -197,8 +238,33 @@ async function main() {
     },
     buffering: () => document.querySelector('.sr-badge') !== null,
     chunkPayloads: () => chunks,
-    mountPlayer() {
-      root.render(<ReplayPlayer session={sessionItem} chunks={playerChunks} timelineEvents={[]} projectPlatform="android" />)
+    mountPlayer(opts?: { fillViewport?: boolean; shell?: boolean; perf?: SessionPerfResponse }) {
+      const perf = opts?.perf ?? (params.get('perfFixture') === '1' ? perfFixture(params.get('perfDownsampled') === '1') : null)
+      const player = (
+        <ReplayPlayer
+          session={sessionItem}
+          chunks={playerChunks}
+          timelineEvents={[]}
+          projectPlatform="android"
+          perf={perf}
+        />
+      )
+      if (opts?.shell) {
+        root.render(<ShellWrap>{player}</ShellWrap>)
+        return
+      }
+      if (!opts?.fillViewport) {
+        root.render(player)
+        return
+      }
+      // Same nesting as the dashboard's replay page: container (fixed height) > grid > player column
+      root.render(
+        <div className="dash-replay-container" style={{ height: '100dvh' }}>
+          <div className="dash-replay-grid" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
+            <div className="or-player-col">{player}</div>
+          </div>
+        </div>,
+      )
     },
     async settle() {
       await session?.whenIdle()

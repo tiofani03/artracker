@@ -338,6 +338,23 @@ var openAPISpecBytes = []byte(`{
         }
       }
     },
+    "/projects/{projectID}/sessions/{sessionID}/perf": {
+      "get": {
+        "summary": "Session Profiling Samples",
+        "description": "Merged CPU / memory / FPS / jank samples SDKs reported for the session (type 'perf' ingest items), sorted by time and deduplicated. Above 1200 samples the series is downsampled keeping the worst value per bucket, so spikes survive. A session without profiling data returns empty arrays.",
+        "operationId": "getSessionPerf",
+        "tags": ["Session Replay"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "sessionID", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "{ interval_ms, device{ram_mb,cores,refresh_hz}, metrics[], samples[{t,cpu,mem_mb,fps,jank,frozen,threads,battery,thermal}], downsampled }" },
+          "400": { "description": "Invalid session id" }
+        }
+      }
+    },
     "/replay/chunk-ack": {
       "post": {
         "summary": "Acknowledge Replay Chunk Upload",
@@ -391,6 +408,7 @@ var openAPISpecBytes = []byte(`{
           { "name": "has_rage_click", "in": "query", "required": false, "schema": { "type": "boolean" } },
           { "name": "has_dead_click", "in": "query", "required": false, "schema": { "type": "boolean" } },
           { "name": "user_id", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "user_prefix", "in": "query", "required": false, "description": "Case-insensitive prefix of the user id (max 128 chars); % and _ are literal. user_id stays an exact match.", "schema": { "type": "string", "maxLength": 128 } },
           { "name": "environment", "in": "query", "required": false, "schema": { "type": "string" } },
           { "name": "from", "in": "query", "required": false, "schema": { "type": "string", "format": "date-time" } },
           { "name": "to", "in": "query", "required": false, "schema": { "type": "string", "format": "date-time" } }

@@ -94,7 +94,10 @@ test('ReplayPlayer plays a screenshot session end to end', async ({ page }) => {
   await page.evaluate(() => window.__harness.mountPlayer())
 
   await expect(page.getByTestId('screen-replay-canvas')).toBeVisible({ timeout: 15_000 })
+  // The recording-mode chip lives in the header's ⋯ menu (session-profiling-design §6.1)
+  await page.getByRole('button', { name: 'Player options' }).click()
   await expect(page.locator('.or-res-chip', { hasText: 'Screenshot' })).toBeVisible()
+  await page.keyboard.press('Escape')
   await expect.poll(async () => near(await pixel(page), colors[0]), { timeout: 8000 }).toBe(true)
 
   await page.getByRole('button', { name: 'Play replay' }).click()

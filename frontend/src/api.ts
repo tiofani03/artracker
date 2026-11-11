@@ -447,6 +447,8 @@ export type ReplaySessionListParams = {
   has_rage_click?: boolean
   has_dead_click?: boolean
   user_id?: string
+  /** Case-insensitive prefix of the user id (the server treats % and _ literally). */
+  user_prefix?: string
   environment?: string
   from?: string
   to?: string
@@ -465,6 +467,29 @@ export type ReplaySessionDetailResponse = {
   timeline_events: TelemetryEvent[]
 }
 
+export type PerfThermal = 'nominal' | 'fair' | 'serious' | 'critical'
+
+/** One profiling reading; absent metrics were not measured (never 0). `t` is epoch ms. */
+export type PerfSample = {
+  t: number
+  cpu?: number
+  mem_mb?: number
+  fps?: number
+  jank?: number
+  frozen?: number
+  threads?: number
+  battery?: number
+  thermal?: PerfThermal
+}
+
+export type SessionPerfResponse = {
+  interval_ms: number
+  device: { ram_mb?: number; cores?: number; refresh_hz?: number }
+  metrics: string[]
+  samples: PerfSample[]
+  downsampled: boolean
+}
+
 export const replayApi = {
   listSessions: (projectId: number, params: ReplaySessionListParams = {}) => {
     const qs = new URLSearchParams()
@@ -474,6 +499,7 @@ export const replayApi = {
     if (params.has_rage_click !== undefined) qs.set('has_rage_click', String(params.has_rage_click))
     if (params.has_dead_click !== undefined) qs.set('has_dead_click', String(params.has_dead_click))
     if (params.user_id) qs.set('user_id', params.user_id)
+    if (params.user_prefix) qs.set('user_prefix', params.user_prefix)
     if (params.environment) qs.set('environment', params.environment)
     if (params.from) qs.set('from', params.from)
     if (params.to) qs.set('to', params.to)
@@ -484,6 +510,9 @@ export const replayApi = {
     request<ReplaySessionDetailResponse>(
       `/projects/${projectId}/sessions/${encodeURIComponent(sessionId)}`,
     ),
+  /** CPU / memory / FPS samples SDKs reported for the session (empty arrays when it has none). */
+  getSessionPerf: (projectId: number, sessionId: string) =>
+    request<SessionPerfResponse>(`/projects/${projectId}/sessions/${encodeURIComponent(sessionId)}/perf`),
   /** Freshly signed URLs for chunks `fromSeq..toSeq` of a session (used after earlier URLs expired). */
   listSessionChunks: (projectId: number, sessionId: string, fromSeq: number, toSeq: number) =>
     request<{ chunks: ReplayChunkDetail[] }>(

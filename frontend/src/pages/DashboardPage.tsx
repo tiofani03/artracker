@@ -9,10 +9,15 @@ import {
   type ProjectStats,
   type ReplayChunkDetail,
   type ReplaySessionItem,
+  type SessionPerfResponse,
   type TelemetryEvent,
 } from '../api'
 import DashboardShell from '../components/DashboardShell'
 import ReplayPlayer, { type DeviceMode } from '../components/ReplayPlayer'
+import { useFillHeight } from '../replay/useFillHeight'
+import { normalizeUserQuery } from '../replay/userSearch'
+import { replayEmptyMessage, replayViewState } from '../replay/viewState'
+import { browserStorage, defaultQueueOpen, readBool, writeBool } from '../replay/prefs'
 import GrowthAnalyticsView from '../components/analytics/GrowthAnalyticsView'
 import CampaignsView from '../components/campaigns/CampaignsView'
 import { navigate } from '../router'
@@ -57,6 +62,15 @@ type OverviewCampaignItem = {
 
 type ReplayFilter = 'all' | 'error' | 'rage' | 'dead'
 const REPLAY_PAGE_SIZE = 10
+const QUEUE_OPEN_KEY = 'artracker.replay.queueOpen'
+
+/** Replay filters. `title` is the hover explanation. */
+const REPLAY_FILTERS: { id: ReplayFilter; label: string; title: string }[] = [
+  { id: 'all', label: 'All', title: 'All sessions' },
+  { id: 'error', label: 'Errors', title: 'Sessions with errors' },
+  { id: 'rage', label: 'Rage', title: 'Rage clicks: 3 or more rapid clicks on the same spot' },
+  { id: 'dead', label: 'Dead', title: 'Dead clicks: a click that triggered no response' },
+]
 
 function formatDurationMs(ms: number): string {
   const totalSec = Math.max(0, Math.round(ms / 1000))
@@ -326,7 +340,21 @@ function DashboardInner({
   const [replayTotal, setReplayTotal] = useState<number>(0)
   const [replayOffset, setReplayOffset] = useState<number>(0)
   const [replayFilter, setReplayFilter] = useState<ReplayFilter>('all')
+  // User search: what is typed (draft) vs what is queried (debounced, so each keystroke is not a request)
+  const [userDraft, setUserDraft] = useState('')
+  const [userQuery, setUserQuery] = useState('')
   const [replayDeviceMode, setReplayDeviceMode] = useState<DeviceMode>('auto')
+  // The replay workspace is exactly viewport-high (no page scroll); measured from its position on the page.
+  const replayContainerRef = useRef<HTMLDivElement | null>(null)
+  const [queueOpen, setQueueOpen] = useState<boolean>(() =>
+    readBool(browserStorage(), QUEUE_OPEN_KEY, defaultQueueOpen(typeof window === 'undefined' ? 0 : window.innerWidth)),
+  )
+  const toggleQueue = () => {
+    const next = !queueOpen
+    setQueueOpen(next)
+    writeBool(browserStorage(), QUEUE_OPEN_KEY, next)
+  }
+  const replayHeight = useFillHeight(replayContainerRef, section === 'replays')
   const [replayLoading, setReplayLoading] = useState<boolean>(true)
   const [replayError, setReplayError] = useState<string | null>(null)
 
@@ -362,6 +390,14 @@ function DashboardInner({
     }
     return replaySessions[0] ?? null
   }, [sessionDetail, selectedSessionId, replaySessions])
+  // Never hide the queue while nothing is selected, or the user would have no way to pick a session
+  const queueVisible = queueOpen || !activeReplaySession || replaySessions.length === 0
+  const replayView = replayViewState({
+    loading: replayLoading,
+    sessionCount: replaySessions.length,
+    filter: replayFilter,
+    userQuery,
+  })
 
   const handleLogPageSizeChange = (size: number) => {
     const validSize = Math.max(1, Math.min(500, size))
@@ -393,11 +429,14 @@ function DashboardInner({
   const targetPid = project?.id ?? 1
   // null while the shell is still resolving the selected project (demo mode supplies its own)
   const projectReady = project != null
+  const replayRequestSeq = useRef(0)
 
   const loadReplaySessions = useCallback(
     async (offsetArg = replayOffset, filterArg = replayFilter) => {
       // Project still resolving: wait instead of querying the fallback project id.
       if (!projectReady) return
+      // Only the newest request may update the list; a slow earlier one must not overwrite it
+      const seq = ++replayRequestSeq.current
       setReplayLoading(true)
       setReplayError(null)
       try {
@@ -407,7 +446,9 @@ function DashboardInner({
           ...(filterArg === 'error' ? { has_error: true } : {}),
           ...(filterArg === 'rage' ? { has_rage_click: true } : {}),
           ...(filterArg === 'dead' ? { has_dead_click: true } : {}),
+          ...(userQuery ? { user_prefix: userQuery } : {}),
         })
+        if (seq !== replayRequestSeq.current) return
         setReplaySessions(res.items)
         setReplayTotal(res.total)
         setSelectedSessionId((cur) => {
@@ -415,19 +456,31 @@ function DashboardInner({
           return res.items[0]?.id ?? ''
         })
       } catch (err) {
+        if (seq !== replayRequestSeq.current) return
         setReplayError(err instanceof Error ? err.message : 'Failed to fetch replay sessions')
         setReplaySessions([])
         setReplayTotal(0)
       } finally {
-        setReplayLoading(false)
+        if (seq === replayRequestSeq.current) setReplayLoading(false)
       }
     },
-    [projectReady, targetPid, replayOffset, replayFilter],
+    [projectReady, targetPid, replayOffset, replayFilter, userQuery],
   )
 
   useEffect(() => {
     void loadReplaySessions(replayOffset, replayFilter)
   }, [loadReplaySessions, replayOffset, replayFilter])
+
+  // Typing waits 300 ms before it becomes a query; Enter and the clear button apply immediately.
+  useEffect(() => {
+    const next = normalizeUserQuery(userDraft)
+    if (next === userQuery) return
+    const timer = setTimeout(() => {
+      setUserQuery(next)
+      setReplayOffset(0)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [userDraft, userQuery])
 
   // Read the latest list for the error fallback without refetching detail on every list change.
   const replaySessionsRef = useRef(replaySessions)
@@ -477,6 +530,27 @@ function DashboardInner({
       cancelled = true
     }
   }, [projectReady, targetPid, selectedSessionId, liveCapture])
+
+  // Profiling samples load in parallel with the session detail; any failure just means "no profiling data"
+  const [sessionPerf, setSessionPerf] = useState<{ sessionId: string; data: SessionPerfResponse } | null>(null)
+  useEffect(() => {
+    if (!projectReady || !selectedSessionId) {
+      setSessionPerf(null)
+      return
+    }
+    let cancelled = false
+    replayApi
+      .getSessionPerf(targetPid, selectedSessionId)
+      .then((data) => {
+        if (!cancelled) setSessionPerf({ sessionId: selectedSessionId, data })
+      })
+      .catch(() => {
+        if (!cancelled) setSessionPerf(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectReady, targetPid, selectedSessionId])
 
   const handleStartLiveCapture = () => {
     if (isCapturingLive) return
@@ -1076,40 +1150,18 @@ function DashboardInner({
 
             {/* ==================== SESSION REPLAY ==================== */}
             {section === 'replays' && (
-              <div className="dash-replay-container">
-                <div className="dash-replay-toolbar">
-                  <div className="dash-seg" role="group" aria-label="Filter replays">
-                    {(
-                      [
-                        { id: 'all', label: 'All Sessions' },
-                        { id: 'error', label: 'Errors Only' },
-                        { id: 'rage', label: 'Rage Clicks' },
-                        { id: 'dead', label: 'Dead Clicks' },
-                      ] as { id: ReplayFilter; label: string }[]
-                    ).map((f) => (
-                      <button
-                        key={f.id}
-                        type="button"
-                        className={`dash-seg__btn${replayFilter === f.id ? ' is-active' : ''}`}
-                        aria-pressed={replayFilter === f.id}
-                        onClick={() => {
-                          setReplayFilter(f.id)
-                          setReplayOffset(0)
-                        }}
-                      >
-                        {f.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
+              <div
+                className="dash-replay-container"
+                ref={replayContainerRef}
+                style={replayHeight ? { height: replayHeight } : undefined}
+              >
                 {replayError && (
                   <p className="dash-error" role="alert" style={{ marginBottom: '1rem' }}>
                     {replayError}
                   </p>
                 )}
 
-                {replayLoading && replaySessions.length === 0 ? (
+                {replayView === 'skeleton' ? (
                   <div className="replay-queue-skeleton" role="status" aria-label="Loading recorded sessions">
                     {[1, 2, 3, 4, 5].map((i) => (
                       <div key={i} className="replay-queue-skeleton__item">
@@ -1121,7 +1173,7 @@ function DashboardInner({
                       </div>
                     ))}
                   </div>
-                ) : replaySessions.length === 0 ? (
+                ) : replayView === 'onboarding' ? (
                   <section className="dash-card dash-card--compact" style={{ padding: '3.5rem 1.5rem', textAlign: 'center' }}>
                     <div style={{ maxWidth: 440, margin: '0 auto' }}>
                       <div style={{ fontSize: '2.25rem', marginBottom: '0.75rem' }}>📹</div>
@@ -1154,8 +1206,9 @@ function DashboardInner({
                     </div>
                   </section>
                 ) : (
-                  <div className="dash-replay-grid">
+                  <div className={`dash-replay-grid${queueVisible ? '' : ' is-rail-closed'}`}>
                     {/* Left Column: Session Queue with Pagination */}
+                    {queueVisible && (
                     <section className="dash-card dash-card--compact" aria-label="Recorded sessions">
                       <div className="dash-card__head">
                         <div>
@@ -1164,6 +1217,58 @@ function DashboardInner({
                             {replayTotal} total · PII masked on client
                           </p>
                         </div>
+                      </div>
+                      <div className="dash-user-search">
+                        <svg className="dash-user-search__icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <circle cx="11" cy="11" r="8" />
+                          <path d="m21 21-4.3-4.3" />
+                        </svg>
+                        <input
+                          type="search"
+                          className="dash-user-search__input"
+                          aria-label="Search sessions by user ID"
+                          placeholder="Search user ID…"
+                          maxLength={128}
+                          value={userDraft}
+                          onChange={(e) => setUserDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              setUserQuery(normalizeUserQuery(userDraft))
+                              setReplayOffset(0)
+                            }
+                          }}
+                        />
+                        {userDraft && (
+                          <button
+                            type="button"
+                            className="dash-user-search__clear"
+                            aria-label="Clear user search"
+                            onClick={() => {
+                              setUserDraft('')
+                              setUserQuery('')
+                              setReplayOffset(0)
+                            }}
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                      <div className="dash-filter-row" role="group" aria-label="Filter replays">
+                        {REPLAY_FILTERS.map((f) => (
+                          <button
+                            key={f.id}
+                            type="button"
+                            className={`dash-filter${replayFilter === f.id ? ' is-active' : ''}`}
+                            aria-pressed={replayFilter === f.id}
+                            title={f.title}
+                            onClick={() => {
+                              setReplayFilter(f.id)
+                              setReplayOffset(0)
+                            }}
+                          >
+                            {f.label}
+                          </button>
+                        ))}
                       </div>
 
                       <div className="dash-session-list">
@@ -1251,10 +1356,29 @@ function DashboardInner({
                         </div>
                       )}
                     </section>
+                    )}
 
                     {/* Right Column: OpenReplay Unified Studio Theater */}
-                    <div style={{ minWidth: 0, flex: 1 }} aria-label="Session player">
-                      {activeReplaySession ? (
+                    <div className="or-player-col" aria-label="Session player">
+                      {replaySessions.length === 0 ? (
+                        <section className="dash-replay-empty" role="status">
+                          <p className="dash-replay-empty__title">{replayEmptyMessage(replayFilter, replayLoading, userQuery)}</p>
+                          {!replayLoading && (replayFilter !== 'all' || userQuery) && (
+                            <button
+                              type="button"
+                              className="dash-btn"
+                              onClick={() => {
+                                setReplayFilter('all')
+                                setUserDraft('')
+                                setUserQuery('')
+                                setReplayOffset(0)
+                              }}
+                            >
+                              Show all sessions
+                            </button>
+                          )}
+                        </section>
+                      ) : activeReplaySession ? (
                         <ReplayPlayer
                           session={activeReplaySession}
                           chunks={
@@ -1280,6 +1404,9 @@ function DashboardInner({
                           projectPlatform={project?.platform}
                           deviceMode={replayDeviceMode}
                           onDeviceModeChange={setReplayDeviceMode}
+                          perf={sessionPerf?.sessionId === activeReplaySession.id ? sessionPerf.data : null}
+                          queueOpen={queueVisible}
+                          onToggleQueue={toggleQueue}
                         />
                       ) : replayLoading ? (
                         <div className="or-theater or-theater--placeholder" role="status" aria-label="Loading session replay">

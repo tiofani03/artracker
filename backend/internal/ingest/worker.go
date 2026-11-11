@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 )
@@ -10,6 +11,7 @@ import (
 type WorkerPool struct {
 	queue          chan BatchJob
 	sink           StorageSink
+	perfSink       PerfSink
 	sanitizer      *Sanitizer
 	metrics        *Metrics
 	issueProcessor IssueProcessor
@@ -25,6 +27,7 @@ type WorkerPool struct {
 func NewWorkerPool(
 	queueSize, numWorkers, batchSize, flushIntervalMs int,
 	sink StorageSink,
+	perfSink PerfSink,
 	metrics *Metrics,
 	processors ...IssueProcessor,
 ) *WorkerPool {
@@ -44,6 +47,7 @@ func NewWorkerPool(
 	wp := &WorkerPool{
 		queue:         make(chan BatchJob, queueSize),
 		sink:          sink,
+		perfSink:      perfSink,
 		sanitizer:     NewSanitizer(),
 		metrics:       metrics,
 		batchSize:     batchSize,
@@ -72,8 +76,24 @@ func (wp *WorkerPool) workerLoop(workerID int) {
 	defer ticker.Stop()
 
 	rows := make([]TelemetryRow, 0, wp.batchSize)
+	perfRows := make([]PerfBatchRow, 0, 16)
+
+	flushPerf := func() {
+		if len(perfRows) == 0 {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := wp.perfSink.WritePerf(ctx, perfRows)
+		cancel()
+		if err != nil {
+			slog.Error("perf flush failed", "worker", workerID, "rows", len(perfRows), "err", err)
+			wp.metrics.IncDroppedBatches()
+		}
+		perfRows = perfRows[:0]
+	}
 
 	flush := func() {
+		flushPerf()
 		if len(rows) == 0 {
 			return
 		}
@@ -117,7 +137,8 @@ func (wp *WorkerPool) workerLoop(workerID int) {
 			wp.metrics.AddSanitizedItems(sanitized)
 
 			rows = append(rows, normRows...)
-			if len(rows) >= wp.batchSize {
+			perfRows = append(perfRows, wp.collectPerf(job)...)
+			if len(rows) >= wp.batchSize || len(perfRows) >= wp.batchSize {
 				flush()
 			}
 
@@ -125,6 +146,30 @@ func (wp *WorkerPool) workerLoop(workerID int) {
 			flush()
 		}
 	}
+}
+
+// collectPerf extracts and validates the perf items of a job. Invalid items (and every perf item when no
+// perf sink is configured) count as dropped; perf items never reach the telemetry sink.
+func (wp *WorkerPool) collectPerf(job BatchJob) []PerfBatchRow {
+	var out []PerfBatchRow
+	dropped := 0
+	for _, item := range job.Envelope.Items {
+		if strings.ToLower(strings.TrimSpace(item.Type)) != PerfItemType {
+			continue
+		}
+		if wp.perfSink == nil {
+			dropped++
+			continue
+		}
+		row, err := ParsePerfItem(job.ProjectID, job.ReceivedAt, item)
+		if err != nil {
+			dropped++
+			continue
+		}
+		out = append(out, row)
+	}
+	wp.metrics.AddDroppedItems(dropped)
+	return out
 }
 
 // Enqueue performs non-blocking push to the ingest channel.

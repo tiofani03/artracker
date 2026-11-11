@@ -68,6 +68,9 @@ func (s *Sanitizer) SanitizeAndNormalize(job BatchJob) ([]TelemetryRow, int, int
 
 	for _, item := range items {
 		kind := strings.ToLower(strings.TrimSpace(item.Type))
+		if kind == PerfItemType {
+			continue // routed to the perf sink by the worker, never stored as telemetry
+		}
 		if !validKinds[kind] {
 			droppedInvalid++
 			continue

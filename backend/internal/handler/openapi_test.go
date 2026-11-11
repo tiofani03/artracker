@@ -26,6 +26,7 @@ func TestOpenAPISpecValid(t *testing.T) {
 		"/replay/config",
 		"/projects/{projectID}/replay-settings",
 		"/projects/{projectID}/sessions/{sessionID}/chunks",
+		"/projects/{projectID}/sessions/{sessionID}/perf",
 	}
 
 	for _, p := range expectedPaths {

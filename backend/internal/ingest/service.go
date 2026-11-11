@@ -48,12 +48,20 @@ func NewService(cfg Config, pool *pgxpool.Pool, customSink ...StorageSink) *Serv
 		sink = NewMemoryStorageSink()
 	}
 
+	var perfSink PerfSink
+	if pool != nil {
+		perfSink = NewPgxPerfSink(pool)
+	} else {
+		perfSink = NewMemoryPerfSink()
+	}
+
 	workerPool := NewWorkerPool(
 		cfg.QueueSize,
 		cfg.Workers,
 		cfg.BatchSize,
 		cfg.FlushIntervalMs,
 		sink,
+		perfSink,
 		metrics,
 	)
 

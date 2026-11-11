@@ -462,7 +462,7 @@
 
 .console-content {
   width: 100%;
-  max-width: 1320px;
+  /* every dashboard page fills the area to the right of the sidebar */
   padding: var(--space-lg);
   display: flex;
   flex-direction: column;
@@ -1276,13 +1276,25 @@
 .dash-replay-grid {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: var(--space-md);
-  align-items: start;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The queue card fills its grid cell; only the list scrolls (the page never does) */
+.dash-replay-grid > .dash-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
 @media (max-width: 980px) {
   .dash-replay-grid {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 220px) minmax(0, 1fr);
   }
 }
 
@@ -1290,6 +1302,9 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .dash-session-item {
@@ -1427,6 +1442,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+  min-height: 0;
 }
 
 .dash-replay-toolbar {
@@ -2234,11 +2250,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 16px;
+  padding: 6px 16px;
   background: var(--color-paper-hi);
   border-bottom: var(--rule-hair) solid var(--color-rule);
   gap: 16px;
-  min-height: 48px;
+  min-height: 44px;
   box-sizing: border-box;
 }
 
@@ -2283,10 +2299,6 @@
   font-family: var(--font-outlier);
   font-size: 0.6875rem;
   color: var(--color-muted);
-  background: var(--color-paper-3);
-  padding: 2px 6px;
-  border-radius: 4px;
-  border: var(--rule-hair) solid var(--color-rule);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -2313,13 +2325,9 @@
 
 .or-unified-header__duration {
   font-family: var(--font-outlier);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  color: var(--color-accent);
-  background: var(--color-accent-wash);
-  padding: 3px 8px;
-  border-radius: 4px;
-  border: var(--rule-hair) solid var(--color-rule);
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
@@ -2328,8 +2336,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 16px;
-  background: var(--color-paper);
+  padding: 5px 16px;
+  background: var(--color-paper-2);
   border-bottom: var(--rule-hair) solid var(--color-rule);
   font-size: 0.6875rem;
   min-width: 0;
@@ -2338,15 +2346,8 @@
 
 .or-route-strip__label {
   font-family: var(--font-outlier);
-  font-size: 0.5625rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: var(--color-paper-3);
+  font-size: 0.6875rem;
   color: var(--color-muted);
-  border: var(--rule-hair) solid var(--color-rule);
   flex-shrink: 0;
 }
 
@@ -2381,14 +2382,13 @@
 /* OpenReplay Studio Stage Canvas (Neutral Dark Canvas with Subtle Engineering Grid) */
 .or-stage {
   width: 100%;
-  min-height: 480px;
+  flex: 1;
+  min-height: 0; /* the chassis is scaled to fit (see .or-stage__fit), never a fixed floor */
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px 16px;
-  background: var(--color-paper);
-  background-image: radial-gradient(var(--color-rule) 1px, transparent 1px);
-  background-size: 20px 20px;
+  padding: 16px;
+  background: var(--color-paper-3);
   position: relative;
   overflow: hidden;
 }
@@ -2917,10 +2917,10 @@
   top: 0;
   bottom: 0;
   border-radius: 3px;
-  background: rgba(59, 130, 246, 0.15);
-  border: 1px solid rgba(59, 130, 246, 0.35);
-  color: var(--color-accent);
-  font-size: 0.6rem;
+  background: var(--color-paper-3);
+  border: 1px solid var(--color-rule-2);
+  color: var(--color-ink-2);
+  font-size: 0.625rem;
   padding: 0 4px;
   display: flex;
   align-items: center;
@@ -2938,7 +2938,7 @@
   top: 1px;
   height: 4px;
   border-radius: 2px;
-  background: rgba(139, 92, 246, 0.65);
+  background: var(--color-ink-2);
 }
 
 .or-gantt-net-span.is-error {
@@ -3412,6 +3412,7 @@
 }
 
 .or-activity-list {
+  position: relative; /* offsetParent for follow-playhead scrolling */
   max-height: 260px;
   overflow-y: auto;
   display: flex;
@@ -7079,3 +7080,784 @@ select {
 .dash-switch.is-on .dash-switch__knob {
   transform: translateX(20px);
 }
+
+
+/* =====================================================================
+   Replay workspace: viewport-height grid (stage | side panel / timeline)
+   ===================================================================== */
+.replay-player-shell {
+  height: 100%;
+  min-height: 0;
+}
+
+.or-theater {
+  height: 100%;
+  min-height: 0;
+}
+
+.or-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "header header"
+    "stage side"
+    "timeline timeline";
+}
+
+.or-workspace > .or-unified-header { grid-area: header; }
+.or-workspace > .or-transport-bar { grid-area: timeline; }
+
+.or-stage-col {
+  grid-area: stage;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.or-stage__fit {
+  flex: none;
+  transform-origin: center center;
+}
+
+.or-stage__fit--web {
+  width: 100%;
+  max-width: 860px;
+}
+
+.or-player-col {
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Header ⋯ menu (device mode, recording mode, resolution) */
+.or-header-menu {
+  position: relative;
+}
+
+.or-header-menu__btn {
+  appearance: none;
+  background: transparent;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-card);
+  color: var(--color-ink-2);
+  font-size: 1rem;
+  line-height: 1;
+  padding: 2px 8px 5px;
+  cursor: pointer;
+}
+
+.or-header-menu__btn:hover,
+.or-header-menu__btn[aria-expanded="true"] {
+  background: var(--color-paper-3);
+}
+
+.or-header-menu__panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: var(--z-sticky-nav);
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--color-paper-hi);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+.or-header-menu__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.or-header-menu__label {
+  font-size: 0.6875rem;
+  color: var(--color-muted);
+}
+
+/* Side panel: tabs, filters, list, inspector */
+.or-side-panel {
+  grid-area: side;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-paper-2);
+  border-left: var(--rule-hair) solid var(--color-rule);
+}
+
+.or-side-panel__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  background: var(--color-paper-3);
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+}
+
+.or-side-tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.or-side-tab {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 10px;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.or-side-tab.is-active {
+  color: var(--color-ink);
+  border-bottom-color: var(--color-accent);
+}
+
+.or-side-tab__count {
+  padding: 0 6px;
+  border: 1px solid var(--color-rule);
+  border-radius: 8px;
+  background: var(--color-paper);
+  font-size: 0.625rem;
+  font-weight: 600;
+}
+
+.or-side-panel__sheet-toggle {
+  display: none;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--color-ink-2);
+  font-size: 0.875rem;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.or-side-panel__toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 6px 10px;
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+}
+
+.or-side-panel__hint {
+  font-size: 0.6875rem;
+  color: var(--color-muted);
+}
+
+.or-side-panel .or-side-panel__list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
+.or-side-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.or-activity-row__btn {
+  appearance: none;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.or-activity-dur {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  color: var(--color-muted);
+}
+
+.or-inspector {
+  flex: none;
+  max-height: 45%;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border-top: var(--rule-hair) solid var(--color-rule);
+  background: var(--color-paper);
+}
+
+.or-inspector__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.or-inspector__text {
+  font-size: 0.75rem;
+  color: var(--color-ink);
+  word-break: break-word;
+  margin-bottom: 8px;
+}
+
+/* Narrow viewports: the side panel becomes a bottom sheet (peek / half / full) */
+@media (max-width: 1100px) {
+  .or-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "header"
+      "stage"
+      "timeline";
+    padding-bottom: 44px; /* keeps the timeline above the peeking sheet header */
+  }
+
+  .or-side-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: var(--z-sticky-nav);
+    height: 45dvh;
+    border-left: 0;
+    border-top: var(--rule-hair) solid var(--color-rule);
+    box-shadow: 0 -8px 24px -12px rgba(0, 0, 0, 0.4);
+  }
+
+  .or-side-panel[data-snap="peek"] { height: 44px; }
+  .or-side-panel[data-snap="full"] { height: 85dvh; }
+  .or-side-panel__sheet-toggle { display: inline-flex; }
+}
+
+/* Session queue rail: collapsible, filters live in its header */
+.dash-replay-grid.is-rail-closed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.or-queue-toggle {
+  appearance: none;
+  padding: 3px 9px;
+  background: transparent;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-card);
+  color: var(--color-ink-2);
+  font: inherit;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.or-queue-toggle:hover,
+.or-queue-toggle.is-active {
+  background: var(--color-paper-3);
+  color: var(--color-ink);
+}
+
+@media (max-width: 980px) {
+  .dash-replay-grid.is-rail-closed {
+    grid-template-rows: minmax(0, 1fr);
+  }
+}
+
+/* =====================================================================
+   Multi-track timeline (TimelineTracks): label column + one seek surface
+   ===================================================================== */
+.or-tracks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.or-tracks__head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.or-tracks__picker {
+  position: relative;
+}
+
+.or-tracks__btn {
+  appearance: none;
+  padding: 1px 8px;
+  background: transparent;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-card);
+  color: var(--color-ink-2);
+  font: inherit;
+  font-size: 0.6875rem;
+  cursor: pointer;
+}
+
+.or-tracks__btn:hover { background: var(--color-paper-3); }
+
+.or-tracks__menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 4px);
+  z-index: var(--z-sticky-nav);
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--color-paper-hi);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+.or-tracks__menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.or-tracks__grid {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  column-gap: 10px;
+}
+
+.or-tracks__labels,
+.or-tracks__area {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.or-tracks__area { position: relative; }
+
+.or-track-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  font-size: 0.6875rem;
+  color: var(--color-muted);
+}
+
+.or-track-label__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.or-track-label__value {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+/* Row heights are shared by the label column and the lane so the two stay aligned */
+.or-track-row--screens { height: 18px; }
+.or-track-row--network { height: 10px; }
+.or-track-row--cpu,
+.or-track-row--mem,
+.or-track-row--fps { height: 26px; }
+.or-track-row--events { height: 22px; }
+
+.or-track-row > .or-gantt-lane,
+.or-track-row > .or-gantt-rail {
+  height: 100%;
+}
+
+.or-track-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.or-track-line {
+  fill: none;
+  stroke: var(--color-ink-2);
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+
+.or-gantt-overflow {
+  position: absolute;
+  right: 0;
+  top: -2px;
+  padding: 0 4px;
+  font-size: 0.5625rem;
+  color: var(--color-muted);
+  background: var(--color-paper-2);
+  border-radius: 3px;
+}
+
+.or-gantt-lane--screens { height: 100%; }
+.or-gantt-lane--network { height: 100%; }
+.or-gantt-net-span { top: 2px; height: 6px; }
+.or-tracks__area > .or-gantt-needle { top: -2px; bottom: -2px; }
+
+.or-perf-breach {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--color-rule);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.or-perf-breach:last-child { border-bottom: 0; }
+.or-perf-breach:hover { background: var(--color-paper-3); }
+
+
+/* =====================================================================
+   Replay workspace v2: video first, quiet chrome, tokens only.
+   One ink colour for every series; warn marks thresholds and breaches;
+   the accent is spent on the playhead and the play control only.
+   ===================================================================== */
+.or-transport-bar {
+  position: relative;
+  padding: 8px 16px 10px;
+  gap: 6px;
+}
+
+.or-transport-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-input);
+}
+
+.or-transport-time {
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.or-transport-time__sep { color: var(--color-rule-2); }
+
+/* Track controls share the transport row instead of costing a row of their own */
+.or-tracks { gap: 0; }
+
+.or-tracks__head {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  z-index: var(--z-raised);
+}
+
+.or-tracks__grid { column-gap: 12px; }
+
+.or-tracks__labels,
+.or-tracks__area { gap: 3px; }
+
+.or-track-row--screens { height: 16px; }
+.or-track-row--network { height: 8px; }
+.or-track-row--cpu,
+.or-track-row--mem,
+.or-track-row--fps { height: 22px; }
+.or-track-row--events { height: 18px; }
+
+.or-gantt-needle {
+  width: 2px;
+  box-shadow: none;
+}
+
+.or-gantt-lane--series {
+  position: relative;
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+}
+
+.or-track-threshold {
+  stroke: var(--color-warn);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.or-track-band { fill: var(--color-warn-wash); }
+
+.or-track-scale {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  font-family: var(--font-outlier);
+  font-size: 0.5625rem;
+  line-height: 1;
+  color: var(--color-muted);
+  pointer-events: none;
+}
+
+/* Side panel: counts are plain numbers, not pills */
+.or-side-tab__count {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-weight: 500;
+  color: var(--color-muted);
+}
+
+/* Performance tab: a dense metric table, not a card grid */
+.or-perf {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 12px;
+}
+
+.or-perf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.or-perf-table th,
+.or-perf-table td {
+  padding: 7px 10px;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+}
+
+.or-perf-table thead th {
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.or-perf-table tbody th {
+  font-weight: 500;
+  color: var(--color-ink-2);
+  white-space: nowrap;
+}
+
+.or-perf-table__num {
+  font-family: var(--font-outlier);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+
+.or-perf-table__session {
+  font-size: 0.6875rem;
+  color: var(--color-muted);
+}
+
+.or-perf-table__trend { width: 84px; }
+
+.or-spark {
+  display: block;
+  width: 100%;
+  height: 20px;
+  overflow: visible;
+}
+
+.or-spark__line {
+  fill: none;
+  stroke: var(--color-ink-2);
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.or-spark__now {
+  stroke: var(--color-accent);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.or-perf__title {
+  margin: 0;
+  padding: 0 10px 6px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.or-perf__hint,
+.or-perf__note {
+  margin: 0;
+  padding: 0 10px;
+  font-size: 0.6875rem;
+  color: var(--color-muted);
+}
+
+.or-perf-breaches { border-top: var(--rule-hair) solid var(--color-rule); }
+
+.or-perf-breach__kind {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--color-warn);
+}
+
+/* The route caption floats over the stage instead of taking a row, so the video gets the height */
+.or-stage-col { position: relative; }
+
+.or-route-strip {
+  position: absolute;
+  top: 8px;
+  left: 16px;
+  z-index: var(--z-raised);
+  max-width: calc(100% - 32px);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  pointer-events: none;
+}
+
+/* Scale labels sit on a quiet backing so a threshold line never strikes through them */
+.or-track-scale {
+  padding: 0 3px;
+  background: var(--color-paper-2);
+}
+
+/* Filter matched nothing: one message in the big panel, with the way back */
+.dash-replay-empty {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  background: var(--color-paper-2);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-card);
+  text-align: center;
+}
+
+.dash-replay-empty__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: var(--display-weight);
+  color: var(--color-ink);
+}
+
+/* Replay filters: one quiet row of underlined tabs, same voice as the side-panel tabs */
+.dash-filter-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin: var(--space-xs) 0 var(--space-sm);
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+}
+
+.dash-filter {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: -1px; /* the active underline sits on the row's rule */
+  padding: 6px 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: color var(--dur-micro) var(--ease-out), border-color var(--dur-micro) var(--ease-out);
+}
+
+.dash-filter:hover { color: var(--color-ink); }
+
+.dash-filter:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.dash-filter.is-active {
+  color: var(--color-ink);
+  border-bottom-color: var(--color-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dash-filter { transition: none; }
+}
+
+/* User search above the replay filters */
+.dash-user-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: var(--space-xs) 0 0;
+}
+
+.dash-user-search__icon {
+  position: absolute;
+  left: 10px;
+  color: var(--color-muted);
+  pointer-events: none;
+}
+
+.dash-user-search__input {
+  width: 100%;
+  padding: 7px 28px 7px 30px;
+  background: var(--color-paper);
+  border: var(--rule-hair) solid var(--color-rule-2);
+  border-radius: var(--radius-input);
+  color: var(--color-ink);
+  font: inherit;
+  font-size: var(--text-xs);
+}
+
+.dash-user-search__input::placeholder { color: var(--color-muted); }
+
+.dash-user-search__input:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+/* the clear button below replaces the browser's own */
+.dash-user-search__input::-webkit-search-cancel-button { display: none; }
+
+.dash-user-search__clear {
+  position: absolute;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-input);
+  color: var(--color-muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dash-user-search__clear:hover { background: var(--color-paper-3); color: var(--color-ink); }
