@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { AlertChannel, AlertIncident, AlertRule } from '../../api'
+import type { AlertBot, AlertChannel, AlertIncident, AlertRule } from '../../api'
 import {
+  botBannerText,
   buildRulePatch,
+  channelActivityLabel,
   countEnabledChannels,
+  detailLevelLabel,
   detectLinked,
   draftFromRule,
   formatBaseline,
@@ -12,6 +15,9 @@ import {
   ruleDescription,
   ruleTitle,
   timeAgo,
+  validateBotToken,
+  validateChat,
+  validateLabel,
   validateRulePatch,
 } from './alertFormat'
 
@@ -195,6 +201,9 @@ function channel(id: number, enabled = true): AlertChannel {
     last_sent_at: null,
     last_error: '',
     created_at: '2026-11-11T00:00:00Z',
+    origin: 'linked',
+    destination: '-1001',
+    active: true,
   }
 }
 
@@ -224,5 +233,97 @@ describe('countEnabledChannels', () => {
     expect(countEnabledChannels([])).toBe(0)
     expect(countEnabledChannels([channel(1), channel(2, false), channel(3)])).toBe(2)
     expect(countEnabledChannels([channel(1, false)])).toBe(0)
+  })
+})
+
+function bot(over: Partial<AlertBot> = {}): AlertBot {
+  return {
+    mode: 'tenant',
+    configured: true,
+    bot_username: 'acme_bot',
+    status: 'active',
+    status_reason: '',
+    detail_level: 'minimal',
+    updated_at: null,
+    ...over,
+  }
+}
+
+describe('validateChat', () => {
+  it('accepts numeric ids and usernames', () => {
+    expect(validateChat('-1001234567890')).toBeNull()
+    expect(validateChat('123456')).toBeNull()
+    expect(validateChat('@my_channel')).toBeNull()
+  })
+  it('rejects everything else, including surrounding whitespace', () => {
+    for (const bad of ['', 'abc', '@a', '12', ' 123456 ']) expect(validateChat(bad)).not.toBeNull()
+  })
+})
+
+describe('validateLabel', () => {
+  // Choice: the label is not trimmed (a label with surrounding spaces is accepted as typed),
+  // but an all-whitespace label counts as empty.
+  it('enforces 1 to 80 characters', () => {
+    expect(validateLabel('')).not.toBeNull()
+    expect(validateLabel('a'.repeat(80))).toBeNull()
+    expect(validateLabel('a'.repeat(81))).not.toBeNull()
+  })
+  it('rejects an all-whitespace label and accepts surrounding spaces', () => {
+    expect(validateLabel('   ')).not.toBeNull()
+    expect(validateLabel(' ops ')).toBeNull()
+  })
+})
+
+describe('validateBotToken', () => {
+  it('accepts a token-shaped value', () => {
+    expect(validateBotToken('123456789:AAEhBP0av28kPoKy2VfQ3CwR4aFhEXAMPLE1')).toBeNull()
+  })
+  it('rejects malformed values without echoing them', () => {
+    for (const bad of ['', 'abc', '123:short']) {
+      const msg = validateBotToken(bad)
+      expect(msg).not.toBeNull()
+      if (bad !== '') expect(msg).not.toContain(bad)
+    }
+  })
+})
+
+describe('botBannerText', () => {
+  it('asks an admin to connect a bot', () => {
+    expect(botBannerText(bot({ configured: false, status: '' }), true)).toBe(
+      'Connect a Telegram bot in Settings to receive alerts.',
+    )
+  })
+  it('tells a member to ask an admin', () => {
+    expect(botBannerText(bot({ configured: false, status: '' }), false)).toBe(
+      'An organisation admin needs to connect a Telegram bot.',
+    )
+  })
+  it('explains an invalid bot with its reason', () => {
+    expect(botBannerText(bot({ status: 'invalid', status_reason: 'token revoked' }), true)).toContain('token revoked')
+  })
+  it('is null for an active bot', () => {
+    expect(botBannerText(bot(), true)).toBeNull()
+  })
+})
+
+describe('channelActivityLabel', () => {
+  it('labels inactive channels by mode', () => {
+    expect(channelActivityLabel({ ...channel(1), origin: 'linked', active: false }, 'tenant')).toBe(
+      'belongs to the shared bot',
+    )
+    expect(channelActivityLabel({ ...channel(1), origin: 'manual', active: false }, 'shared')).toBe(
+      'inactive in shared mode',
+    )
+  })
+  it('is null when active', () => {
+    expect(channelActivityLabel({ ...channel(1), origin: 'linked', active: true }, 'shared')).toBeNull()
+    expect(channelActivityLabel({ ...channel(1), origin: 'manual', active: true }, 'tenant')).toBeNull()
+  })
+})
+
+describe('detailLevelLabel', () => {
+  it('describes each level', () => {
+    expect(detailLevelLabel('minimal')).toBe('Minimal (no error text)')
+    expect(detailLevelLabel('full')).toBe('Full (includes error text)')
   })
 })

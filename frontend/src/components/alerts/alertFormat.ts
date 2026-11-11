@@ -1,4 +1,4 @@
-import type { AlertChannel, AlertIncident, AlertRule, AlertRuleKind, AlertRulePatch } from '../../api'
+import type { AlertBot, AlertBotMode, AlertChannel, AlertDetailLevel, AlertIncident, AlertRule, AlertRuleKind, AlertRulePatch } from '../../api'
 
 export const SPIKE_WINDOWS = [15, 30, 60, 180] as const
 
@@ -158,4 +158,58 @@ export function buildRulePatch(rule: AlertRule, draft: RuleDraft): AlertRulePatc
   if (num(draft.window) !== rule.spike_window_minutes) patch.spike_window_minutes = num(draft.window)
   if (num(draft.cooldown) !== rule.cooldown_minutes) patch.cooldown_minutes = num(draft.cooldown)
   return patch
+}
+
+const CHAT_ID = /^-?[0-9]{5,20}$/
+const CHAT_USERNAME = /^@[A-Za-z][A-Za-z0-9_]{4,31}$/
+const BOT_TOKEN = /^[0-9]{5,15}:[A-Za-z0-9_-]{30,}$/
+
+/** Mirrors the backend; surrounding whitespace is not allowed. */
+export function validateChat(input: string): string | null {
+  if (CHAT_ID.test(input) || CHAT_USERNAME.test(input)) return null
+  return 'Enter a numeric chat id (e.g. -1001234567890) or a @channel_username.'
+}
+
+/**
+ * 1 to 80 characters. The label is not trimmed: surrounding spaces are accepted as typed,
+ * but an all-whitespace label counts as empty.
+ */
+export function validateLabel(input: string): string | null {
+  if (input.trim() === '') return 'Enter a label.'
+  if (input.length > 80) return 'Label must be at most 80 characters.'
+  return null
+}
+
+/** The token is a secret: messages are fixed strings and never include the input. */
+export function validateBotToken(input: string): string | null {
+  if (BOT_TOKEN.test(input)) return null
+  return 'That does not look like a bot token. Copy it from BotFather (e.g. 123456789:AA...).'
+}
+
+/** Banner for the alerts view; null when the bot is fine. */
+export function botBannerText(bot: AlertBot, canManage: boolean): string | null {
+  if (!bot.configured) {
+    return canManage
+      ? 'Connect a Telegram bot in Settings to receive alerts.'
+      : 'An organisation admin needs to connect a Telegram bot.'
+  }
+  if (bot.status === 'invalid') {
+    const reason = bot.status_reason === '' ? 'Telegram rejected the token' : bot.status_reason
+    return canManage
+      ? `The Telegram bot stopped working: ${reason}. Reconnect it in Settings.`
+      : `The Telegram bot stopped working: ${reason}. An organisation admin needs to reconnect it.`
+  }
+  return null
+}
+
+/** Why a channel is not receiving alerts in the current mode; null when it is active. */
+export function channelActivityLabel(c: AlertChannel, mode: AlertBotMode): string | null {
+  if (c.active) return null
+  if (mode === 'tenant' && c.origin === 'linked') return 'belongs to the shared bot'
+  if (mode === 'shared' && c.origin === 'manual') return 'inactive in shared mode'
+  return null
+}
+
+export function detailLevelLabel(level: AlertDetailLevel): string {
+  return level === 'full' ? 'Full (includes error text)' : 'Minimal (no error text)'
 }
