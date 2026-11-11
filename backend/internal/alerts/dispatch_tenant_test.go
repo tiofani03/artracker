@@ -149,10 +149,12 @@ func TestTenantNoBotKeepsPendingThenExpires(t *testing.T) {
 	seedManualChannel(t, pool, pid, "-100111")
 	young := seedTenantIncident(t, pool, pid, time.Hour)
 	old := seedTenantIncident(t, pool, pid, 25*time.Hour)
-	// An old incident whose fire went out: only its pending recovery expires.
+	// An old incident whose fire went out and that resolved recently: its
+	// recovery ages from resolved_at, so it is held, not expired.
 	oldSent := seedTenantIncident(t, pool, pid, 25*time.Hour)
 	if _, err := pool.Exec(context.Background(),
-		`UPDATE alert_incidents SET status='resolved', notify_state='sent', recovery_notify_state='pending' WHERE id=$1`, oldSent); err != nil {
+		`UPDATE alert_incidents SET status='resolved', notify_state='sent', recovery_notify_state='pending', resolved_at=$2 WHERE id=$1`,
+		oldSent, dispatchNow.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -160,7 +162,7 @@ func TestTenantNoBotKeepsPendingThenExpires(t *testing.T) {
 
 	wantState(t, pool, young, "pending", "none", 0, dispatchNow.Add(time.Minute))
 	wantState(t, pool, old, "skipped", "none", 0, due)
-	wantState(t, pool, oldSent, "sent", "skipped", 0, due)
+	wantState(t, pool, oldSent, "sent", "pending", 0, dispatchNow.Add(time.Minute))
 	if n := len(srv.Requests()); n != 0 {
 		t.Fatalf("requests = %d, want none", n)
 	}
@@ -168,6 +170,53 @@ func TestTenantNoBotKeepsPendingThenExpires(t *testing.T) {
 	// The deferred incident is not due again before the recheck.
 	dispatch(t, s, dispatchNow.Add(30*time.Second))
 	wantState(t, pool, young, "pending", "none", 0, dispatchNow.Add(time.Minute))
+}
+
+// Without a working bot each pending stage ages from when it became pending:
+// the fire from fired_at, the recovery from resolved_at.
+func TestTenantNoBotAgesEachStage(t *testing.T) {
+	pool := testDB(t)
+	s, srv := tenantService(t, pool)
+	orgID := seedOrg(t, pool, "no-bot")
+	pid := seedOrgProject(t, pool, orgID, "proj")
+	seedManualChannel(t, pool, pid, "-100111")
+	ctx := context.Background()
+	// set seeds one incident fired age ago with the given stages; resolvedAgo
+	// < 0 leaves resolved_at NULL. notify_attempts=2 must survive untouched.
+	set := func(age time.Duration, notify, recovery string, resolvedAgo time.Duration) int64 {
+		t.Helper()
+		id := seedTenantIncident(t, pool, pid, age)
+		var resolved *time.Time
+		if resolvedAgo >= 0 {
+			r := dispatchNow.Add(-resolvedAgo)
+			resolved = &r
+		}
+		if _, err := pool.Exec(ctx, `
+UPDATE alert_incidents SET status='resolved', notify_state=$2, recovery_notify_state=$3, resolved_at=$4, notify_attempts=2
+WHERE id=$1`, id, notify, recovery, resolved); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	held := dispatchNow.Add(time.Minute)
+	a := set(72*time.Hour, "sent", "pending", time.Hour)    // (a) recovery recent: held
+	b := set(72*time.Hour, "sent", "pending", 25*time.Hour) // (b) recovery old: skipped
+	c := set(25*time.Hour, "pending", "pending", time.Hour) // (c) fire expired: both skipped
+	d := set(time.Hour, "pending", "pending", time.Minute)  // (d) fire recent: both held
+	e := set(time.Hour, "failed", "pending", time.Minute)   // (e) nobody saw the alert
+	f := set(72*time.Hour, "sent", "pending", -1)           // no resolved_at: falls back to fired_at
+
+	dispatch(t, s, dispatchNow)
+
+	wantState(t, pool, a, "sent", "pending", 2, held)
+	wantState(t, pool, b, "sent", "skipped", 2, due)
+	wantState(t, pool, c, "skipped", "skipped", 2, due)
+	wantState(t, pool, d, "pending", "pending", 2, held)
+	wantState(t, pool, e, "failed", "skipped", 2, due)
+	wantState(t, pool, f, "sent", "skipped", 2, due)
+	if n := len(srv.Requests()); n != 0 {
+		t.Fatalf("requests = %d, want none", n)
+	}
 }
 
 func TestTenantBotAddedDeliversPending(t *testing.T) {
@@ -247,6 +296,43 @@ func TestTenantUnauthorizedMarksBotInvalid(t *testing.T) {
 		t.Fatalf("an invalid bot was used again")
 	}
 	wantState(t, pool, ia1, "pending", "none", 0, dispatchNow.Add(3*time.Minute))
+}
+
+// A late 401 for the old token must not invalidate a token an admin saved
+// while that request was in flight.
+func TestTenantUnauthorizedDoesNotInvalidateReplacedToken(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	s, srv := tenantService(t, pool)
+	orgID := seedOrgWithBot(t, pool, s, "org", testBotToken)
+	pid := seedOrgProject(t, pool, orgID, "proj")
+	seedManualChannel(t, pool, pid, "-100111")
+	inc := seedTenantIncident(t, pool, pid, time.Minute)
+	srv.SetReplyForToken(testBotToken, "sendMessage", http.StatusUnauthorized,
+		`{"ok":false,"error_code":401,"description":"Unauthorized"}`)
+	srv.SetReplyForToken(testBotToken2, "getMe", http.StatusOK, `{"ok":true,"result":{"id":555666777,"username":"NewBot"}}`)
+	replaced := false
+	srv.OnRequest(func(token, method string) {
+		if token == testBotToken && method == "sendMessage" && !replaced {
+			replaced = true
+			if _, err := s.SetBot(ctx, orgID, 0, testBotToken2, ""); err != nil {
+				t.Errorf("SetBot during the 401: %v", err)
+			}
+		}
+	})
+
+	dispatch(t, s, dispatchNow)
+
+	if !replaced {
+		t.Fatal("the hook never ran")
+	}
+	if st, reason := botStatus(t, pool, orgID); st != "active" || reason != "" {
+		t.Fatalf("new bot = %q %q, want active", st, reason)
+	}
+	if r, _ := readBotRow(t, pool, orgID); r.username != "NewBot" {
+		t.Fatalf("bot username = %q", r.username)
+	}
+	wantState(t, pool, inc, "pending", "none", 0, dispatchNow.Add(time.Minute))
 }
 
 // A 401 after one channel already accepted the message settles the incident

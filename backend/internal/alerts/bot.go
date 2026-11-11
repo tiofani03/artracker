@@ -99,6 +99,10 @@ type orgBot struct {
 	tg       *Telegram
 	level    DetailLevel
 	username string
+	// sealed is the token_ciphertext this client was decrypted from, so a
+	// rejection can be pinned to that exact token. Internal: never logged,
+	// marshaled or returned outside the package.
+	sealed []byte
 }
 
 func validLevel(l DetailLevel) bool { return l == DetailMinimal || l == DetailFull }
@@ -241,7 +245,7 @@ SELECT token_ciphertext, key_id, bot_username, status, detail_level FROM alert_b
 	for i := range pt {
 		pt[i] = 0
 	}
-	return &orgBot{tg: tg, level: DetailLevel(level), username: username}, nil
+	return &orgBot{tg: tg, level: DetailLevel(level), username: username, sealed: blob}, nil
 }
 
 // LookupChat asks Telegram, through the organisation's bot, for a chat's

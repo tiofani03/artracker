@@ -151,28 +151,54 @@ func (s *Service) resolveOrg(ctx context.Context, orgs map[int64]*orgState, orgI
 }
 
 // holdWithoutBot keeps a project's notifications pending while its
-// organisation has no working bot, skipping those older than pendingMaxAge.
+// organisation has no working bot. Each stage ages from when it became
+// pending: a fire expires pendingMaxAge after fired_at, a recovery
+// pendingMaxAge after resolved_at (fired_at when unknown). A recovery whose
+// fire nobody saw (skipped or failed) is skipped, as in normal delivery. Every
+// stage still pending afterwards is rechecked after noBotRecheck.
 func (s *Service) holdWithoutBot(ctx context.Context, now time.Time, incs []pendingIncident) error {
+	ids := make([]int64, len(incs))
+	for i, inc := range incs {
+		ids[i] = inc.ID
+	}
 	cutoff := now.Add(-pendingMaxAge)
-	var expired, held []int64
-	for _, inc := range incs {
-		if inc.FiredAt.After(cutoff) {
-			held = append(held, inc.ID)
-		} else {
-			expired = append(expired, inc.ID)
+	// The fire runs first so a fire expired here also skips its recovery.
+	fires, err := s.skipStageWhere(ctx, stageFire, ids, `fired_at <= $2`, cutoff)
+	if err != nil {
+		return err
+	}
+	recoveries, err := s.skipStageWhere(ctx, stageRecovery, ids, `
+notify_state IN ('skipped', 'failed') OR (notify_state = 'sent' AND COALESCE(resolved_at, fired_at) <= $2)`, cutoff)
+	if err != nil {
+		return err
+	}
+	if len(fires)+len(recoveries) > 0 {
+		slog.Warn("alerts: notifications skipped without a working bot", "org_id", incs[0].OrgID,
+			"project_id", incs[0].ProjectID, "fire_incident_ids", fires, "recovery_incident_ids", recoveries)
+	}
+	return s.deferAll(ctx, ids, now.Add(noBotRecheck))
+}
+
+// skipStageWhere sets stage to skipped for the ids whose stage is pending and
+// that match cond ($2 is cutoff), returning their ids.
+func (s *Service) skipStageWhere(ctx context.Context, stage string, ids []int64, cond string, cutoff time.Time) ([]int64, error) {
+	rows, err := s.db.Query(ctx, `
+UPDATE alert_incidents SET `+stage+` = 'skipped'
+WHERE id = ANY($1) AND `+stage+` = 'pending' AND (`+cond+`)
+RETURNING id`, ids, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
 		}
+		out = append(out, id)
 	}
-	if len(expired) > 0 {
-		slog.Warn("alerts: notifications expired without a working bot",
-			"org_id", incs[0].OrgID, "project_id", incs[0].ProjectID, "incident_ids", expired)
-		if err := s.skipBothStages(ctx, expired); err != nil {
-			return err
-		}
-	}
-	if len(held) > 0 {
-		return s.deferAll(ctx, held, now.Add(noBotRecheck))
-	}
-	return nil
+	return out, rows.Err()
 }
 
 // skipAllPending is the Telegram-off path: nothing can be delivered.
@@ -348,7 +374,7 @@ func (s *Service) halt(ctx context.Context, now time.Time, snd sender, projectID
 	if d.unauthorized {
 		snd.org.invalid = true
 		slog.Warn("alerts: org bot token rejected; bot marked invalid", "org_id", snd.orgID)
-		if err := s.markBotInvalid(ctx, snd.orgID); err != nil {
+		if err := s.markBotInvalid(ctx, snd.orgID, snd.org.bot.sealed); err != nil {
 			return err
 		}
 		return s.deferOrg(ctx, snd.orgID, now.Add(noBotRecheck))
@@ -358,9 +384,14 @@ func (s *Service) halt(ctx context.Context, now time.Time, snd sender, projectID
 	return s.deferOrg(ctx, snd.orgID, now.Add(d.retryAfter))
 }
 
-func (s *Service) markBotInvalid(ctx context.Context, orgID int64) error {
+// markBotInvalid marks the organisation's bot invalid only while it still
+// holds the token that was rejected (sealed is the ciphertext that was
+// decrypted for the send), so a late 401 for an old token never invalidates
+// a token saved in the meantime.
+func (s *Service) markBotInvalid(ctx context.Context, orgID int64, sealed []byte) error {
 	_, err := s.db.Exec(ctx, `
-UPDATE alert_bots SET status='invalid', status_reason=$2, updated_at=now() WHERE org_id=$1`, orgID, botInvalidReason)
+UPDATE alert_bots SET status='invalid', status_reason=$2, updated_at=now()
+WHERE org_id=$1 AND token_ciphertext=$3`, orgID, botInvalidReason, sealed)
 	return err
 }
 

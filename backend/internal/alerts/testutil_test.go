@@ -128,6 +128,16 @@ type strictTelegram struct {
 	byMeth map[string]strictReply
 	byTok  map[string]strictReply   // key: token + "/" + method
 	queued map[string][]strictReply // key: method; one-shot replies, used first
+	hook   func(token, method string)
+}
+
+// OnRequest runs hook for every request after it is recorded and before the
+// reply is written, outside the server's lock, so the hook may itself call
+// the server (for example through SetBot).
+func (s *strictTelegram) OnRequest(hook func(token, method string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hook = hook
 }
 
 // errorfer is the slice of *testing.T the server reports through; the helper's
@@ -222,7 +232,11 @@ func (s *strictTelegram) handle(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		rep, ok = s.byMeth[method]
 	}
+	hook := s.hook
 	s.mu.Unlock()
+	if hook != nil {
+		hook(token, method)
+	}
 
 	if !ok {
 		switch method {
