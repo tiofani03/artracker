@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { alertApi, type AlertBot, type AlertDetailLevel } from '../api'
-import { botBadge, detailLevelLabel, validateBotToken } from './alerts/alertFormat'
+import { botBadge, detailLevelLabel, isBotEndpointMissing, normalizeBot, validateBotToken } from './alerts/alertFormat'
 
 const LEVELS: AlertDetailLevel[] = ['minimal', 'full']
 
@@ -22,6 +22,7 @@ function BotCardInner({ orgId, canManage }: Props) {
   const [level, setLevel] = useState<AlertDetailLevel>('minimal')
   const [replacing, setReplacing] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [unavailable, setUnavailable] = useState(false)
   const mounted = useRef(true)
 
   useEffect(() => {
@@ -37,11 +38,18 @@ function BotCardInner({ orgId, canManage }: Props) {
       .bot(orgId)
       .then((res) => {
         if (cancelled) return
-        setBot(res)
-        setLevel(res.detail_level)
+        const norm = normalizeBot(res)
+        if (norm === null) {
+          setUnavailable(true)
+          return
+        }
+        setBot(norm)
+        setLevel(norm.detail_level)
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(errMsg(err, 'Failed to load the Telegram bot'))
+        if (cancelled) return
+        if (isBotEndpointMissing(err)) setUnavailable(true)
+        else setError(errMsg(err, 'Failed to load the Telegram bot'))
       })
     return () => {
       cancelled = true
@@ -184,7 +192,9 @@ function BotCardInner({ orgId, canManage }: Props) {
         </p>
       )}
 
-      {bot === null ? (
+      {unavailable ? (
+        <p className="dash-empty">The Telegram bot settings are not available on this server.</p>
+      ) : bot === null ? (
         !error && <p className="dash-empty">Loading…</p>
       ) : bot.mode === 'shared' ? (
         <p className="dash-empty">The Telegram bot is managed by the server in this deployment.</p>

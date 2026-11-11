@@ -1,4 +1,4 @@
-import type { AlertBot, AlertBotMode, AlertChannel, AlertDetailLevel, AlertIncident, AlertRule, AlertRuleKind, AlertRulePatch } from '../../api'
+import type { AlertBot, AlertBotMode, AlertChannel, AlertChannelsResponse, AlertDetailLevel, AlertIncident, AlertRule, AlertRuleKind, AlertRulePatch } from '../../api'
 
 export const SPIKE_WINDOWS = [15, 30, 60, 180] as const
 
@@ -160,7 +160,7 @@ export function buildRulePatch(rule: AlertRule, draft: RuleDraft): AlertRulePatc
   return patch
 }
 
-const CHAT_ID = /^-?[0-9]{5,20}$/
+const CHAT_ID = /^-?[1-9][0-9]{4,19}$/
 const CHAT_USERNAME = /^@[A-Za-z][A-Za-z0-9_]{4,31}$/
 const BOT_TOKEN = /^[0-9]{5,15}:[A-Za-z0-9_-]{30,}$/
 
@@ -205,7 +205,7 @@ export function botBannerText(bot: AlertBot, canManage: boolean): string | null 
 
 /** Why a channel is not receiving alerts in the current mode; null when it is active. */
 export function channelActivityLabel(c: AlertChannel, mode: AlertBotMode): string | null {
-  if (c.active) return null
+  if (c.active !== false) return null
   if (mode === 'tenant' && c.origin === 'linked') return 'belongs to the shared bot'
   if (mode === 'shared' && c.origin === 'manual') return 'inactive in shared mode'
   return null
@@ -216,12 +216,12 @@ export function detailLevelLabel(level: AlertDetailLevel): string {
 }
 
 export function canShowTest(c: AlertChannel): boolean {
-  return c.active
+  return c.active !== false
 }
 
 /** Channels that actually receive alerts. */
 export function countActiveChannels(channels: AlertChannel[]): number {
-  return channels.filter((c) => c.active && c.enabled).length
+  return channels.filter((c) => c.active !== false && c.enabled).length
 }
 
 /** The shared-bot link flow exists only when the server owns the bot. */
@@ -234,4 +234,59 @@ export function botBadge(bot: AlertBot): { className: string; text: string } {
     return { className: 'badge--revoked', text: bot.status_reason === '' ? 'Invalid' : `Invalid: ${bot.status_reason}` }
   }
   return { className: 'badge--active', text: 'Active' }
+}
+
+type RawChannel = Omit<AlertChannel, 'origin' | 'destination' | 'active'> &
+  Partial<Pick<AlertChannel, 'origin' | 'destination' | 'active'>>
+export type RawChannelsResponse = Omit<AlertChannelsResponse, 'mode' | 'bot' | 'items'> & {
+  mode?: AlertBotMode
+  bot?: AlertBot
+  items: RawChannel[]
+}
+
+/**
+ * Fills the fields an older backend does not send: no mode means shared, no bot stays absent,
+ * a channel without active is active, without origin is linked, without destination is empty.
+ * A full payload is returned unchanged in value.
+ */
+export function normalizeChannelsResponse(raw: RawChannelsResponse): NormalizedChannels {
+  const mode: AlertBotMode = raw.mode ?? 'shared'
+  return {
+    ...raw,
+    mode,
+    bot: raw.bot,
+    items: raw.items.map((c) => ({
+      ...c,
+      origin: c.origin ?? 'linked',
+      destination: c.destination ?? '',
+      active: c.active ?? true,
+    })),
+  }
+}
+
+/** Like AlertChannelsResponse, but the bot is absent when the backend predates it. */
+export type NormalizedChannels = Omit<AlertChannelsResponse, 'bot'> & { bot?: AlertBot }
+
+/** The banner for a possibly absent bot. */
+export function channelsBanner(data: NormalizedChannels, canManage: boolean): string | null {
+  return data.bot ? botBannerText(data.bot, canManage) : null
+}
+
+/** The org bot response, or null when it is unusable (an older backend). */
+export function normalizeBot(raw: Partial<AlertBot> | null | undefined): AlertBot | null {
+  if (!raw || (raw.mode !== 'shared' && raw.mode !== 'tenant')) return null
+  return {
+    mode: raw.mode,
+    configured: raw.configured ?? false,
+    bot_username: raw.bot_username ?? '',
+    status: raw.status ?? '',
+    status_reason: raw.status_reason ?? '',
+    detail_level: raw.detail_level ?? 'minimal',
+    updated_at: raw.updated_at ?? null,
+  }
+}
+
+/** True for the error an older backend gives for the missing bot endpoint. */
+export function isBotEndpointMissing(err: unknown): boolean {
+  return err instanceof Error && /^404\b/.test(err.message)
 }

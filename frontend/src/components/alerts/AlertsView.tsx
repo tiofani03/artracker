@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   alertApi,
   type AlertChannel,
-  type AlertChannelsResponse,
   type AlertIncident,
   type AlertLinkCode,
   type AlertRule,
@@ -10,7 +9,6 @@ import {
 import { Link } from '../../router'
 import {
   SPIKE_WINDOWS,
-  botBannerText,
   buildRulePatch,
   canShowTest,
   channelActivityLabel,
@@ -18,7 +16,10 @@ import {
   draftFromRule,
   formatCountdown,
   incidentHeadline,
+  normalizeChannelsResponse,
   notifyLabel,
+  channelsBanner,
+  type NormalizedChannels,
   ruleDescription,
   ruleTitle,
   showLinkFlow,
@@ -56,7 +57,7 @@ type LinkState = { code: AlertLinkCode; before: AlertChannel[]; phase: LinkPhase
 const NO_CHANNELS: AlertChannel[] = []
 
 function ChannelsCard({ projectId, canManage }: Props) {
-  const [data, setData] = useState<AlertChannelsResponse | null>(null)
+  const [data, setData] = useState<NormalizedChannels | null>(null)
   const [error, setError] = useState('')
   const [link, setLink] = useState<LinkState | null>(null)
   const [now, setNow] = useState(() => Date.now())
@@ -81,7 +82,7 @@ function ChannelsCard({ projectId, canManage }: Props) {
     try {
       const res = await alertApi.channels(projectId)
       if (!mounted.current) return
-      setData(res)
+      setData(normalizeChannelsResponse(res))
       setError('')
     } catch (err) {
       if (mounted.current) setError(errMsg(err, 'Failed to load channels'))
@@ -94,7 +95,7 @@ function ChannelsCard({ projectId, canManage }: Props) {
       .channels(projectId)
       .then((res) => {
         if (cancelled) return
-        setData(res)
+        setData(normalizeChannelsResponse(res))
         setNow(Date.now())
       })
       .catch((err: unknown) => {
@@ -124,8 +125,9 @@ function ChannelsCard({ projectId, canManage }: Props) {
       try {
         const res = await alertApi.channels(projectId)
         if (cancelled) return
-        setData(res)
-        if (detectLinked(before, res.items)) {
+        const norm = normalizeChannelsResponse(res)
+        setData(norm)
+        if (detectLinked(before, norm.items)) {
           setLink((l) => (l && l.phase === 'active' ? { ...l, phase: 'connected' } : l))
         }
       } catch {
@@ -216,7 +218,7 @@ function ChannelsCard({ projectId, canManage }: Props) {
     }
   })
 
-  const banner = data ? botBannerText(data.bot, canManage) : null
+  const banner = data ? channelsBanner(data, canManage) : null
   const chatProblem = chat === '' ? null : validateChat(chat)
   const labelProblem = label === '' ? null : validateLabel(label)
   const activity = (ch: AlertChannel) => (data ? channelActivityLabel(ch, data.mode) : null)

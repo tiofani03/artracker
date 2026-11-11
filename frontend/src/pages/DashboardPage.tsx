@@ -23,7 +23,7 @@ import { browserStorage, defaultQueueOpen, readBool, writeBool } from '../replay
 import GrowthAnalyticsView from '../components/analytics/GrowthAnalyticsView'
 import CampaignsView from '../components/campaigns/CampaignsView'
 import AlertsView from '../components/alerts/AlertsView'
-import { countActiveChannels } from '../components/alerts/alertFormat'
+import { countActiveChannels, normalizeChannelsResponse } from '../components/alerts/alertFormat'
 import { navigate } from '../router'
 import { startInteractiveCapture, type LiveCaptureResult } from '../utils/liveReplayCapture'
 import { detectSessionPlatform } from '../utils/platformDetector'
@@ -657,7 +657,7 @@ function DashboardInner({
         setAlertSummary({
           projectId: alertsProjectId,
           firing: counts.firing_alerts,
-          channels: countActiveChannels(channels.items),
+          channels: countActiveChannels(normalizeChannelsResponse(channels).items),
         })
       })
       .catch(() => {
