@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/tiofani03/artracker/backend/internal/alerts"
 	"github.com/tiofani03/artracker/backend/internal/ingest"
 	"github.com/tiofani03/artracker/backend/internal/issues"
 	"github.com/tiofani03/artracker/backend/internal/symbolication"
@@ -442,7 +443,19 @@ func (h *Handler) UploadSourceMap(c *fiber.Ctx) error {
 // IssueService groups error telemetry rows into issues. It implements
 // ingest.IssueProcessor and runs inside the ingest worker pool.
 type IssueService struct {
-	db *pgxpool.Pool
+	db     *pgxpool.Pool
+	alerts IssueAlerter
+}
+
+// IssueAlerter receives a signal when an issue is new or has regressed.
+type IssueAlerter interface {
+	OnIssue(ctx context.Context, sig alerts.IssueSignal) error
+}
+
+// WithAlerter sets the alerter that is told about new and regressed issues.
+func (s *IssueService) WithAlerter(a IssueAlerter) *IssueService {
+	s.alerts = a
+	return s
 }
 
 func (h *Handler) IssueService() *IssueService {
@@ -477,24 +490,53 @@ func (s *IssueService) recordError(ctx context.Context, r ingest.TelemetryRow) e
 	fp := issues.Fingerprint(stackTrace, message, errType)
 	title := issues.Title(message)
 
-	var issueID int64
+	var (
+		issueID    int64
+		inserted   bool
+		prevStatus string
+	)
 	err := s.db.QueryRow(ctx, `
-		INSERT INTO issues(project_id, fingerprint, title, type, status, first_seen, last_seen, count)
-		VALUES ($1, $2, $3, $4, 'open', now(), now(), 1)
-		ON CONFLICT (project_id, fingerprint) DO UPDATE
-		  SET last_seen = now(),
-		      count = issues.count + 1
-		RETURNING id`,
-		r.ProjectID, fp, title, errType).Scan(&issueID)
+		WITH prev AS (SELECT status FROM issues WHERE project_id = $1 AND fingerprint = $2),
+		up AS (
+		  INSERT INTO issues(project_id, fingerprint, title, type, status, first_seen, last_seen, count)
+		  VALUES ($1, $2, $3, $4, 'open', now(), now(), 1)
+		  ON CONFLICT (project_id, fingerprint) DO UPDATE
+		    SET last_seen = now(), count = issues.count + 1,
+		        status = CASE WHEN issues.status = 'resolved' THEN 'open' ELSE issues.status END
+		  RETURNING id, (xmax = 0) AS inserted)
+		SELECT up.id, up.inserted, COALESCE((SELECT status FROM prev), '') FROM up`,
+		r.ProjectID, fp, title, errType).Scan(&issueID, &inserted, &prevStatus)
 	if err != nil {
 		return err
 	}
 
 	_, err = s.db.Exec(ctx, `
-		INSERT INTO issue_events(issue_id, session_id, user_id, stack_trace, message, breadcrumbs, device_info, release_version)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		issueID, r.SessionID, r.UserID, stackTrace, message, breadcrumbs, deviceInfo, r.ReleaseVersion)
-	return err
+		INSERT INTO issue_events(issue_id, session_id, user_id, stack_trace, message, breadcrumbs, device_info, release_version, environment)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		issueID, r.SessionID, r.UserID, stackTrace, message, breadcrumbs, deviceInfo, r.ReleaseVersion, r.Environment)
+	if err != nil {
+		return err
+	}
+
+	if s.alerts != nil {
+		var kind alerts.RuleKind
+		switch {
+		case inserted:
+			kind = alerts.KindNewIssue
+		case prevStatus == "resolved":
+			kind = alerts.KindRegression
+		}
+		if kind != "" {
+			sig := alerts.IssueSignal{
+				ProjectID: r.ProjectID, IssueID: issueID, Kind: kind, Title: title,
+				Environment: r.Environment, ReleaseVersion: r.ReleaseVersion, SessionID: r.SessionID,
+			}
+			if aerr := s.alerts.OnIssue(ctx, sig); aerr != nil {
+				slog.Error("issue alert failed", "err", aerr, "project", r.ProjectID, "issue", issueID)
+			}
+		}
+	}
+	return nil
 }
 
 // extractErrorInfo pulls the crash payload out of a telemetry row's attributes,

@@ -12,6 +12,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/tiofani03/artracker/backend/internal/alerts"
 	"github.com/tiofani03/artracker/backend/internal/auth"
 	"github.com/tiofani03/artracker/backend/internal/config"
 	"github.com/tiofani03/artracker/backend/internal/ingest"
@@ -275,5 +276,119 @@ func TestIssueDetailStatusAssignAndDemangle(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&assigned)
 	if assigned.AssignedTo == nil || assigned.AssignedTo.ID != env.userID {
 		t.Fatalf("assigned_to = %+v, want user %d", assigned.AssignedTo, env.userID)
+	}
+}
+
+type fakeAlerter struct{ sigs []alerts.IssueSignal }
+
+func (f *fakeAlerter) OnIssue(_ context.Context, sig alerts.IssueSignal) error {
+	f.sigs = append(f.sigs, sig)
+	return nil
+}
+
+func signalRow(projectID int64) ingest.TelemetryRow {
+	r := errorRow(projectID, "TypeError: boom", "at foo (app.min.js:1:1)")
+	r.Environment = "production"
+	return r
+}
+
+func TestIssueSignalsNewOnce(t *testing.T) {
+	env := newIssueEnv(t)
+	fa := &fakeAlerter{}
+	svc := (&IssueService{db: env.pool}).WithAlerter(fa)
+	rows := []ingest.TelemetryRow{signalRow(env.projectID), signalRow(env.projectID)}
+	if err := svc.ProcessRows(context.Background(), rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(fa.sigs) != 1 {
+		t.Fatalf("signals = %d, want 1", len(fa.sigs))
+	}
+	s := fa.sigs[0]
+	if s.Kind != alerts.KindNewIssue || s.Title != "TypeError: boom" || s.Environment != "production" ||
+		s.ReleaseVersion != "1.2.3" || s.SessionID != "sess_1" || s.ProjectID != env.projectID || s.IssueID == 0 {
+		t.Fatalf("signal = %+v", s)
+	}
+}
+
+func TestIssueRegressionReopens(t *testing.T) {
+	env := newIssueEnv(t)
+	ctx := context.Background()
+	fa := &fakeAlerter{}
+	svc := (&IssueService{db: env.pool}).WithAlerter(fa)
+	if err := svc.ProcessRows(ctx, []ingest.TelemetryRow{signalRow(env.projectID)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.pool.Exec(ctx, `UPDATE issues SET status='resolved' WHERE project_id=$1`, env.projectID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessRows(ctx, []ingest.TelemetryRow{signalRow(env.projectID)}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fa.sigs) != 2 || fa.sigs[1].Kind != alerts.KindRegression {
+		t.Fatalf("signals = %+v", fa.sigs)
+	}
+	var status string
+	_ = env.pool.QueryRow(ctx, `SELECT status FROM issues WHERE project_id=$1`, env.projectID).Scan(&status)
+	if status != "open" {
+		t.Fatalf("status = %s, want open", status)
+	}
+}
+
+func TestIgnoredIssueStaysSilent(t *testing.T) {
+	env := newIssueEnv(t)
+	ctx := context.Background()
+	fa := &fakeAlerter{}
+	svc := (&IssueService{db: env.pool}).WithAlerter(fa)
+	if err := svc.ProcessRows(ctx, []ingest.TelemetryRow{signalRow(env.projectID)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.pool.Exec(ctx, `UPDATE issues SET status='ignored' WHERE project_id=$1`, env.projectID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessRows(ctx, []ingest.TelemetryRow{signalRow(env.projectID)}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fa.sigs) != 1 {
+		t.Fatalf("signals = %d, want only the initial new_issue", len(fa.sigs))
+	}
+	var status string
+	_ = env.pool.QueryRow(ctx, `SELECT status FROM issues WHERE project_id=$1`, env.projectID).Scan(&status)
+	if status != "ignored" {
+		t.Fatalf("status = %s, want ignored", status)
+	}
+}
+
+func TestIssueServiceWithoutAlerterStillGroups(t *testing.T) {
+	env := newIssueEnv(t)
+	cfg := config.Config{Env: "development", JWTSecret: testSecret}
+	svc := New(env.pool, cfg, auth.NewIssuer(testSecret, time.Hour), map[string]OAuthProvider{}).IssueService()
+	rows := []ingest.TelemetryRow{signalRow(env.projectID), signalRow(env.projectID)}
+	if err := svc.ProcessRows(context.Background(), rows); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	if err := env.pool.QueryRow(context.Background(), `SELECT count FROM issues WHERE project_id=$1`, env.projectID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("count = %d, want 2", count)
+	}
+}
+
+func TestIssueEventEnvironmentStored(t *testing.T) {
+	env := newIssueEnv(t)
+	ctx := context.Background()
+	svc := &IssueService{db: env.pool}
+	r := signalRow(env.projectID)
+	r.Environment = "staging"
+	if err := svc.ProcessRows(ctx, []ingest.TelemetryRow{r}); err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	if err := env.pool.QueryRow(ctx, `SELECT e.environment FROM issue_events e JOIN issues i ON i.id=e.issue_id WHERE i.project_id=$1`, env.projectID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != "staging" {
+		t.Fatalf("environment = %q", got)
 	}
 }
