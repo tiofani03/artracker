@@ -1,16 +1,16 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestLoadPanicsWithoutJWTSecretInProduction(t *testing.T) {
-	t.Setenv("APP_ENV", "production")
+	alertsEnv(t, "production", "shared", "", "", "")
 	t.Setenv("JWT_SECRET", "")
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic when JWT_SECRET is empty in production")
-		}
-	}()
-	Load()
+	if msg := loadPanicText(t); !strings.Contains(msg, "JWT_SECRET") {
+		t.Fatalf("expected a JWT_SECRET panic in production, got %q", msg)
+	}
 }
 
 func TestLoadDevDefaults(t *testing.T) {
@@ -29,26 +29,33 @@ func TestLoadDevDefaults(t *testing.T) {
 func TestLoadRejectsWeakJWTSecretInProduction(t *testing.T) {
 	for _, secret := range []string{"short", "dummy-jwt-secret-change-me", "dev-only-secret-change-me"} {
 		t.Run(secret, func(t *testing.T) {
-			t.Setenv("APP_ENV", "production")
+			alertsEnv(t, "production", "shared", "", "", "")
 			t.Setenv("JWT_SECRET", secret)
-			defer func() {
-				if recover() == nil {
-					t.Fatalf("expected panic for weak secret %q in production", secret)
-				}
-			}()
-			Load()
+			if msg := loadPanicText(t); !strings.Contains(msg, "JWT_SECRET") {
+				t.Fatalf("expected a JWT_SECRET panic for weak secret %q, got %q", secret, msg)
+			}
 		})
 	}
 }
 
 func TestLoadAcceptsStrongJWTSecretInProduction(t *testing.T) {
-	t.Setenv("APP_ENV", "production")
+	alertsEnv(t, "production", "shared", "", "", "")
 	t.Setenv("JWT_SECRET", "0123456789abcdef0123456789abcdef-strong")
-	t.Setenv("ALERTS_BOT_MODE", "shared") // tenant mode would also demand ALERTS_MASTER_KEY
-	t.Setenv("ALERTS_MASTER_KEY", "")
-	t.Setenv("ALERTS_MASTER_KEY_FILE", "")
 	if cfg := Load(); cfg.JWTSecret == "" {
 		t.Fatal("secret dropped")
+	}
+}
+
+func TestProductionChecksJWTSecretBeforeAlertsKey(t *testing.T) {
+	alertsEnv(t, "production", "tenant", "", "", "")
+	t.Setenv("JWT_SECRET", "")
+	if msg := loadPanicText(t); !strings.Contains(msg, "JWT_SECRET") || strings.Contains(msg, "ALERTS_MASTER_KEY") {
+		t.Errorf("JWT_SECRET must be reported first, got %q", msg)
+	}
+	alertsEnv(t, "production", "tenant", "", "", "")
+	t.Setenv("JWT_SECRET", "0123456789abcdef0123456789abcdef-strong")
+	if msg := loadPanicText(t); !strings.Contains(msg, "ALERTS_MASTER_KEY") {
+		t.Errorf("expected the ALERTS_MASTER_KEY panic, got %q", msg)
 	}
 }
 

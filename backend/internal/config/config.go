@@ -136,9 +136,6 @@ func Load() Config {
 	if !masterKeyIDPattern.MatchString(cfg.AlertsMasterKeyID) {
 		panic("ALERTS_MASTER_KEY_ID must match [A-Za-z0-9._-]{1,32}")
 	}
-	if cfg.Env == "production" && cfg.AlertsBotMode == "tenant" && cfg.AlertsMasterKey == nil {
-		panic("ALERTS_MASTER_KEY (or ALERTS_MASTER_KEY_FILE) must be set when APP_ENV=production and ALERTS_BOT_MODE=tenant; generate one with: openssl rand -base64 32")
-	}
 
 	if cfg.R2Endpoint == "" && cfg.R2AccountID != "" {
 		cfg.R2Endpoint = "https://" + cfg.R2AccountID + ".r2.cloudflarestorage.com"
@@ -150,6 +147,10 @@ func Load() Config {
 		if len(cfg.JWTSecret) < 32 || knownDummySecrets[cfg.JWTSecret] {
 			panic("JWT_SECRET must be a random string of at least 32 characters (placeholder values are rejected)")
 		}
+	}
+	// After the JWT checks so operators see that diagnostic first.
+	if cfg.Env == "production" && cfg.AlertsBotMode == "tenant" && cfg.AlertsMasterKey == nil {
+		panic("ALERTS_MASTER_KEY (or ALERTS_MASTER_KEY_FILE) must be set when APP_ENV=production and ALERTS_BOT_MODE=tenant; generate one with: openssl rand -base64 32")
 	}
 	if cfg.JWTSecret == "" {
 		cfg.JWTSecret = "dev-only-secret-change-me"
