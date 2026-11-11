@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import type { AlertIncident, AlertRule } from '../../api'
+import type { AlertChannel, AlertIncident, AlertRule } from '../../api'
 import {
   buildRulePatch,
+  countEnabledChannels,
+  detectLinked,
   draftFromRule,
   formatBaseline,
   formatCountdown,
   incidentHeadline,
+  notifyLabel,
   ruleDescription,
   ruleTitle,
   timeAgo,
@@ -165,5 +168,61 @@ describe('buildRulePatch', () => {
   it('ignores spike fields for other kinds', () => {
     const r = rule({ kind: 'new_issue' })
     expect(buildRulePatch(r, { ...draftFromRule(r), minCount: '99' })).toEqual({})
+  })
+})
+
+describe('notifyLabel', () => {
+  it('labels the undelivered states', () => {
+    expect(notifyLabel('pending')).toBe('sending…')
+    expect(notifyLabel('skipped')).toBe('not sent (no channel or Telegram off)')
+    expect(notifyLabel('failed')).toBe('delivery failed')
+  })
+  it('hides sent and unknown states', () => {
+    expect(notifyLabel('sent')).toBeNull()
+    expect(notifyLabel('none')).toBeNull()
+    expect(notifyLabel('')).toBeNull()
+  })
+})
+
+function channel(id: number, enabled = true): AlertChannel {
+  return {
+    id,
+    kind: 'telegram',
+    title: `Chat ${id}`,
+    chat_type: 'group',
+    enabled,
+    disabled_reason: '',
+    last_sent_at: null,
+    last_error: '',
+    created_at: '2026-11-11T00:00:00Z',
+  }
+}
+
+describe('detectLinked', () => {
+  it('is true when a new channel appears', () => {
+    expect(detectLinked([channel(1)], [channel(1), channel(2)])).toBe(true)
+  })
+  it('is false for the same list', () => {
+    expect(detectLinked([channel(1), channel(2, false)], [channel(1), channel(2, false)])).toBe(false)
+  })
+  it('is true when a disabled channel is re-enabled by re-linking', () => {
+    expect(detectLinked([channel(1, false)], [channel(1, true)])).toBe(true)
+  })
+  it('is false when a channel is disabled', () => {
+    expect(detectLinked([channel(1, true)], [channel(1, false)])).toBe(false)
+  })
+  it('is true for a first channel', () => {
+    expect(detectLinked([], [channel(1)])).toBe(true)
+  })
+  it('is false for a removal only', () => {
+    expect(detectLinked([channel(1), channel(2)], [channel(1)])).toBe(false)
+  })
+})
+
+describe('countEnabledChannels', () => {
+  it('counts only enabled channels', () => {
+    expect(countEnabledChannels([])).toBe(0)
+    expect(countEnabledChannels([channel(1), channel(2, false), channel(3)])).toBe(2)
+    expect(countEnabledChannels([channel(1, false)])).toBe(0)
   })
 })

@@ -11,9 +11,11 @@ import { Link } from '../../router'
 import {
   SPIKE_WINDOWS,
   buildRulePatch,
+  detectLinked,
   draftFromRule,
   formatCountdown,
   incidentHeadline,
+  notifyLabel,
   ruleDescription,
   ruleTitle,
   timeAgo,
@@ -41,7 +43,9 @@ export default function AlertsView({ projectId, canManage }: Props) {
 }
 
 type LinkPhase = 'active' | 'connected' | 'expired'
-type LinkState = { code: AlertLinkCode; baseCount: number; phase: LinkPhase }
+// before: the channels when the code was created, to tell when the code was used
+type LinkState = { code: AlertLinkCode; before: AlertChannel[]; phase: LinkPhase }
+const NO_CHANNELS: AlertChannel[] = []
 
 function ChannelsCard({ projectId, canManage }: Props) {
   const [data, setData] = useState<AlertChannelsResponse | null>(null)
@@ -89,7 +93,7 @@ function ChannelsCard({ projectId, canManage }: Props) {
 
   const linkActive = link?.phase === 'active'
   const expiresAt = link ? new Date(link.code.expires_at).getTime() : 0
-  const baseCount = link?.baseCount ?? 0
+  const before = link?.before ?? NO_CHANNELS
 
   // Countdown and poll run only while a code is active; both are cleared on unmount, project
   // change (remount), and as soon as the phase leaves 'active'.
@@ -107,7 +111,7 @@ function ChannelsCard({ projectId, canManage }: Props) {
         const res = await alertApi.channels(projectId)
         if (cancelled) return
         setData(res)
-        if (res.items.length > baseCount) {
+        if (detectLinked(before, res.items)) {
           setLink((l) => (l && l.phase === 'active' ? { ...l, phase: 'connected' } : l))
         }
       } catch {
@@ -119,7 +123,7 @@ function ChannelsCard({ projectId, canManage }: Props) {
       clearInterval(tick)
       clearInterval(poll)
     }
-  }, [linkActive, expiresAt, baseCount, projectId])
+  }, [linkActive, expiresAt, before, projectId])
 
   const connect = async () => {
     setCreating(true)
@@ -128,7 +132,7 @@ function ChannelsCard({ projectId, canManage }: Props) {
       const code = await alertApi.createLinkCode(projectId)
       if (!mounted.current) return
       setNow(Date.now())
-      setLink({ code, baseCount: data?.items.length ?? 0, phase: 'active' })
+      setLink({ code, before: data?.items ?? NO_CHANNELS, phase: 'active' })
     } catch (err) {
       if (mounted.current) setError(errMsg(err, 'Failed to create link code'))
     } finally {
@@ -340,6 +344,7 @@ function RuleRow({
   const set = (p: Partial<RuleDraft>) => setDraft((d) => ({ ...d, ...p }))
   const title = ruleTitle(rule.kind)
   const spike = rule.kind === 'issue_spike'
+  const envHelpId = `alert-rule-env-help-${rule.kind}`
 
   const save = async () => {
     setSaving(true)
@@ -377,6 +382,7 @@ function RuleRow({
             type="text"
             className="dash-input"
             aria-label={`${title} environment`}
+            aria-describedby={envHelpId}
             placeholder="all environments"
             maxLength={128}
             value={draft.environment}
@@ -432,6 +438,9 @@ function RuleRow({
             </>
           )}
         </div>
+        <p id={envHelpId} className="dash-list__sub">
+          Must match the environment your SDK reports (default: production). Leave blank to alert on every environment.
+        </p>
         {problem && <p className="dash-error">{problem}</p>}
         {saveError && (
           <p className="dash-error" role="alert">
@@ -520,25 +529,33 @@ function IncidentsCard({ projectId }: { projectId: number }) {
         <p className="dash-empty">No alerts yet.</p>
       ) : (
         <div className="dash-list">
-          {items.map((i) => (
-            <div key={i.id} className="dash-list__row">
-              <div className="dash-list__main">
-                <div className="dash-list__top">
-                  <span className={`badge ${i.status === 'firing' ? 'badge--exception' : 'badge--revoked'}`}>
-                    {ruleTitle(i.rule_kind)}
-                  </span>
-                  {i.environment !== '' && <span className="dash-code">{i.environment}</span>}
-                  {i.release_version !== '' && <span className="dash-code">{i.release_version}</span>}
-                  <span className="dash-code">{timeAgo(i.fired_at, now)}</span>
+          {items.map((i) => {
+            const delivery = notifyLabel(i.notify_state)
+            return (
+              <div key={i.id} className="dash-list__row">
+                <div className="dash-list__main">
+                  <div className="dash-list__top">
+                    <span className={`badge ${i.status === 'firing' ? 'badge--exception' : 'badge--revoked'}`}>
+                      {ruleTitle(i.rule_kind)}
+                    </span>
+                    {delivery && (
+                      <span className={`badge ${i.notify_state === 'pending' ? 'badge--preview' : 'badge--revoked'}`}>
+                        {delivery}
+                      </span>
+                    )}
+                    {i.environment !== '' && <span className="dash-code">{i.environment}</span>}
+                    {i.release_version !== '' && <span className="dash-code">{i.release_version}</span>}
+                    <span className="dash-code">{timeAgo(i.fired_at, now)}</span>
+                  </div>
+                  <p className="dash-list__title">{incidentHeadline(i)}</p>
+                  {i.rule_kind === 'issue_spike' && <p className="dash-list__sub">{i.title}</p>}
                 </div>
-                <p className="dash-list__title">{incidentHeadline(i)}</p>
-                {i.rule_kind === 'issue_spike' && <p className="dash-list__sub">{i.title}</p>}
+                <Link to={`/dashboard/issues/${i.issue_id}`} className="dash-btn">
+                  Open issue
+                </Link>
               </div>
-              <Link to={`/dashboard/issues/${i.issue_id}`} className="dash-btn">
-                Open issue
-              </Link>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </section>

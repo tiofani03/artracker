@@ -1,4 +1,4 @@
-import type { AlertIncident, AlertRule, AlertRuleKind, AlertRulePatch } from '../../api'
+import type { AlertChannel, AlertIncident, AlertRule, AlertRuleKind, AlertRulePatch } from '../../api'
 
 export const SPIKE_WINDOWS = [15, 30, 60, 180] as const
 
@@ -76,6 +76,33 @@ export function incidentHeadline(incident: AlertIncident): string {
     return `${count} events in ${window_minutes} min (usual ${formatBaseline(baseline)})`
   }
   return incident.title
+}
+
+/** Delivery state worth showing next to an incident; null when it was sent or the state is unknown. */
+export function notifyLabel(state: string): string | null {
+  switch (state) {
+    case 'pending':
+      return 'sending…'
+    case 'skipped':
+      return 'not sent (no channel or Telegram off)'
+    case 'failed':
+      return 'delivery failed'
+    default:
+      return null
+  }
+}
+
+/**
+ * True when a link code was used: a channel id appeared, or a channel that was disabled is
+ * enabled again (re-linking an existing chat re-enables it instead of adding a row).
+ */
+export function detectLinked(before: AlertChannel[], after: AlertChannel[]): boolean {
+  const was = new Map(before.map((c) => [c.id, c.enabled]))
+  return after.some((c) => !was.has(c.id) || (was.get(c.id) === false && c.enabled))
+}
+
+export function countEnabledChannels(channels: AlertChannel[]): number {
+  return channels.filter((c) => c.enabled).length
 }
 
 export function timeAgo(iso: string, now: Date): string {
