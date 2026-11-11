@@ -703,7 +703,38 @@ var openAPISpecBytes = []byte(`{
           { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }
         ],
         "responses": {
-          "200": { "description": "{telegram: {configured, bot_username}, items: Channel[]}; the chat id is never returned" }
+          "200": { "description": "{telegram: {configured, bot_username}, mode: tenant|shared, bot: {configured, bot_username, status, status_reason, detail_level, updated_at, mode} (the project's organisation; configured false in shared mode), items: Channel[]}. Each channel has origin (linked|manual), destination (the chat of a manual channel, empty for linked) and active (linked channels are active in shared mode, manual ones in tenant mode); a linked channel's chat id is never returned" }
+        }
+      },
+      "post": {
+        "summary": "Add a Manual Chat Channel (admin, tenant mode)",
+        "description": "Adds a chat delivered through the organisation's own bot. chat is a numeric chat id (^-?[1-9][0-9]{4,19}$) or a public @username (^@[A-Za-z][A-Za-z0-9_]{4,31}$); label is 1 to 80 Unicode code points and not only whitespace. getChat is tried once (5 s) to fill chat_type; when it fails the channel is still saved and warning is set.",
+        "operationId": "createAlertChannel",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["chat", "label"],
+                "additionalProperties": false,
+                "properties": {
+                  "chat": { "type": "string" },
+                  "label": { "type": "string", "minLength": 1, "maxLength": 80 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "The channel (origin manual) plus an optional warning: could not verify the chat (is the bot a member?)" },
+          "400": { "description": "invalid JSON body, invalid chat, invalid label, or manual channels are only available in tenant mode" },
+          "409": { "description": "connect a Telegram bot first, or chat already added" }
         }
       }
     },
@@ -718,6 +749,7 @@ var openAPISpecBytes = []byte(`{
         ],
         "responses": {
           "201": { "description": "Link code with group_link and private_link, valid 15 minutes" },
+          "404": { "description": "link flow is disabled in tenant mode" },
           "503": { "description": "Telegram is not configured on this server" }
         }
       }
@@ -763,10 +795,104 @@ var openAPISpecBytes = []byte(`{
           { "name": "channelID", "in": "path", "required": true, "schema": { "type": "integer" } }
         ],
         "responses": {
-          "204": { "description": "Test message sent" },
-          "404": { "description": "Channel not found" },
+          "204": { "description": "Test message sent (tenant mode: through the organisation's bot, at its detail level)" },
+          "404": { "description": "Channel not found, or not active in this bot mode" },
+          "409": { "description": "connect a Telegram bot first (tenant mode, no working bot)" },
           "502": { "description": "Telegram rejected the test message" },
           "503": { "description": "Telegram is not configured on this server" }
+        }
+      }
+    },
+    "/orgs/{orgID}/alerts/telegram-bot": {
+      "get": {
+        "summary": "Get the Organisation's Telegram Bot",
+        "description": "Any organisation member. Never returns the token. In shared mode configured is false and mode is shared.",
+        "operationId": "getOrgTelegramBot",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "orgID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "{configured, bot_username, status (active|invalid|empty), status_reason, detail_level (minimal|full), updated_at, mode (tenant|shared)}" },
+          "404": { "description": "Organization not found (or not a member)" }
+        }
+      },
+      "put": {
+        "summary": "Connect or Replace the Organisation's Telegram Bot (admin)",
+        "description": "Validates the token with getMe and stores it encrypted. The token can never be read back. detail_level is optional (a new bot defaults to minimal; a replaced bot keeps its level).",
+        "operationId": "putOrgTelegramBot",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "orgID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["token"],
+                "additionalProperties": false,
+                "properties": {
+                  "token": { "type": "string", "maxLength": 256, "writeOnly": true },
+                  "detail_level": { "type": "string", "enum": ["minimal", "full"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "The bot as GET shows it" },
+          "400": { "description": "invalid JSON body, invalid bot token, or invalid detail level" },
+          "403": { "description": "Insufficient role" },
+          "404": { "description": "tenant bots are disabled in this deployment" },
+          "502": { "description": "could not reach Telegram" },
+          "503": { "description": "alerts master key is not configured" }
+        }
+      },
+      "patch": {
+        "summary": "Change the Bot's Detail Level (admin)",
+        "operationId": "patchOrgTelegramBot",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "orgID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["detail_level"],
+                "additionalProperties": false,
+                "properties": {
+                  "detail_level": { "type": "string", "enum": ["minimal", "full"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "The bot as GET shows it" },
+          "400": { "description": "invalid JSON body or invalid detail level" },
+          "404": { "description": "no bot configured, or tenant bots are disabled in this deployment" }
+        }
+      },
+      "delete": {
+        "summary": "Remove the Organisation's Telegram Bot (admin)",
+        "description": "Idempotent. The organisation's manual channels are paused until a bot is connected again.",
+        "operationId": "deleteOrgTelegramBot",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "orgID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "204": { "description": "Bot removed (or there was none)" },
+          "404": { "description": "tenant bots are disabled in this deployment" }
         }
       }
     },

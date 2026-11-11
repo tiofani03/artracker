@@ -138,17 +138,22 @@ func panicClass(r any) string {
 }
 
 // SendTest sends the test message to one channel of the project. A disabled
-// channel may still be tested. Bookkeeping matches regular delivery.
+// channel may still be tested. Bookkeeping matches regular delivery. Only a
+// channel active in the current bot mode can be tested: linked channels
+// through the shared bot, manual channels through the organisation's bot.
+// Any other channel, or one of another project, is ErrChannelNotFound.
 func (s *Service) SendTest(ctx context.Context, projectID, channelID int64) error {
-	if !s.TelegramConfigured() {
+	tenant := s.mode == ModeTenant
+	if !tenant && !s.TelegramConfigured() {
 		return ErrTelegramDisabled
 	}
-	var chatID, orgID int64
-	var name string
+	var origin, destination, name string
+	var chatID *int64
+	var orgID int64
 	err := s.db.QueryRow(ctx, `
-SELECT c.telegram_chat_id, p.org_id, p.name
+SELECT c.origin, c.destination, c.telegram_chat_id, p.org_id, p.name
 FROM alert_channels c JOIN projects p ON p.id = c.project_id
-WHERE c.id = $1 AND c.project_id = $2 AND c.telegram_chat_id IS NOT NULL`, channelID, projectID).Scan(&chatID, &orgID, &name)
+WHERE c.id = $1 AND c.project_id = $2`, channelID, projectID).Scan(&origin, &destination, &chatID, &orgID, &name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrChannelNotFound
 	}
@@ -156,11 +161,37 @@ WHERE c.id = $1 AND c.project_id = $2 AND c.telegram_chat_id IS NOT NULL`, chann
 		return err
 	}
 	mc := MessageContext{ProjectName: name, OrgID: orgID, ProjectID: projectID, PublicURL: s.publicURL}
-	sendErr := s.n.SendMessage(ctx, strconv.FormatInt(chatID, 10), FormatTest(mc))
+
+	var n Notifier
+	var dest string
+	var bot *orgBot
+	switch {
+	case tenant && origin == originManual && destination != "":
+		if bot, err = s.workingBot(ctx, orgID); err != nil {
+			return err
+		}
+		if bot == nil {
+			return ErrBotNotFound
+		}
+		n, dest, mc.Detail = bot.tg, destination, bot.level
+	case !tenant && origin == originLinked && chatID != nil:
+		n, dest = s.n, strconv.FormatInt(*chatID, 10)
+	default:
+		return ErrChannelNotFound
+	}
+
+	sendErr := n.SendMessage(ctx, dest, FormatTest(mc))
 	switch {
 	case sendErr == nil:
 		return s.markChannelSent(ctx, channelID, time.Now())
 	case ctx.Err() != nil:
+		return sendErr
+	case bot != nil && errors.Is(sendErr, ErrUnauthorized):
+		// The organisation's token, not this channel, is at fault.
+		slog.Warn("alerts: org bot token rejected by a test message; bot marked invalid", "org_id", orgID)
+		if err := s.markBotInvalid(ctx, orgID, bot.sealed); err != nil {
+			return err
+		}
 		return sendErr
 	case errors.Is(sendErr, ErrChatForbidden):
 		if err := s.disableChannelForbidden(ctx, channelID); err != nil {

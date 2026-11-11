@@ -88,7 +88,7 @@ func scanBotView(row pgx.Row) (BotView, error) {
 		return BotView{}, err
 	}
 	v.Configured = true
-	v.DetailLevel = DetailLevel(level)
+	v.DetailLevel = levelFromDB(level)
 	v.UpdatedAt = &updated
 	return v, nil
 }
@@ -106,6 +106,15 @@ type orgBot struct {
 }
 
 func validLevel(l DetailLevel) bool { return l == DetailMinimal || l == DetailFull }
+
+// levelFromDB maps a stored detail level to the one messages use. Anything
+// but exactly "full" is minimal, so a damaged value fails closed on privacy.
+func levelFromDB(s string) DetailLevel {
+	if s == string(DetailFull) {
+		return DetailFull
+	}
+	return DetailMinimal
+}
 
 // BotStatus reports the organisation's bot. Any member may call it; nothing is
 // decrypted. In shared mode it is the zero view.
@@ -245,7 +254,7 @@ SELECT token_ciphertext, key_id, bot_username, status, detail_level FROM alert_b
 	for i := range pt {
 		pt[i] = 0
 	}
-	return &orgBot{tg: tg, level: DetailLevel(level), username: username, sealed: blob}, nil
+	return &orgBot{tg: tg, level: levelFromDB(level), username: username, sealed: blob}, nil
 }
 
 // LookupChat asks Telegram, through the organisation's bot, for a chat's

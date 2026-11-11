@@ -137,10 +137,15 @@ func validSpikeWindow(m int) bool {
 	return m == 15 || m == 30 || m == 60 || m == 180
 }
 
-// channelJSON deliberately omits the Telegram chat id.
+// channelJSON deliberately omits the Telegram chat id of a linked channel.
+// Destination is the admin-typed chat of a manual channel ("" for linked);
+// Active is derived from the bot mode (see applyMode).
 type channelJSON struct {
 	ID             int64      `json:"id"`
 	Kind           string     `json:"kind"`
+	Origin         string     `json:"origin"`
+	Destination    string     `json:"destination"`
+	Active         bool       `json:"active"`
 	Title          string     `json:"title"`
 	ChatType       string     `json:"chat_type"`
 	Enabled        bool       `json:"enabled"`
@@ -150,13 +155,28 @@ type channelJSON struct {
 	CreatedAt      time.Time  `json:"created_at"`
 }
 
-const channelCols = `id, kind, title, chat_type, enabled, disabled_reason, last_sent_at, last_error, created_at`
+// channelCols never includes telegram_chat_id, which is NULL for manual
+// channels and is not part of the JSON.
+const channelCols = `id, kind, origin, destination, title, chat_type, enabled, disabled_reason, last_sent_at, last_error, created_at`
 
 func scanChannel(row pgx.Row) (channelJSON, error) {
 	var ch channelJSON
-	err := row.Scan(&ch.ID, &ch.Kind, &ch.Title, &ch.ChatType, &ch.Enabled, &ch.DisabledReason,
-		&ch.LastSentAt, &ch.LastError, &ch.CreatedAt)
+	err := row.Scan(&ch.ID, &ch.Kind, &ch.Origin, &ch.Destination, &ch.Title, &ch.ChatType, &ch.Enabled,
+		&ch.DisabledReason, &ch.LastSentAt, &ch.LastError, &ch.CreatedAt)
 	return ch, err
+}
+
+// applyMode derives Active (linked channels work in shared mode, manual ones
+// in tenant mode) and hides the destination of linked channels.
+func (ch *channelJSON) applyMode(mode alerts.BotMode) {
+	if ch.Origin != originManual {
+		ch.Destination = ""
+	}
+	if mode == alerts.ModeTenant {
+		ch.Active = ch.Origin == originManual
+	} else {
+		ch.Active = ch.Origin == originLinked
+	}
 }
 
 // channelIDParam parses :channelID; anything but a positive integer is "not found".
@@ -168,11 +188,13 @@ func channelIDParam(c *fiber.Ctx) (int64, error) {
 	return id, nil
 }
 
-// ListAlertChannels returns the project's channels plus whether Telegram is available.
+// ListAlertChannels returns the project's channels, the bot mode, the
+// organisation's bot and (shared mode) whether the shared bot is available.
 func (h *Handler) ListAlertChannels(c *fiber.Ctx) error {
 	projectID := c.Locals("projectID").(int64)
 	ctx, cancel := context.WithTimeout(c.Context(), alertQueryBudget)
 	defer cancel()
+	mode := h.alertsMode()
 
 	rows, err := h.db.Query(ctx, `SELECT `+channelCols+` FROM alert_channels WHERE project_id = $1
 		ORDER BY created_at ASC, id ASC`, projectID)
@@ -186,22 +208,37 @@ func (h *Handler) ListAlertChannels(c *fiber.Ctx) error {
 		if err != nil {
 			return err
 		}
+		ch.applyMode(mode)
 		items = append(items, ch)
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	rows.Close()
 	tg := fiber.Map{"configured": false, "bot_username": ""}
 	if h.alertsSvc != nil {
 		tg = fiber.Map{"configured": h.alertsSvc.TelegramConfigured(), "bot_username": h.alertsSvc.BotUsername()}
 	}
-	return c.JSON(fiber.Map{"telegram": tg, "items": items})
+	bot := botJSON{Mode: mode}
+	if mode == alerts.ModeTenant {
+		orgID, err := h.projectOrg(ctx, projectID)
+		if err != nil {
+			return err
+		}
+		if bot, err = h.orgBotJSON(ctx, orgID); err != nil {
+			return err
+		}
+	}
+	return c.JSON(fiber.Map{"telegram": tg, "mode": mode, "bot": bot, "items": items})
 }
 
 // CreateAlertLinkCode issues a short-lived code that binds a Telegram chat to the project.
 func (h *Handler) CreateAlertLinkCode(c *fiber.Ctx) error {
 	if h.alertsSvc == nil {
 		return fiber.NewError(fiber.StatusServiceUnavailable, errTelegramOff)
+	}
+	if h.alertsSvc.Mode() == alerts.ModeTenant {
+		return fiber.NewError(fiber.StatusNotFound, "link flow is disabled in tenant mode")
 	}
 	projectID := c.Locals("projectID").(int64)
 	userID, _ := c.Locals("userID").(int64)
@@ -245,6 +282,7 @@ RETURNING `+channelCols, id, projectID, *in.Enabled))
 	if err != nil {
 		return err
 	}
+	ch.applyMode(h.alertsMode())
 	return c.JSON(ch)
 }
 
@@ -267,7 +305,9 @@ func (h *Handler) DeleteAlertChannel(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-// TestAlertChannel sends a test message to one channel. Telegram's error text is never echoed.
+// TestAlertChannel sends a test message to one channel, through the shared
+// bot or (tenant mode) the organisation's bot. Telegram's error text is never
+// echoed.
 func (h *Handler) TestAlertChannel(c *fiber.Ctx) error {
 	projectID := c.Locals("projectID").(int64)
 	id, err := channelIDParam(c)
@@ -285,6 +325,8 @@ func (h *Handler) TestAlertChannel(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusNoContent)
 	case errors.Is(err, alerts.ErrChannelNotFound):
 		return fiber.NewError(fiber.StatusNotFound, "channel not found")
+	case errors.Is(err, alerts.ErrBotNotFound):
+		return fiber.NewError(fiber.StatusConflict, errConnectBot)
 	case errors.Is(err, alerts.ErrTelegramDisabled):
 		return fiber.NewError(fiber.StatusServiceUnavailable, errTelegramOff)
 	default:
