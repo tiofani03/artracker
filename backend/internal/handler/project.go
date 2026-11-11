@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/tiofani03/artracker/backend/internal/alerts"
 	"github.com/tiofani03/artracker/backend/internal/auth"
 )
 
@@ -78,10 +80,7 @@ func (h *Handler) CreateProject(c *fiber.Ctx) error {
 
 	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
 	defer cancel()
-	var p Project
-	err := scanProject(h.db.QueryRow(ctx,
-		`INSERT INTO projects(org_id, name, slug, platform) VALUES ($1, $2, $3, $4) RETURNING `+projectColumns,
-		c.Locals("orgID"), name, slug, in.Platform), &p)
+	p, err := h.insertProject(ctx, c.Locals("orgID"), name, slug, in.Platform, seedAlertRules)
 	if isUniqueViolation(err) {
 		return errSlugTaken
 	}
@@ -89,6 +88,35 @@ func (h *Handler) CreateProject(c *fiber.Ctx) error {
 		return err
 	}
 	return c.Status(fiber.StatusCreated).JSON(p)
+}
+
+// seedAlertRules creates the default alert rules of a new project.
+func seedAlertRules(ctx context.Context, tx pgx.Tx, projectID int64) error {
+	_, err := tx.Exec(ctx, alerts.SeedRulesSQL, projectID)
+	return err
+}
+
+// insertProject inserts the project and runs seed in one transaction, so a
+// project never exists without its default alert rules (it would never alert,
+// and a retry would hit a slug conflict).
+func (h *Handler) insertProject(ctx context.Context, orgID any, name, slug, platform string,
+	seed func(context.Context, pgx.Tx, int64) error) (Project, error) {
+	var p Project
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		return p, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
+	err = scanProject(tx.QueryRow(ctx,
+		`INSERT INTO projects(org_id, name, slug, platform) VALUES ($1, $2, $3, $4) RETURNING `+projectColumns,
+		orgID, name, slug, platform), &p)
+	if err != nil {
+		return p, err
+	}
+	if err := seed(ctx, tx, p.ID); err != nil {
+		return p, fmt.Errorf("seed alert rules for project %d: %w", p.ID, err)
+	}
+	return p, tx.Commit(ctx)
 }
 
 var errProjectNotFound = fiber.NewError(fiber.StatusNotFound, "project not found")

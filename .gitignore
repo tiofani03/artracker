@@ -12,3 +12,6 @@ bin/
 .superpowers/
 .replay-data/
 /graphify-out/
+
+# Local implementation plans (not pushed)
+docs/superpowers/plans/

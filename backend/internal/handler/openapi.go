@@ -350,7 +350,7 @@ var openAPISpecBytes = []byte(`{
           { "name": "sessionID", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
-          "200": { "description": "{ interval_ms, device{ram_mb,cores,refresh_hz}, metrics[], samples[{t,cpu,mem_mb,fps,jank,frozen,threads,battery,thermal}], downsampled }" },
+          "200": { "description": "{ interval_ms, device{ram_mb,storage_mb,os_version,cores,refresh_hz}, metrics[], samples[{t,cpu,mem_mb,fps,jank,frozen,threads,battery,thermal,ram_free_mb,storage_free_mb,net}], downsampled }" },
           "400": { "description": "Invalid session id" }
         }
       }
@@ -659,6 +659,257 @@ var openAPISpecBytes = []byte(`{
         ],
         "responses": {
           "200": { "description": "List of artifacts for the release" }
+        }
+      }
+    },
+    "/projects/{projectID}/alerts/rules": {
+      "get": {
+        "summary": "List Alert Rules",
+        "operationId": "listAlertRules",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "{items: Rule[]} ordered new_issue, regression, issue_spike" }
+        }
+      }
+    },
+    "/projects/{projectID}/alerts/rules/{kind}": {
+      "patch": {
+        "summary": "Update an Alert Rule (admin)",
+        "operationId": "updateAlertRule",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "kind", "in": "path", "required": true, "schema": { "type": "string", "enum": ["new_issue", "regression", "issue_spike"] } }
+        ],
+        "responses": {
+          "200": { "description": "The updated rule" },
+          "400": { "description": "Invalid value, empty body, or spike field on a non-spike rule" },
+          "404": { "description": "Unknown rule kind" }
+        }
+      }
+    },
+    "/projects/{projectID}/alerts/channels": {
+      "get": {
+        "summary": "List Alert Channels",
+        "operationId": "listAlertChannels",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "{telegram: {configured, bot_username}, mode: tenant|shared, bot: {configured, bot_username, status, status_reason, detail_level, updated_at, mode} (the project's organisation; configured false in shared mode), items: Channel[]}. Each channel has origin (linked|manual), destination (the chat of a manual channel, empty for linked) and active (linked channels are active in shared mode, manual ones in tenant mode); a linked channel's chat id is never returned" }
+        }
+      },
+      "post": {
+        "summary": "Add a Manual Chat Channel (admin, tenant mode)",
+        "description": "Adds a chat delivered through the organisation's own bot. chat is a numeric chat id (^-?[1-9][0-9]{4,19}$) or a public @username (^@[A-Za-z][A-Za-z0-9_]{4,31}$); label is 1 to 80 Unicode code points, not only whitespace, on one line with no control characters. Telegram is not contacted: the channel is saved with chat_type empty (the platform only ever calls sendMessage and getMe).",
+        "operationId": "createAlertChannel",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["chat", "label"],
+                "additionalProperties": false,
+                "properties": {
+                  "chat": { "type": "string" },
+                  "label": { "type": "string", "minLength": 1, "maxLength": 80 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "The channel (origin manual, chat_type empty)" },
+          "400": { "description": "invalid JSON body, invalid chat, invalid label, or manual channels are only available in tenant mode" },
+          "409": { "description": "connect a Telegram bot first, or chat already added" }
+        }
+      }
+    },
+    "/projects/{projectID}/alerts/channels/link-code": {
+      "post": {
+        "summary": "Create a Telegram Link Code (admin)",
+        "operationId": "createAlertLinkCode",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "201": { "description": "Link code with group_link and private_link, valid 15 minutes" },
+          "404": { "description": "link flow is disabled in tenant mode" },
+          "503": { "description": "Telegram is not configured on this server" }
+        }
+      }
+    },
+    "/projects/{projectID}/alerts/channels/{channelID}": {
+      "patch": {
+        "summary": "Enable or Disable a Channel (admin)",
+        "operationId": "updateAlertChannel",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "channelID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "The updated channel; enabling clears disabled_reason" },
+          "404": { "description": "Channel not found" }
+        }
+      },
+      "delete": {
+        "summary": "Delete a Channel (admin)",
+        "operationId": "deleteAlertChannel",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "channelID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "204": { "description": "Channel deleted" },
+          "404": { "description": "Channel not found" }
+        }
+      }
+    },
+    "/projects/{projectID}/alerts/channels/{channelID}/test": {
+      "post": {
+        "summary": "Send a Test Message (admin)",
+        "operationId": "testAlertChannel",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "channelID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "204": { "description": "Test message sent (tenant mode: through the organisation's bot, at its detail level)" },
+          "404": { "description": "Channel not found, or not active in this bot mode" },
+          "409": { "description": "connect a Telegram bot first (tenant mode, no working bot)" },
+          "502": { "description": "Telegram rejected the test message" },
+          "503": { "description": "Telegram is not configured on this server" }
+        }
+      }
+    },
+    "/orgs/{orgID}/alerts/telegram-bot": {
+      "get": {
+        "summary": "Get the Organisation's Telegram Bot",
+        "description": "Any organisation member. Never returns the token. In shared mode configured is false and mode is shared.",
+        "operationId": "getOrgTelegramBot",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "orgID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "{configured, bot_username, status (active|invalid|empty), status_reason, detail_level (minimal|full), updated_at, mode (tenant|shared)}" },
+          "404": { "description": "Organization not found (or not a member)" }
+        }
+      },
+      "put": {
+        "summary": "Connect or Replace the Organisation's Telegram Bot (admin)",
+        "description": "Validates the token with getMe and stores it encrypted. The token can never be read back. detail_level is optional (a new bot defaults to minimal; a replaced bot keeps its level).",
+        "operationId": "putOrgTelegramBot",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "orgID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["token"],
+                "additionalProperties": false,
+                "properties": {
+                  "token": { "type": "string", "maxLength": 256, "writeOnly": true },
+                  "detail_level": { "type": "string", "enum": ["minimal", "full"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "The bot as GET shows it" },
+          "400": { "description": "invalid JSON body, invalid bot token, or invalid detail level" },
+          "403": { "description": "Insufficient role" },
+          "404": { "description": "tenant bots are disabled in this deployment" },
+          "502": { "description": "could not reach Telegram" },
+          "503": { "description": "alerts master key is not configured" }
+        }
+      },
+      "patch": {
+        "summary": "Change the Bot's Detail Level (admin)",
+        "operationId": "patchOrgTelegramBot",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "orgID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["detail_level"],
+                "additionalProperties": false,
+                "properties": {
+                  "detail_level": { "type": "string", "enum": ["minimal", "full"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "The bot as GET shows it" },
+          "400": { "description": "invalid JSON body or invalid detail level" },
+          "404": { "description": "no bot configured, or tenant bots are disabled in this deployment" }
+        }
+      },
+      "delete": {
+        "summary": "Remove the Organisation's Telegram Bot (admin)",
+        "description": "Idempotent. The organisation's manual channels are paused until a bot is connected again.",
+        "operationId": "deleteOrgTelegramBot",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "orgID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "204": { "description": "Bot removed (or there was none)" },
+          "404": { "description": "tenant bots are disabled in this deployment" }
+        }
+      }
+    },
+    "/projects/{projectID}/alerts/incidents": {
+      "get": {
+        "summary": "List Alert Incidents",
+        "operationId": "listAlertIncidents",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "status", "in": "query", "required": false, "schema": { "type": "string", "enum": ["firing", "resolved", "all"], "default": "all" } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 50, "minimum": 1, "maximum": 200 } }
+        ],
+        "responses": {
+          "200": { "description": "{items: Incident[]} newest first" },
+          "400": { "description": "Invalid status filter" }
         }
       }
     }

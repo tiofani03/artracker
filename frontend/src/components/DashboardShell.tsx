@@ -5,6 +5,7 @@ import { Link, Redirect, useLocation } from '../router'
 import OrgSwitcher from './OrgSwitcher'
 import ProjectSelector from './ProjectSelector'
 import ThemeToggle from './ThemeToggle'
+import { readWorkspaceFromSearch, stripWorkspaceParams } from '../utils/deepLink'
 import { formatNavBadge } from '../utils/navBadge'
 import { ToastProvider } from './Toast'
 
@@ -73,7 +74,7 @@ type NavItem = {
   label: string
   icon: string
   /** Which live count (GET /projects/:id/nav-counts) this item shows as its badge. */
-  badgeKey?: 'replays' | 'issues'
+  badgeKey?: 'replays' | 'issues' | 'alerts'
   badgeTone?: 'alert' | 'neutral'
   demoAllowed?: boolean
 }
@@ -129,8 +130,10 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
       },
       {
         to: '/dashboard/alerts',
-        label: 'Custom Alerts',
+        label: 'Alerts',
         icon: 'M12 4a6 6 0 0 0-6 6v3.5L4.5 16h15L18 13.5V10a6 6 0 0 0-6-6Zm-2 14a2 2 0 1 0 4 0',
+        badgeKey: 'alerts',
+        badgeTone: 'alert',
         demoAllowed: true,
       },
     ],
@@ -161,9 +164,21 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
   const isDemoQuery = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1'
   const isDemo = allowDemo && !authUser && isDemoQuery
 
-  const [storedOrg, setStoredOrg] = useState<number | null>(() => readStoredNumber(ORG_KEY))
+  // A deep link (?org=&project=) beats the remembered workspace; non-member ids fall back below.
+  const [linked] = useState(() =>
+    typeof window === 'undefined' ? { org: null, project: null } : readWorkspaceFromSearch(window.location.search),
+  )
+  const [storedOrg, setStoredOrg] = useState<number | null>(() => {
+    if (linked.org === null) return readStoredNumber(ORG_KEY)
+    storeNumber(ORG_KEY, linked.org)
+    return linked.org
+  })
   const [projects, setProjects] = useState<Project[]>([])
-  const [projectId, setProjectId] = useState<number | null>(() => readStoredNumber(PROJECT_KEY))
+  const [projectId, setProjectId] = useState<number | null>(() => {
+    if (linked.project === null) return readStoredNumber(PROJECT_KEY)
+    storeNumber(PROJECT_KEY, linked.project)
+    return linked.project
+  })
   const [error, setError] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
@@ -187,6 +202,14 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
       return next
     })
   }
+
+  // Once the deep link has been applied, drop it from the address bar so a later switch survives a reload.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const { pathname, search, hash } = window.location
+    const clean = stripWorkspaceParams(search)
+    if (clean !== search) window.history.replaceState(null, '', pathname + clean + hash)
+  }, [])
 
   const effectiveUser = authUser ?? (isDemo ? DEMO_USER : null)
   const orgs = effectiveUser?.orgs ?? []
@@ -302,7 +325,12 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
     // Counts of a previously selected project are never shown for the current one.
     const navCounts = navState && navState.projectId === countsProjectId ? navState.counts : null
     if (!navCounts || !item.badgeKey) return undefined
-    return formatNavBadge(item.badgeKey === 'replays' ? navCounts.frustrated_replays_24h : navCounts.open_issues)
+    const counts = {
+      replays: navCounts.frustrated_replays_24h,
+      issues: navCounts.open_issues,
+      alerts: navCounts.firing_alerts,
+    }
+    return formatNavBadge(counts[item.badgeKey])
   }
 
   return (

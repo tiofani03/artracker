@@ -41,6 +41,17 @@ function Sparkline({ samples, metric, max, threshold, playheadAbsTs }: SparkProp
   )
 }
 
+/** MB as "812 MB" below 1 GB, else "3.2 GB". */
+const fmtMb = (mb: number) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`)
+
+/** "used-free / total" style: "1.2 GB free of 6.0 GB", or just the free part when the total is unknown. */
+const fmtFree = (free: number | undefined, total: number | undefined, dash: string) => {
+  if (free === undefined) return dash
+  return total ? `${fmtMb(free)} free of ${fmtMb(total)}` : `${fmtMb(free)} free`
+}
+
+const NET_LABEL: Record<string, string> = { wifi: 'Wi-Fi', cellular: 'Mobile data', ethernet: 'Ethernet', none: 'Offline' }
+
 type Row = { key: string; label: string; now: string; session: string; spark?: SparkProps }
 
 export function PerformancePanel({ perf, currentAbsTs, startMs, onSeek }: PerformancePanelProps) {
@@ -62,6 +73,15 @@ export function PerformancePanel({ perf, currentAbsTs, startMs, onSeek }: Perfor
   const dash = '–'
   const round = (n: number | undefined) => (n === undefined ? dash : String(Math.round(n)))
 
+  const minOf = (key: 'ram_free_mb' | 'storage_free_mb') => {
+    const vals = samples.map((x) => x[key]).filter((v): v is number => typeof v === 'number')
+    return vals.length ? Math.min(...vals) : undefined
+  }
+  const netNow = at?.net
+  const netSeen = [...new Set(samples.map((x) => x.net).filter((n): n is NonNullable<typeof n> => !!n))]
+  const storage = perf.device.storage_mb
+  const osVersion = perf.device.os_version
+
   const rows: Row[] = []
   if (has('cpu')) {
     rows.push({
@@ -76,7 +96,7 @@ export function PerformancePanel({ perf, currentAbsTs, startMs, onSeek }: Perfor
     const pct = at?.mem_mb !== undefined && ram ? ` (${Math.round((at.mem_mb / ram) * 100)}%)` : ''
     rows.push({
       key: 'mem',
-      label: 'Memory',
+      label: 'App memory',
       now: at?.mem_mb === undefined ? dash : `${Math.round(at.mem_mb)} MB${pct}`,
       session: `peak ${round(sum.memPeak)} MB`,
       spark: { samples, metric: 'mem_mb', max: memTrackMax(samples), playheadAbsTs: currentAbsTs },
@@ -92,9 +112,36 @@ export function PerformancePanel({ perf, currentAbsTs, startMs, onSeek }: Perfor
       spark: { samples, metric: 'fps', max: hz, threshold: hz * 0.5, playheadAbsTs: currentAbsTs },
     })
   }
+  if (has('ram_free_mb')) {
+    rows.push({
+      key: 'ram_free',
+      label: 'Device RAM',
+      now: fmtFree(at?.ram_free_mb, ram, dash),
+      session: `lowest free ${minOf('ram_free_mb') === undefined ? dash : fmtMb(minOf('ram_free_mb') as number)}`,
+    })
+  }
+  if (has('storage_free_mb')) {
+    rows.push({
+      key: 'storage_free',
+      label: 'Storage',
+      now: fmtFree(at?.storage_free_mb, storage, dash),
+      session: `lowest free ${minOf('storage_free_mb') === undefined ? dash : fmtMb(minOf('storage_free_mb') as number)}`,
+    })
+  }
+  if (has('net')) {
+    rows.push({
+      key: 'net',
+      label: 'Network',
+      now: netNow ? (NET_LABEL[netNow] ?? netNow) : dash,
+      session: netSeen.length ? netSeen.map((n) => NET_LABEL[n] ?? n).join(' → ') : dash,
+    })
+  }
   if (has('jank')) rows.push({ key: 'jank', label: 'Jank frames', now: round(at?.jank), session: `total ${sum.jankTotal}` })
   if (has('frozen')) rows.push({ key: 'frozen', label: 'Frozen frames', now: round(at?.frozen), session: `total ${sum.frozenTotal}` })
   if (has('threads')) rows.push({ key: 'threads', label: 'Threads', now: round(at?.threads), session: `peak ${round(sum.threadsPeak)}` })
+  if (osVersion) {
+    rows.push({ key: 'os', label: 'OS', now: osVersion, session: dash })
+  }
   if (has('thermal')) rows.push({ key: 'thermal', label: 'Thermal', now: at?.thermal ?? dash, session: dash })
 
   return (
@@ -110,7 +157,7 @@ export function PerformancePanel({ perf, currentAbsTs, startMs, onSeek }: Perfor
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.key}>
+            <tr key={r.key} className={`or-perf-row--${r.key}`}>
               <th scope="row">{r.label}</th>
               <td className="or-perf-table__num">{r.now}</td>
               <td className="or-perf-table__session">{r.session}</td>

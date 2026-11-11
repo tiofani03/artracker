@@ -78,7 +78,46 @@ Anyone can create an organization and becomes its `owner`. Non-members get `404`
 
 ### Tests
 
-Handler and migration tests need Postgres: `TEST_DATABASE_URL=postgres://artracker:artracker@localhost:5433/artracker?sslmode=disable make test` (skipped when unset; CI provides it).
+Handler and migration tests need Postgres and are skipped when `TEST_DATABASE_URL` is unset (CI provides it). Use a separate database, never your dev one:
+
+```bash
+docker compose exec db psql -U artracker -d postgres -c "CREATE DATABASE artracker_test"
+TEST_DATABASE_URL='postgres://artracker:artracker@localhost:5433/artracker_test?sslmode=disable' make test
+```
+
+**These tests delete all users, organisations and projects in whatever database the DSN names.**
+
+## Alerts (Telegram)
+
+Artracker can notify a Telegram chat when a project's errors need attention.
+
+Two bot modes, set with `ALERTS_BOT_MODE`:
+
+- `tenant` (default, the SaaS mode): each organisation connects its own bot (created with [@BotFather](https://t.me/BotFather)) in Settings. Bot tokens are stored encrypted with the master key.
+- `shared` (self-hosting): one operator bot for the whole deployment, from `TELEGRAM_BOT_TOKEN` or `TELEGRAM_BOT_TOKEN_FILE`.
+
+Privacy in `tenant` mode: the platform only calls Telegram's `sendMessage` and `getMe` and never reads updates, but the operator holds the master key and so could, in principle, decrypt a stored token and use the bot, including reading its updates. Use a dedicated, alert-only bot and keep BotFather's privacy mode on. Telegram itself sees every message it delivers, and even the `minimal` detail level still sends the project name, environment and release.
+
+The master key is `ALERTS_MASTER_KEY` (standard base64 of exactly 32 bytes) or `ALERTS_MASTER_KEY_FILE` (a file holding it); generate one with `openssl rand -base64 32` and keep it safe, since losing it makes stored bot tokens unreadable. It is optional in development and in `shared` mode, but a key that is set and malformed stops startup. `ALERTS_MASTER_KEY_ID` (default `v1`) labels the key.
+
+**Upgrading:** `ALERTS_BOT_MODE` defaults to `tenant`, and in production that mode refuses to start without the master key. An existing deployment must set either `ALERTS_MASTER_KEY` or `ALERTS_BOT_MODE=shared` in the server's `.env` **before** deploying this version (`docker-compose.prod.yml` forwards it through `env_file: .env`). The shipped `docker-compose.prod.yml` mounts no secret file, so with it use `ALERTS_MASTER_KEY`; `ALERTS_MASTER_KEY_FILE` only works after you mount the key file into the `api` container yourself (a compose change). The deploy workflow checks this first: when `.env` sets none of `ALERTS_MASTER_KEY`, `ALERTS_MASTER_KEY_FILE` or `ALERTS_BOT_MODE=shared`, it fails with a clear error before pulling anything and leaves the running containers untouched.
+
+Steps:
+
+1. In `shared` mode set `TELEGRAM_BOT_TOKEN`; in `tenant` mode set `ALERTS_MASTER_KEY`.
+2. Run exactly **one** API instance as the alerts worker. It evaluates alert rules and sends the messages (in `shared` mode it also polls Telegram for the link flow). Set `ALERTS_WORKER=false` on every extra replica (the default is `true`).
+3. `tenant` mode: an organisation admin connects the bot in **Settings → Team & Members**, then opens **Alerts** for a project, adds the chat id (the page explains how to find it) and sends a test message. `shared` mode: open **Alerts** for a project and use the connect link to add the bot to a group or a private chat, then send a test message.
+
+Alert kinds: **new issue** (a never-seen error group), **regression** (a resolved issue occurs again) and **issue spike** (an issue's event rate jumps well above its recent baseline). Without a token incidents are still recorded in the dashboard, but no Telegram message is sent.
+
+Rules default to the environment `production` and match the environment string your SDK reports exactly (case-sensitive): an app reporting `prod` or `Production` gets no alerts from a `production` rule. Clear a rule's environment field to alert on every environment, or set it to your SDK's value. An issue is "new" the first time it is seen in any environment; one first seen in staging will not raise a new-issue alert when it later appears in production.
+
+**Troubleshooting**
+
+1. Bots show as connected but alerts are not delivered after a deploy: check that `ALERTS_MASTER_KEY` is the same value as before. A wrong or rotated key cannot decrypt stored tokens; the dispatcher keeps the incidents pending and logs `cannot decrypt org bot token`. It does not mark the bots invalid.
+2. The process refuses to start in production: set `ALERTS_MASTER_KEY` or `ALERTS_BOT_MODE=shared`.
+3. A bot shows `invalid`: Telegram rejected its token (revoked or regenerated in BotFather). Paste the new token in Settings.
+4. Incidents older than 24 hours with no working bot are skipped; the dashboard shows them as "not sent (no channel, or no working bot for 24 h)" and the exact reason is only in the log.
 
 ## Images & deploy
 

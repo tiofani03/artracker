@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  alertApi,
   analyticsApi,
   issueApi,
+  projectApi,
   replayApi,
   telemetryApi,
   type Issue,
@@ -20,6 +22,8 @@ import { replayEmptyMessage, replayViewState } from '../replay/viewState'
 import { browserStorage, defaultQueueOpen, readBool, writeBool } from '../replay/prefs'
 import GrowthAnalyticsView from '../components/analytics/GrowthAnalyticsView'
 import CampaignsView from '../components/campaigns/CampaignsView'
+import AlertsView from '../components/alerts/AlertsView'
+import { countActiveChannels, normalizeChannelsResponse } from '../components/alerts/alertFormat'
 import { navigate } from '../router'
 import { startInteractiveCapture, type LiveCaptureResult } from '../utils/liveReplayCapture'
 import { detectSessionPlatform } from '../utils/platformDetector'
@@ -35,7 +39,7 @@ const SECTION_TITLES: Record<ConsoleSection, string> = {
   logs: 'Event Log',
   campaigns: 'Marketing Campaigns',
   funnels: 'Funnel & Retention',
-  alerts: 'Custom Alerts',
+  alerts: 'Alerts',
 }
 
 type BucketPoint = { label: string; sessions: number; errors: number }
@@ -155,42 +159,6 @@ type DevLogEntry = {
   userId?: string
   attributes?: Record<string, unknown>
 }
-
-type AlertRule = {
-  id: string
-  name: string
-  condition: string
-  channel: string
-  status: 'firing' | 'armed' | 'muted'
-  lastTriggered: string
-}
-
-const ALERT_DEFINITIONS: Omit<AlertRule, 'status' | 'lastTriggered'>[] = [
-  {
-    id: 'al_1',
-    name: '5xx HTTP Error Spike',
-    condition: 'http.status >= 500 on project endpoints in active window',
-    channel: 'Slack · #ops-alerts',
-  },
-  {
-    id: 'al_2',
-    name: 'Crash-Free Session Drop',
-    condition: 'error_free_rate < 98.5% over active window',
-    channel: 'Webhook · PagerDuty',
-  },
-  {
-    id: 'al_3',
-    name: 'Open Crash / Exception Issues',
-    condition: 'open_issues > 0 or unhandled exception logged',
-    channel: 'Discord · #eng-alerts',
-  },
-  {
-    id: 'al_4',
-    name: 'Frustrated Session Activity',
-    condition: 'rage_click or dead_click detected in recorded sessions',
-    channel: 'Email · eng@company.com',
-  },
-]
 
 function TelemetryAreaChart({
   buckets,
@@ -322,12 +290,14 @@ function DashboardInner({
   range,
   project,
   isDemo,
+  canManage,
   error,
 }: {
   section: ConsoleSection
   range: RangeKey
   project: Project | null
   isDemo: boolean
+  canManage: boolean
   error: string | null
 }) {
   const [selectedSessionId, setSelectedSessionId] = useState<string>(() => {
@@ -419,12 +389,12 @@ function DashboardInner({
     })
   }
 
-  const [mutedAlertIds, setMutedAlertIds] = useState<Set<string>>(new Set())
   const [realStats, setRealStats] = useState<ProjectStats | null>(null)
   const [realEvents, setRealEvents] = useState<TelemetryEvent[]>([])
   const [realIssues, setRealIssues] = useState<Issue[]>([])
   const [realCampaigns, setRealCampaigns] = useState<OverviewCampaignItem[]>([])
   const [funnelSummary, setFunnelSummary] = useState<{ totalCheckouts: number; convPct: number } | null>(null)
+  const [alertSummaryState, setAlertSummary] = useState<{ projectId: number; firing: number; channels: number } | null>(null)
 
   const targetPid = project?.id ?? 1
   // null while the shell is still resolving the selected project (demo mode supplies its own)
@@ -676,6 +646,29 @@ function DashboardInner({
     void fetchDashboardTelemetry(targetPid, range).then(applyDashboardTelemetry)
   }
 
+  // Overview "Active alerts" cell: loaded once per project; not available in demo mode.
+  const alertsProjectId = isDemo ? null : (project?.id ?? null)
+  useEffect(() => {
+    if (alertsProjectId == null) return
+    let cancelled = false
+    Promise.all([projectApi.navCounts(alertsProjectId), alertApi.channels(alertsProjectId)])
+      .then(([counts, channels]) => {
+        if (cancelled) return
+        setAlertSummary({
+          projectId: alertsProjectId,
+          firing: counts.firing_alerts,
+          channels: countActiveChannels(normalizeChannelsResponse(channels).items),
+        })
+      })
+      .catch(() => {
+        if (!cancelled) setAlertSummary(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [alertsProjectId])
+  const alertSummary = alertsProjectId != null && alertSummaryState?.projectId === alertsProjectId ? alertSummaryState : null
+
   const projectId = project?.id ?? null
   useEffect(() => {
     if (projectId == null) return
@@ -845,67 +838,6 @@ function DashboardInner({
     return [...fromIssues, ...fromErrorLogs]
   }, [realIssues, displayLogs])
 
-  // Real-time alert rule evaluation against PostgreSQL project data
-  const alerts: AlertRule[] = useMemo(() => {
-    const http5xxLog = displayLogs.find(
-      (l) =>
-        (l.statusCode !== undefined && Number(l.statusCode) >= 500) ||
-        /\b50[0234]\b/.test(l.title) ||
-        /\b50[0234]\b/.test(l.detail),
-    )
-    const http5xxIssue = realIssues.find((i) => /\b50[0234]\b/.test(i.title))
-
-    const errorFreeNum = realStats ? parseFloat(realStats.error_free_pct) : 100
-    const crashFreeDropped =
-      realStats != null && realStats.sessions_count > 0 && !Number.isNaN(errorFreeNum) && errorFreeNum < 98.5
-
-    const latestIssue = realIssues[0]
-    const latestErrorLog = displayLogs.find((l) => l.kind === 'exception' || l.level === 'error')
-    const hasOpenIssuesOrErrors =
-      realIssues.length > 0 || (realStats?.open_issues_count ?? 0) > 0 || (realStats?.errors_count ?? 0) > 0
-
-    const frustratedSession = replaySessions.find((s) => s.has_rage_click || s.has_dead_click || s.has_error)
-    const hasFrustrated =
-      frustratedSession != null || (realStats?.frustrated_sessions_count ?? 0) > 0
-
-    return ALERT_DEFINITIONS.map((def) => {
-      if (mutedAlertIds.has(def.id)) {
-        return { ...def, status: 'muted', lastTriggered: 'Muted' }
-      }
-      if (def.id === 'al_1') {
-        const firing = Boolean(http5xxLog || http5xxIssue)
-        const lastTriggered = http5xxLog
-          ? http5xxLog.time
-          : http5xxIssue
-            ? formatAgo(http5xxIssue.last_seen)
-            : 'Never'
-        return { ...def, status: firing ? 'firing' : 'armed', lastTriggered }
-      }
-      if (def.id === 'al_2') {
-        const lastTriggered = crashFreeDropped
-          ? (latestErrorLog?.time ?? (latestIssue ? formatAgo(latestIssue.last_seen) : 'Active window'))
-          : 'Never'
-        return { ...def, status: crashFreeDropped ? 'firing' : 'armed', lastTriggered }
-      }
-      if (def.id === 'al_3') {
-        const lastTriggered = latestIssue
-          ? formatAgo(latestIssue.last_seen)
-          : latestErrorLog
-            ? latestErrorLog.time
-            : hasOpenIssuesOrErrors
-              ? 'Active window'
-              : 'Never'
-        return { ...def, status: hasOpenIssuesOrErrors ? 'firing' : 'armed', lastTriggered }
-      }
-      const lastTriggered = frustratedSession
-        ? formatAgo(frustratedSession.start_time)
-        : hasFrustrated
-          ? 'Active window'
-          : 'Never'
-      return { ...def, status: hasFrustrated ? 'firing' : 'armed', lastTriggered }
-    })
-  }, [displayLogs, realIssues, realStats, replaySessions, mutedAlertIds])
-
   const logCounts = useMemo(
     () => ({
       all: displayLogs.length,
@@ -937,15 +869,6 @@ function DashboardInner({
     (currentLogPage - 1) * logPageSize,
     currentLogPage * logPageSize,
   )
-
-  const toggleAlert = (id: string) => {
-    setMutedAlertIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
 
   const goSection = (path: string) => navigate(isDemo ? `${path}?demo=1` : path)
   const openReplay = (sessionId: string) => {
@@ -995,15 +918,19 @@ function DashboardInner({
 
                   <div className="metric-cell">
                     <div className="metric-cell__top">
-                      <span className="metric-cell__label">Alert Rules</span>
-                      <span className="badge badge--exception">
-                        {alerts.filter((a) => a.status === 'firing').length} firing
+                      <span className="metric-cell__label">Active alerts</span>
+                      <span className={`badge ${alertSummary && alertSummary.firing > 0 ? 'badge--exception' : 'badge--active'}`}>
+                        {alertSummary ? `${alertSummary.firing} firing` : '—'}
                       </span>
                     </div>
                     <strong className="metric-cell__value">
-                      {alerts.filter((a) => a.status !== 'muted').length} armed
+                      {alertSummary
+                        ? alertSummary.channels === 0
+                          ? 'No channel connected'
+                          : `${alertSummary.channels} Telegram ${alertSummary.channels === 1 ? 'chat' : 'chats'}`
+                        : '—'}
                     </strong>
-                    <span className="metric-cell__sub">Slack · Discord · Webhook</span>
+                    <span className="metric-cell__sub">Telegram</span>
                   </div>
                 </section>
 
@@ -1947,47 +1874,18 @@ function DashboardInner({
             )}
 
             {/* ==================== ALERTS ==================== */}
-            {section === 'alerts' && (
-              <section className="dash-card dash-card--compact">
-                <div className="dash-card__head">
-                  <div>
-                    <h2 className="dash-card__title">Custom Alert Rules</h2>
-                    <p className="dash-card__desc">
-                      Automated anomaly &amp; error threshold evaluators routed to Slack, Discord, Email, or Webhook.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="dash-list">
-                  {alerts.map((a) => (
-                    <div key={a.id} className="dash-list__row">
-                      <div className="dash-list__main">
-                        <div className="dash-list__top">
-                          <span
-                            className={`badge ${
-                              a.status === 'firing'
-                                ? 'badge--exception'
-                                : a.status === 'armed'
-                                  ? 'badge--active'
-                                  : 'badge--revoked'
-                            }`}
-                          >
-                            {a.status}
-                          </span>
-                          <span className="dash-code">{a.channel}</span>
-                          <span className="dash-code">Last: {a.lastTriggered}</span>
-                        </div>
-                        <p className="dash-list__title">{a.name}</p>
-                        <p className="dash-list__sub dash-code">{a.condition}</p>
-                      </div>
-                      <button type="button" className="dash-btn" onClick={() => toggleAlert(a.id)}>
-                        {a.status === 'muted' ? 'Enable' : 'Mute'}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
+            {section === 'alerts' &&
+              (isDemo ? (
+                <section className="dash-card dash-card--compact">
+                  <p className="dash-empty">Alerts need a signed-in workspace.</p>
+                </section>
+              ) : project == null ? (
+                <section className="dash-card dash-card--compact">
+                  <p className="dash-empty">Select a project to manage alerts.</p>
+                </section>
+              ) : (
+                <AlertsView projectId={project.id} orgId={project.org_id} canManage={canManage} />
+              ))}
     </>
   )
 }
@@ -2013,12 +1911,13 @@ export default function DashboardPage({ section }: { section: ConsoleSection }) 
 
   return (
     <DashboardShell sectionTitle={SECTION_TITLES[section]} toolbar={toolbar} allowDemo>
-      {({ project, isDemo, error }) => (
+      {({ project, isDemo, canManage, error }) => (
         <DashboardInner
           section={section}
           range={range}
           project={project}
           isDemo={isDemo}
+          canManage={canManage}
           error={error}
         />
       )}

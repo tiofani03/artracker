@@ -50,6 +50,10 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Delete("/orgs/:orgID/invites/:inviteID", h.RequireAuth, h.RequireOrgRole(auth.RoleAdmin), h.RevokeOrgInvite)
 	api.Patch("/orgs/:orgID/members/:userID", h.RequireAuth, h.RequireOrgRole(auth.RoleOwner), h.UpdateOrgMemberRole)
 	api.Delete("/orgs/:orgID/members/:userID", h.RequireAuth, h.RequireOrgRole(auth.RoleAdmin), h.RemoveOrgMember)
+	api.Get("/orgs/:orgID/alerts/telegram-bot", h.RequireAuth, h.RequireOrgRole(auth.RoleViewer), h.GetOrgBot)
+	api.Put("/orgs/:orgID/alerts/telegram-bot", h.RequireAuth, h.RequireOrgRole(auth.RoleAdmin), h.PutOrgBot)
+	api.Patch("/orgs/:orgID/alerts/telegram-bot", h.RequireAuth, h.RequireOrgRole(auth.RoleAdmin), h.PatchOrgBot)
+	api.Delete("/orgs/:orgID/alerts/telegram-bot", h.RequireAuth, h.RequireOrgRole(auth.RoleAdmin), h.DeleteOrgBot)
 
 	// Public invitation acceptance
 	api.Get("/invites/:token", h.GetInvitePreview)
@@ -82,6 +86,15 @@ func (h *Handler) Routes(api fiber.Router) {
 
 	// Error tracking & crash diagnostics & release artifacts
 	api.Get("/projects/:projectID/nav-counts", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetNavCounts)
+	api.Get("/projects/:projectID/alerts/rules", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListAlertRules)
+	api.Patch("/projects/:projectID/alerts/rules/:kind", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.UpdateAlertRule)
+	api.Get("/projects/:projectID/alerts/channels", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListAlertChannels)
+	api.Post("/projects/:projectID/alerts/channels", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.CreateAlertChannel)
+	api.Post("/projects/:projectID/alerts/channels/link-code", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.CreateAlertLinkCode)
+	api.Patch("/projects/:projectID/alerts/channels/:channelID", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.UpdateAlertChannel)
+	api.Delete("/projects/:projectID/alerts/channels/:channelID", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.DeleteAlertChannel)
+	api.Post("/projects/:projectID/alerts/channels/:channelID/test", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.TestAlertChannel)
+	api.Get("/projects/:projectID/alerts/incidents", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListAlertIncidents)
 	api.Get("/projects/:projectID/issues", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListIssues)
 	api.Get("/projects/:projectID/issues/:issueID", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetIssue)
 	api.Patch("/projects/:projectID/issues/:issueID", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.UpdateIssueStatus)

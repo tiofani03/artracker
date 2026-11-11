@@ -2,11 +2,15 @@ import { useState } from 'react'
 import ApiKeysPanel from '../components/ApiKeysPanel'
 import DashboardShell from '../components/DashboardShell'
 import ReplaySettingsPanel from '../components/ReplaySettingsPanel'
+import TelegramBotCard from '../components/TelegramBotCard'
 import TeamMembersPanel from '../components/TeamMembersPanel'
 import '../dashboard.css'
+import { initialSettingsTab, type SettingsTab } from '../utils/deepLink'
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<'keys' | 'team' | 'replay'>('keys')
+  const [activeTab, setActiveTab] = useState<SettingsTab>(() =>
+    typeof window === 'undefined' ? 'keys' : initialSettingsTab(window.location.search),
+  )
 
   return (
     <DashboardShell sectionTitle="API Keys & Settings" allowDemo>
@@ -74,11 +78,14 @@ export default function SettingsPage() {
               )}
 
               {activeOrg && activeTab === 'team' && (
-                <TeamMembersPanel
-                  org={{ ...activeOrg, created_at: '' }}
-                  canManage={canManage}
-                  currentUserRole={activeOrg.role}
-                />
+                <>
+                  <TeamMembersPanel
+                    org={{ ...activeOrg, created_at: '' }}
+                    canManage={canManage}
+                    currentUserRole={activeOrg.role}
+                  />
+                  <TelegramBotCard orgId={activeOrg.id} canManage={canManage} />
+                </>
               )}
 
               {activeOrg && activeTab === 'replay' && (

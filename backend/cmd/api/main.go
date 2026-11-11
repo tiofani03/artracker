@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -155,6 +156,27 @@ func main() {
 		WithIngest(ingestSvc).
 		WithAnalytics(analyticsSvc).
 		WithReplayStore(replayStore)
+
+	alertsCtx, stopAlerts := context.WithCancel(context.Background())
+	defer stopAlerts()
+	var alertsWG sync.WaitGroup
+	if pool != nil {
+		svc, src, err := buildAlerts(ctx, alertsCtx, &alertsWG, cfg, pool, log)
+		if err != nil {
+			log.Error("alerts setup failed", "err", err)
+			os.Exit(1)
+		}
+		h.WithAlerts(svc)
+		if cfg.AlertsWorker {
+			alertsWG.Add(1)
+			go func() {
+				defer alertsWG.Done()
+				svc.Run(alertsCtx, src)
+			}()
+		} else {
+			log.Info("ALERTS_WORKER=false: this instance does not poll Telegram or evaluate alerts")
+		}
+	}
 	ingestSvc.WithIssueProcessor(h.IssueService())
 	app.Get("/healthz", h.Health)
 	app.Get("/auth/callback/:provider", h.OAuthCallback)
@@ -182,5 +204,7 @@ func main() {
 	if err := analyticsSvc.Shutdown(shutdownCtx); err != nil {
 		log.Error("analytics drain failed", "err", err)
 	}
+	stopAlerts()
+	alertsWG.Wait()
 	log.Info("bye")
 }

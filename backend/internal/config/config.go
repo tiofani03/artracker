@@ -1,8 +1,10 @@
 package config
 
 import (
+	"encoding/base64"
 	"log/slog"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -53,6 +55,21 @@ type Config struct {
 	ReplayProxyUpload   bool
 	// ReplayLocalDir stores replay chunks on disk when R2 is not configured (development only).
 	ReplayLocalDir string
+
+	// Alerts. TelegramBotToken is a secret: never log it. AlertsWorker gates
+	// Telegram polling and alert evaluation; run it on exactly one instance.
+	TelegramBotToken string
+	TelegramAPIBase  string
+	AlertsWorker     bool
+	// AlertsBotMode is "tenant" (each organisation connects its own bot, the
+	// default) or "shared" (one operator bot from TELEGRAM_BOT_TOKEN).
+	AlertsBotMode string
+	// AlertsMasterKey is the 32-byte key that encrypts per-tenant bot tokens;
+	// nil when unset (allowed in development and in shared mode). Never log it.
+	AlertsMasterKey []byte
+	// AlertsMasterKeyID labels the key and is bound into the encryption
+	// associated data, so it is restricted to [A-Za-z0-9._-]{1,32}.
+	AlertsMasterKeyID string
 }
 
 // Placeholders shipped in .env.example / used as the dev default; never valid in production.
@@ -102,6 +119,22 @@ func Load() Config {
 		ReplayMaxChunkBytes: int64(envInt("REPLAY_MAX_CHUNK_BYTES", 5242880)),
 		ReplayProxyUpload:   parseBool(env("REPLAY_PROXY_UPLOAD", "true")),
 		ReplayLocalDir:      env("REPLAY_LOCAL_DIR", ""),
+
+		TelegramBotToken: loadTelegramToken(),
+		TelegramAPIBase:  env("TELEGRAM_API_BASE", "https://api.telegram.org"),
+	}
+	rawWorker := env("ALERTS_WORKER", "")
+	var workerRecognised bool
+	cfg.AlertsWorker, workerRecognised = parseAlertsWorker(rawWorker)
+	if !workerRecognised {
+		slog.Warn("unrecognised ALERTS_WORKER value, keeping the alerts worker enabled", "value_length", len(rawWorker))
+	}
+
+	cfg.AlertsBotMode = loadAlertsBotMode()
+	cfg.AlertsMasterKey = loadAlertsMasterKey()
+	cfg.AlertsMasterKeyID = env("ALERTS_MASTER_KEY_ID", "v1")
+	if !masterKeyIDPattern.MatchString(cfg.AlertsMasterKeyID) {
+		panic("ALERTS_MASTER_KEY_ID must match [A-Za-z0-9._-]{1,32}")
 	}
 
 	if cfg.R2Endpoint == "" && cfg.R2AccountID != "" {
@@ -115,6 +148,10 @@ func Load() Config {
 			panic("JWT_SECRET must be a random string of at least 32 characters (placeholder values are rejected)")
 		}
 	}
+	// After the JWT checks so operators see that diagnostic first.
+	if cfg.Env == "production" && cfg.AlertsBotMode == "tenant" && cfg.AlertsMasterKey == nil {
+		panic("ALERTS_MASTER_KEY (or ALERTS_MASTER_KEY_FILE) must be set when APP_ENV=production and ALERTS_BOT_MODE=tenant; generate one with: openssl rand -base64 32")
+	}
 	if cfg.JWTSecret == "" {
 		cfg.JWTSecret = "dev-only-secret-change-me"
 	}
@@ -127,6 +164,97 @@ func parseBool(s string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// loadTelegramToken returns the bot token from TELEGRAM_BOT_TOKEN or, for
+// secret stores that mount files (Docker/Kubernetes secrets), from the file named
+// by TELEGRAM_BOT_TOKEN_FILE. Setting both, or pointing at a file that cannot be
+// read or is empty, panics at boot: an operator who configured a secret must not
+// silently end up with Telegram off. Panic messages never contain the token.
+func loadTelegramToken() string {
+	direct := strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN"))
+	path := strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN_FILE"))
+	if path == "" {
+		return direct
+	}
+	if direct != "" {
+		panic("set only one of TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN_FILE")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		panic("TELEGRAM_BOT_TOKEN_FILE cannot be read: " + err.Error())
+	}
+	token := strings.TrimSpace(string(raw))
+	if token == "" {
+		panic("TELEGRAM_BOT_TOKEN_FILE is empty: " + path)
+	}
+	return token
+}
+
+var masterKeyIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,32}$`)
+
+// loadAlertsBotMode reads ALERTS_BOT_MODE: unset means "tenant"; only "tenant"
+// and "shared" are valid.
+func loadAlertsBotMode() string {
+	switch mode := strings.ToLower(strings.TrimSpace(os.Getenv("ALERTS_BOT_MODE"))); mode {
+	case "":
+		return "tenant"
+	case "tenant", "shared":
+		return mode
+	default:
+		panic("ALERTS_BOT_MODE must be \"tenant\" or \"shared\"")
+	}
+}
+
+// loadAlertsMasterKey returns the 32-byte master key from ALERTS_MASTER_KEY
+// (standard base64) or from the file named by ALERTS_MASTER_KEY_FILE, or nil
+// when neither is set. A key that is set but unusable always panics, in every
+// environment; whether an unset key is acceptable is decided by Load. Panic
+// messages never contain key material.
+func loadAlertsMasterKey() []byte {
+	direct := strings.TrimSpace(os.Getenv("ALERTS_MASTER_KEY"))
+	path := strings.TrimSpace(os.Getenv("ALERTS_MASTER_KEY_FILE"))
+	name := "ALERTS_MASTER_KEY"
+	encoded := direct
+	if path != "" {
+		if direct != "" {
+			panic("set only one of ALERTS_MASTER_KEY and ALERTS_MASTER_KEY_FILE")
+		}
+		name = "ALERTS_MASTER_KEY_FILE"
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			panic("ALERTS_MASTER_KEY_FILE cannot be read: " + err.Error())
+		}
+		encoded = strings.TrimSpace(string(raw))
+		if encoded == "" {
+			panic("ALERTS_MASTER_KEY_FILE is empty: " + path)
+		}
+	}
+	if encoded == "" {
+		return nil
+	}
+	key, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		panic(name + " is not valid standard base64")
+	}
+	if len(key) != 32 {
+		panic(name + " must decode to exactly 32 bytes (generate one with: openssl rand -base64 32)")
+	}
+	return key
+}
+
+// parseAlertsWorker reads ALERTS_WORKER. Unset or empty means enabled; any
+// value other than the usual true/false spellings also keeps the worker
+// enabled, with recognised false so a typo cannot silently stop alerts.
+func parseAlertsWorker(raw string) (enabled bool, recognised bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "1", "true", "yes", "on":
+		return true, true
+	case "0", "false", "no", "off":
+		return false, true
+	default:
+		return true, false
 	}
 }
 
