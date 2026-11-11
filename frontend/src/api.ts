@@ -536,6 +536,8 @@ export type ReplaySessionItem = {
   storage_prefix: string
   created_at: string
   updated_at: string
+  /** Not sent by the replay session endpoints yet; the player falls back to the last seen screen ratio. */
+  device_info?: DeviceInfo
 }
 
 export type ReplayChunkDetail = {
