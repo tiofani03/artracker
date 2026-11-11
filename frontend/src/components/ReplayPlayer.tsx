@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { EventType, type eventWithTime } from 'rrweb'
 import rrwebPlayer from 'rrweb-player'
@@ -20,7 +19,6 @@ import {
   activeFrameAt,
   deviceClock,
   fallbackNotice,
-  offsetFromPointer,
   replayModeLabel,
   routeStrip,
 } from '../replay/playback'
@@ -28,6 +26,9 @@ import { activeScreenFrameAt } from '../replay/screen'
 import { fitScale } from '../replay/fit'
 import { filterMarkers, type MarkerFilter } from '../replay/markerFilter'
 import { ReplaySidePanel, type SidePanelTab } from './replay/ReplaySidePanel'
+import { TimelineTracks } from './replay/TimelineTracks'
+import { browserStorage, readBool, writeBool } from '../replay/prefs'
+import type { TrackDef } from '../replay/tracks'
 import { adjacentEventOffset, resolveHotkey, SEEK_STEP_MS } from '../replay/hotkeys'
 import { fitScreenStage } from '../replay/screenPlanner'
 import { probeScreenSession } from '../replay/screenProbe'
@@ -422,12 +423,6 @@ export default function ReplayPlayer({
   }, [recordedUrl, strip.value])
 
   // Scrubber: click or drag anywhere on the track to seek
-  const scrubbingRef = useRef(false)
-  const seekToPointer = (e: ReactPointerEvent<HTMLDivElement>) => {
-    const r = e.currentTarget.getBoundingClientRect()
-    seekTo(offsetFromPointer(e.clientX, { left: r.left, width: r.width }, durationMs))
-  }
-
   // Build timeline markers (red = error, yellow = warn / click / frustration)
   const markers: TimelineMarker[] = useMemo(() => {
     if (timelineEvents.length === 0) return []
@@ -531,6 +526,51 @@ export default function ReplayPlayer({
   const [fit, setFit] = useState(1)
 
   const visibleMarkers = useMemo(() => filterMarkers(markers, activeFilter), [markers, activeFilter])
+
+  const [timelineExpanded, setTimelineExpanded] = useState(() =>
+    readBool(browserStorage(), 'artracker.replay.timelineExpanded', true),
+  )
+  const changeTimelineExpanded = (v: boolean) => {
+    setTimelineExpanded(v)
+    writeBool(browserStorage(), 'artracker.replay.timelineExpanded', v)
+  }
+
+  const trackDefs = useMemo<TrackDef[]>(() => {
+    const defs: TrackDef[] = []
+    if (screenSpans.length > 1) {
+      defs.push({
+        id: 'screens',
+        label: 'Screens',
+        kind: 'spans',
+        spans: screenSpans.map((s) => ({ startMs: s.startMs, endMs: s.endMs, label: `${s.screen} (${formatDurationMs(s.durationMs)})` })),
+      })
+    }
+    if (networkSpans.length > 0) {
+      defs.push({
+        id: 'network',
+        label: 'Network',
+        kind: 'spans',
+        spans: networkSpans.map((n) => ({
+          startMs: n.startMs,
+          endMs: n.startMs + n.durationMs,
+          label: `${n.method} ${n.url} (${n.statusCode}) · ${n.durationMs}ms`,
+          tone: n.statusCode >= 400 ? ('error' as const) : undefined,
+        })),
+      })
+    }
+    defs.push({
+      id: 'events',
+      label: 'Events',
+      kind: 'markers',
+      markers: visibleMarkers.map((m) => ({
+        id: m.id,
+        offsetMs: m.offsetMs,
+        tone: m.tone,
+        label: `${m.formattedTime} ${m.badgeLabel}: ${m.text}`,
+      })),
+    })
+    return defs
+  }, [screenSpans, networkSpans, visibleMarkers])
 
   // Close the header ⋯ menu on an outside press or Escape
   useEffect(() => {
@@ -693,9 +733,6 @@ export default function ReplayPlayer({
       }
     }
   }
-
-  const progressPct =
-    durationMs > 0 ? Math.min(100, Math.max(0, (currentTimeMs / durationMs) * 100)) : 0
 
   // Active marker synchronized to the scrubber playback timestamp
   const activeMarker = useMemo(() => {
@@ -1135,104 +1172,14 @@ export default function ReplayPlayer({
             </div>
           </div>
 
-          {/* Integrated Multi-Lane Gantt Scrubber Track */}
-          <div
-            className="or-gantt-scrubber"
-            role="slider"
-            aria-label="Seek replay"
-            aria-valuemin={0}
-            aria-valuemax={Math.round(durationMs / 1000)}
-            aria-valuenow={Math.round(currentTimeMs / 1000)}
-            onPointerDown={(e) => {
-              if ((e.target as HTMLElement).closest('.replay-marker-dot')) return
-              scrubbingRef.current = true
-              e.currentTarget.setPointerCapture(e.pointerId)
-              seekToPointer(e)
-            }}
-            onPointerMove={(e) => {
-              if (scrubbingRef.current) seekToPointer(e)
-            }}
-            onPointerUp={(e) => {
-              scrubbingRef.current = false
-              try {
-                e.currentTarget.releasePointerCapture(e.pointerId)
-              } catch {
-                // ignore
-              }
-            }}
-          >
-            {/* Lane 1: Route / Screens Span (if multiple screens) */}
-            {screenSpans.length > 1 && (
-              <div className="or-gantt-lane or-gantt-lane--screens" aria-hidden="true">
-                {screenSpans.map((s, idx) => (
-                  <div
-                    key={idx}
-                    className="or-gantt-screen-tag"
-                    style={{ left: `${s.pctStart}%`, width: `${s.pctWidth}%` }}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      seekTo(s.startMs)
-                    }}
-                    title={`${s.screen} (${formatDurationMs(s.durationMs)})`}
-                  >
-                    <span>{s.screen}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Lane 2: Real Network Spans (if HTTP requests exist) */}
-            {networkSpans.length > 0 && (
-              <div className="or-gantt-lane or-gantt-lane--network" aria-hidden="true">
-                {networkSpans.slice(0, 15).map((net) => (
-                  <div
-                    key={net.id}
-                    className={`or-gantt-net-span${net.statusCode >= 400 ? ' is-error' : ''}`}
-                    style={{ left: `${net.pctStart}%`, width: `${net.pctWidth}%` }}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      seekTo(net.startMs)
-                    }}
-                    title={`${net.method} ${net.url} (${net.statusCode}) · ${net.durationMs}ms`}
-                  />
-                ))}
-              </div>
-            )}
-
-            {/* Primary Scrubber Rail with Progress Fill & Marker Dots */}
-            <div className="or-gantt-rail">
-              <div className="replay-marker-track__rail" />
-              <div
-                className="replay-marker-track__fill"
-                style={{ width: `${progressPct}%` }}
-              />
-
-              {visibleMarkers.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  className={`replay-marker-dot replay-marker-dot--${m.tone}`}
-                  style={{ left: `${m.pct}%` }}
-                  aria-label={`${m.formattedTime} ${m.badgeLabel}: ${m.text}`}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    seekTo(m.offsetMs)
-                  }}
-                >
-                  <span className="replay-marker-tooltip" aria-hidden="true">
-                    <strong>{m.formattedTime}</strong> · {m.text}
-                  </span>
-                </button>
-              ))}
-
-              {/* Playhead Needle Line */}
-              <div
-                className="or-gantt-needle"
-                style={{ left: `${progressPct}%` }}
-                aria-hidden="true"
-              />
-            </div>
-          </div>
+          <TimelineTracks
+            defs={trackDefs}
+            durationMs={durationMs}
+            currentMs={currentTimeMs}
+            onSeek={seekTo}
+            expanded={timelineExpanded}
+            onExpandedChange={changeTimelineExpanded}
+          />
         </div>
       </div>
     </div>
