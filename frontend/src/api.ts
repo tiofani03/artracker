@@ -204,9 +204,27 @@ export type AlertChannel = {
   last_sent_at: string | null
   last_error: string
   created_at: string
+  origin: 'linked' | 'manual'
+  destination: string
+  active: boolean
+}
+
+export type AlertBotMode = 'tenant' | 'shared'
+export type AlertDetailLevel = 'minimal' | 'full'
+
+export type AlertBot = {
+  mode: AlertBotMode
+  configured: boolean
+  bot_username: string
+  status: '' | 'active' | 'invalid'
+  status_reason: string
+  detail_level: AlertDetailLevel
+  updated_at: string | null
 }
 
 export type AlertChannelsResponse = {
+  mode: AlertBotMode
+  bot: AlertBot
   telegram: { configured: boolean; bot_username: string }
   items: AlertChannel[]
 }
@@ -248,6 +266,14 @@ export const alertApi = {
     request<void>(`/projects/${projectId}/alerts/channels/${channelId}`, { method: 'DELETE' }),
   testChannel: (projectId: number, channelId: number) =>
     post<void>(`/projects/${projectId}/alerts/channels/${channelId}/test`),
+  createChannel: (projectId: number, body: { chat: string; label: string }) =>
+    post<AlertChannel & { warning?: string }>(`/projects/${projectId}/alerts/channels`, body),
+  bot: (orgId: number) => request<AlertBot>(`/orgs/${orgId}/alerts/telegram-bot`),
+  putBot: (orgId: number, body: { token: string; detail_level?: AlertDetailLevel }) =>
+    request<AlertBot>(`/orgs/${orgId}/alerts/telegram-bot`, { method: 'PUT', body: JSON.stringify(body) }),
+  patchBot: (orgId: number, body: { detail_level: AlertDetailLevel }) =>
+    request<AlertBot>(`/orgs/${orgId}/alerts/telegram-bot`, { method: 'PATCH', body: JSON.stringify(body) }),
+  deleteBot: (orgId: number) => request<void>(`/orgs/${orgId}/alerts/telegram-bot`, { method: 'DELETE' }),
   incidents: (projectId: number, status: 'firing' | 'resolved' | 'all' = 'all') =>
     request<{ items: AlertIncident[] }>(`/projects/${projectId}/alerts/incidents?status=${status}`),
 }

@@ -103,7 +103,7 @@ type fakeNotifier struct {
 	err  error
 }
 
-func (f *fakeNotifier) SendMessage(_ context.Context, _ int64, html string) error {
+func (f *fakeNotifier) SendMessage(_ context.Context, _ string, html string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sent = append(f.sent, html)

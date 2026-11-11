@@ -8,6 +8,7 @@ import (
 	"html"
 	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -174,7 +175,7 @@ func (s *Service) reply(ctx context.Context, chatID int64, text string) {
 	if s.n == nil {
 		return
 	}
-	if err := s.n.SendMessage(ctx, chatID, text); err != nil {
+	if err := s.n.SendMessage(ctx, strconv.FormatInt(chatID, 10), text); err != nil {
 		slog.Warn("alerts: link reply failed", "chat_id", chatID, "error_class", fmt.Sprintf("%T", err))
 	}
 }

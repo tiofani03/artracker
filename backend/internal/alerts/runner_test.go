@@ -121,14 +121,14 @@ func TestRunDispatchesAndEvaluates(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if got := fn.Sent(); len(got) == 0 || got[0].ChatID != 77 {
+	if got := fn.Sent(); len(got) == 0 || got[0].chat != "77" {
 		t.Fatalf("sent = %+v", got)
 	}
 }
 
 type panicNotifier struct{ calls chan struct{} }
 
-func (p *panicNotifier) SendMessage(context.Context, int64, string) error {
+func (p *panicNotifier) SendMessage(context.Context, string, string) error {
 	select {
 	case p.calls <- struct{}{}:
 	default:
@@ -189,7 +189,7 @@ func TestSendTest(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := fn.Sent()
-	if len(got) != 1 || got[0].ChatID != 555 || !strings.Contains(got[0].HTML, "Test alert") {
+	if len(got) != 1 || got[0].chat != "555" || !strings.Contains(got[0].HTML, "Test alert") {
 		t.Fatalf("sent = %+v", got)
 	}
 	var lastErr string

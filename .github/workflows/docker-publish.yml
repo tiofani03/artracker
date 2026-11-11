@@ -67,6 +67,13 @@ jobs:
           script: |
             set -e
             cd ~/artracker
+            # Pre-flight: in tenant mode (the default) the API refuses to boot
+            # without the alerts master key. Stop here, before anything is
+            # pulled or restarted, so the running containers stay up.
+            grep -Eq '^(ALERTS_MASTER_KEY|ALERTS_MASTER_KEY_FILE)=.+|^ALERTS_BOT_MODE=shared' .env || {
+              echo "::error::set ALERTS_MASTER_KEY or ALERTS_BOT_MODE=shared in .env before deploying"
+              exit 1
+            }
             git fetch --prune origin
             git reset --hard origin/main
             if docker compose -f docker-compose.prod.yml pull --quiet; then

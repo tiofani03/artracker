@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -17,7 +16,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 
-	"github.com/tiofani03/artracker/backend/internal/alerts"
 	"github.com/tiofani03/artracker/backend/internal/analytics"
 	"github.com/tiofani03/artracker/backend/internal/auth"
 	"github.com/tiofani03/artracker/backend/internal/config"
@@ -163,31 +161,10 @@ func main() {
 	defer stopAlerts()
 	var alertsWG sync.WaitGroup
 	if pool != nil {
-		// Typed-nil guard: n and src stay nil interfaces unless a token is set.
-		// Only an empty token turns Telegram off; a failing getMe is retried.
-		var n alerts.Notifier
-		var src alerts.UpdateSource
-		var tg *alerts.Telegram
-		if cfg.TelegramBotToken != "" {
-			tg = alerts.NewTelegram(cfg.TelegramBotToken, cfg.TelegramAPIBase, nil)
-			n, src = tg, tg
-		}
-		svc := alerts.NewService(pool, n, cfg.PublicURL)
-		if tg != nil {
-			meCtx, meCancel := context.WithTimeout(ctx, 10*time.Second)
-			name, err := tg.GetMe(meCtx)
-			meCancel()
-			if err != nil {
-				log.Warn("telegram getMe failed; retrying in the background", "error_class", fmt.Sprintf("%T", err))
-				alertsWG.Add(1)
-				go func() {
-					defer alertsWG.Done()
-					svc.RetryBotUsername(alertsCtx, tg.GetMe)
-				}()
-			} else {
-				svc.SetBotUsername(name)
-				log.Info("telegram alerts configured", "bot", name)
-			}
+		svc, src, err := buildAlerts(ctx, alertsCtx, &alertsWG, cfg, pool, log)
+		if err != nil {
+			log.Error("alerts setup failed", "err", err)
+			os.Exit(1)
 		}
 		h.WithAlerts(svc)
 		if cfg.AlertsWorker {

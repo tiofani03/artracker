@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -24,7 +25,7 @@ func TestSendMessagePostsHTML(t *testing.T) {
 	defer srv.Close()
 
 	tg := NewTelegram(testToken, srv.URL+"/", nil)
-	if err := tg.SendMessage(context.Background(), -100123, "<b>hi</b>"); err != nil {
+	if err := tg.SendMessage(context.Background(), "-100123", "<b>hi</b>"); err != nil {
 		t.Fatal(err)
 	}
 	if gotMethod != http.MethodPost || gotPath != "/bot"+testToken+"/sendMessage" {
@@ -70,7 +71,7 @@ func TestSendMessageErrorMapping(t *testing.T) {
 				_, _ = w.Write([]byte(c.body))
 			}))
 			defer srv.Close()
-			err := NewTelegram(testToken, srv.URL, nil).SendMessage(context.Background(), 1, "x")
+			err := NewTelegram(testToken, srv.URL, nil).SendMessage(context.Background(), "1", "x")
 			if err == nil || !c.check(err) {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -134,7 +135,7 @@ func TestTransportErrorDoesNotLeakToken(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	url := srv.URL
 	srv.Close() // connection refused
-	err := NewTelegram(testToken, url, nil).SendMessage(context.Background(), 1, "x")
+	err := NewTelegram(testToken, url, nil).SendMessage(context.Background(), "1", "x")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -165,7 +166,7 @@ func TestRetryAfterFallbacks(t *testing.T) {
 				_, _ = w.Write([]byte(c.body))
 			}))
 			defer srv.Close()
-			err := NewTelegram(testToken, srv.URL, nil).SendMessage(context.Background(), 1, "x")
+			err := NewTelegram(testToken, srv.URL, nil).SendMessage(context.Background(), "1", "x")
 			var e *RetryAfterError
 			if !errors.As(err, &e) || e.Seconds != c.want {
 				t.Fatalf("want Seconds %d, got %v", c.want, err)
@@ -173,3 +174,101 @@ func TestRetryAfterFallbacks(t *testing.T) {
 		})
 	}
 }
+
+func TestSendMessageNumericChatIsJSONNumber(t *testing.T) {
+	st := newStrictTelegramServer(t)
+	if err := NewTelegram(testToken, st.URL, nil).SendMessage(context.Background(), "-100123", "x"); err != nil {
+		t.Fatal(err)
+	}
+	c := st.Calls("sendMessage")
+	if len(c) != 1 || c[0].Body["chat_id"] != float64(-100123) {
+		t.Fatalf("calls = %+v", c)
+	}
+}
+
+func TestSendMessageUsernameChatIsJSONString(t *testing.T) {
+	st := newStrictTelegramServer(t)
+	if err := NewTelegram(testToken, st.URL, nil).SendMessage(context.Background(), "@news", "x"); err != nil {
+		t.Fatal(err)
+	}
+	c := st.Calls("sendMessage")
+	if len(c) != 1 || c[0].Body["chat_id"] != "@news" {
+		t.Fatalf("calls = %+v", c)
+	}
+}
+
+func TestGetBotReturnsIDAndUsername(t *testing.T) {
+	st := newStrictTelegramServer(t)
+	tg := NewTelegram(testToken, st.URL, nil)
+	b, err := tg.GetBot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.ID != 424242 || b.Username != "TestBot" {
+		t.Fatalf("bot = %+v", b)
+	}
+	name, err := tg.GetMe(context.Background())
+	if err != nil || name != "TestBot" {
+		t.Fatalf("GetMe = %q, %v", name, err)
+	}
+}
+
+func TestUnauthorizedMapsToErrUnauthorized(t *testing.T) {
+	st := newStrictTelegramServer(t)
+	tg := NewTelegram(testToken, st.URL, nil)
+	cases := map[string]struct {
+		status int
+		body   string
+	}{
+		"envelope":     {http.StatusUnauthorized, `{"ok":false,"error_code":401,"description":"Unauthorized"}`},
+		"bare http":    {http.StatusUnauthorized, `<html><body>401 Unauthorized</body></html>`},
+		"envelope 200": {http.StatusOK, `{"ok":false,"error_code":401,"description":"Unauthorized"}`},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			st.SetReply("sendMessage", c.status, c.body)
+			st.SetReply("getMe", c.status, c.body)
+			errs := []error{
+				tg.SendMessage(context.Background(), "1", "x"),
+			}
+			_, e := tg.GetBot(context.Background())
+			errs = append(errs, e)
+			for _, err := range errs {
+				if !errors.Is(err, ErrUnauthorized) {
+					t.Fatalf("err = %v, want ErrUnauthorized", err)
+				}
+				if strings.Contains(err.Error(), "SECRET") || strings.Contains(err.Error(), st.URL) {
+					t.Fatalf("error leaks token or url: %q", err)
+				}
+			}
+		})
+	}
+}
+
+func TestStrictServerRejectsUnexpectedMethod(t *testing.T) {
+	rec := &errRecorder{}
+	st := newStrictTelegramServerReporting(t, rec)
+	if _, err := NewTelegram(testToken, st.URL, nil).GetUpdates(context.Background(), 0, 0); err == nil {
+		t.Fatal("expected an error from the unsupported method")
+	}
+	if rec.count() == 0 {
+		t.Fatal("strict server did not report getUpdates as an error")
+	}
+	if c := st.Calls("getUpdates"); len(c) != 1 {
+		t.Fatalf("getUpdates not recorded: %+v", c)
+	}
+	// supported methods stay silent
+	before := rec.count()
+	_ = NewTelegram(testToken, st.URL, nil).SendMessage(context.Background(), "1", "x")
+	if rec.count() != before {
+		t.Fatal("sendMessage must not be reported")
+	}
+}
+
+type errRecorder struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (r *errRecorder) Errorf(string, ...any) { r.mu.Lock(); r.n++; r.mu.Unlock() }
+func (r *errRecorder) count() int            { r.mu.Lock(); defer r.mu.Unlock(); return r.n }
