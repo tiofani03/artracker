@@ -197,8 +197,22 @@ async function main() {
     },
     buffering: () => document.querySelector('.sr-badge') !== null,
     chunkPayloads: () => chunks,
-    mountPlayer() {
-      root.render(<ReplayPlayer session={sessionItem} chunks={playerChunks} timelineEvents={[]} projectPlatform="android" />)
+    mountPlayer(opts?: { fillViewport?: boolean }) {
+      const player = (
+        <ReplayPlayer session={sessionItem} chunks={playerChunks} timelineEvents={[]} projectPlatform="android" />
+      )
+      if (!opts?.fillViewport) {
+        root.render(player)
+        return
+      }
+      // Same nesting as the dashboard's replay page: container (fixed height) > grid > player column
+      root.render(
+        <div className="dash-replay-container" style={{ height: '100dvh' }}>
+          <div className="dash-replay-grid" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
+            <div className="or-player-col">{player}</div>
+          </div>
+        </div>,
+      )
     },
     async settle() {
       await session?.whenIdle()

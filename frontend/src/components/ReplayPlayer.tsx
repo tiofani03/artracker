@@ -25,7 +25,9 @@ import {
   routeStrip,
 } from '../replay/playback'
 import { activeScreenFrameAt } from '../replay/screen'
-import { nextScrollTop } from '../replay/followScroll'
+import { fitScale } from '../replay/fit'
+import { filterMarkers, type MarkerFilter } from '../replay/markerFilter'
+import { ReplaySidePanel, type SidePanelTab } from './replay/ReplaySidePanel'
 import { adjacentEventOffset, resolveHotkey, SEEK_STEP_MS } from '../replay/hotkeys'
 import { fitScreenStage } from '../replay/screenPlanner'
 import { probeScreenSession } from '../replay/screenProbe'
@@ -42,7 +44,7 @@ export type TimelineMarker = {
   tone: 'error' | 'warn' | 'info'
   badgeLabel: string
   text: string
-  category: 'error' | 'network' | 'gesture' | 'other'
+  category: 'error' | 'network' | 'gesture' | 'perf' | 'other'
   rawEvent?: TelemetryEvent
 }
 
@@ -516,20 +518,54 @@ export default function ReplayPlayer({
     return spans
   }, [timelineEvents, baseTimestampMs, durationMs])
 
-  const [activeFilter, setActiveFilter] = useState<'all' | 'error' | 'network' | 'gesture'>('all')
+  const [activeFilter, setActiveFilter] = useState<MarkerFilter>('all')
   const [followPlayhead, setFollowPlayhead] = useState(true)
-  const [expandedEventId, setExpandedEventId] = useState<string | null>(null)
-  const activeItemRef = useRef<HTMLDivElement | null>(null)
-  const activityListRef = useRef<HTMLDivElement | null>(null)
+  const [sideTab, setSideTab] = useState<SidePanelTab>('events')
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const fitRef = useRef<HTMLDivElement | null>(null)
+  const [fit, setFit] = useState(1)
 
-  const visibleMarkers = useMemo(() => {
-    if (activeFilter === 'all') return markers
-    return markers.filter((m) => m.category === activeFilter)
-  }, [markers, activeFilter])
+  const visibleMarkers = useMemo(() => filterMarkers(markers, activeFilter), [markers, activeFilter])
 
-  const errorCount = useMemo(() => markers.filter((m) => m.category === 'error').length, [markers])
-  const gestureCount = useMemo(() => markers.filter((m) => m.category === 'gesture').length, [markers])
-  const networkCount = useMemo(() => markers.filter((m) => m.category === 'network').length, [markers])
+  // Close the header ⋯ menu on an outside press or Escape
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [menuOpen])
+
+  // Scale the device chassis down so it always fits the stage (no fixed min-height, no page scroll)
+  useEffect(() => {
+    const stageEl = stageWrapRef.current
+    const fitEl = fitRef.current
+    if (!stageEl || !fitEl || typeof ResizeObserver === 'undefined') return
+    const update = () => {
+      const cs = getComputedStyle(stageEl)
+      const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)
+      const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
+      const next = fitScale(
+        { w: stageEl.clientWidth - padX, h: stageEl.clientHeight - padY },
+        { w: fitEl.offsetWidth, h: fitEl.offsetHeight },
+      )
+      setFit(Math.round(next * 1000) / 1000)
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(stageEl)
+    ro.observe(fitEl)
+    return () => ro.disconnect()
+  }, [])
 
   // Mount the rrweb player once per web event set; resizes go through $set below (Review Focus #4)
   useEffect(() => {
@@ -663,17 +699,6 @@ export default function ReplayPlayer({
     const past = markers.filter((m) => m.offsetMs <= currentTimeMs)
     return past.length > 0 ? past[past.length - 1] : markers[0]
   }, [markers, currentTimeMs])
-
-  // Follow Playhead: keep the active event visible by scrolling ONLY the list. `scrollIntoView` would also
-  // scroll the page, pushing the video out of view. Runs on every active-event change (playing or seeking).
-  useEffect(() => {
-    if (!followPlayhead) return
-    const list = activityListRef.current
-    const item = activeItemRef.current
-    if (!list || !item) return
-    const top = nextScrollTop(list, item)
-    if (top !== null) list.scrollTop = top
-  }, [activeMarker?.id, followPlayhead])
 
   // Keyboard shortcuts. The handlers are re-created every render, so the single listener reads them via a ref.
   const hotkeyRef = useRef({ togglePlay, seekTo, cycleSpeed, markers, currentTimeMs })
@@ -871,7 +896,7 @@ export default function ReplayPlayer({
 
   return (
     <div className="replay-player-shell">
-      <div className="or-theater" ref={stageWrapRef}>
+      <div className="or-theater or-workspace">
         {/* Unified Single Header (Replaces Staked Duplicate Headers) */}
         <div className="or-unified-header">
           <div className="or-unified-header__left">
@@ -887,46 +912,6 @@ export default function ReplayPlayer({
           </div>
 
           <div className="or-unified-header__right">
-            <div className="dash-seg" role="group" aria-label="Device viewport mode">
-              {(
-                [
-                  { id: 'auto', label: 'Auto' },
-                  { id: 'web', label: 'Web' },
-                  { id: 'ios', label: 'iOS' },
-                  { id: 'android', label: 'Android' },
-                ] as { id: DeviceMode; label: string }[]
-              ).map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  className={`dash-seg__btn${deviceMode === m.id ? ' is-active' : ''}`}
-                  aria-pressed={deviceMode === m.id}
-                  onClick={() => onDeviceModeChange?.(m.id)}
-                  title={m.id === 'auto' ? `Auto-detect: ${detection.label}` : `Switch to ${m.label}`}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
-
-            {replayModeLabel(model) && (
-              <span className="or-res-chip" title="How this replay was recorded">
-                {replayModeLabel(model)}
-              </span>
-            )}
-
-            <span className="or-res-chip">
-              {model.kind === 'web' && model.viewport
-                ? `${model.viewport.width} × ${model.viewport.height}`
-                : model.kind === 'screen' && model.session.index.frames[0]
-                  ? `${model.session.index.frames[0].vw} × ${model.session.index.frames[0].vh}`
-                  : effectivePlatform === 'ios'
-                  ? '393 × 852'
-                  : effectivePlatform === 'android'
-                    ? '412 × 915'
-                    : '1440 × 900'}
-            </span>
-
             {failedChunks > 0 && (
               <span className="or-res-chip or-res-chip--warn" title="Some replay chunks could not be downloaded or parsed">
                 {failedChunks} chunk{failedChunks === 1 ? '' : 's'} could not be read
@@ -936,10 +921,72 @@ export default function ReplayPlayer({
             <span className="or-unified-header__duration">
               {formatDurationMs(durationMs)}
             </span>
+
+            <div className="or-header-menu" ref={menuRef}>
+              <button
+                type="button"
+                className="or-header-menu__btn"
+                aria-label="Player options"
+                aria-haspopup="true"
+                aria-expanded={menuOpen}
+                onClick={() => setMenuOpen((o) => !o)}
+              >
+                ⋯
+              </button>
+              {menuOpen && (
+                <div className="or-header-menu__panel" role="menu" aria-label="Player options">
+                  <div className="or-header-menu__row">
+                    <span className="or-header-menu__label">Device viewport</span>
+                    <div className="dash-seg" role="group" aria-label="Device viewport mode">
+                      {(
+                        [
+                          { id: 'auto', label: 'Auto' },
+                          { id: 'web', label: 'Web' },
+                          { id: 'ios', label: 'iOS' },
+                          { id: 'android', label: 'Android' },
+                        ] as { id: DeviceMode; label: string }[]
+                      ).map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          className={`dash-seg__btn${deviceMode === m.id ? ' is-active' : ''}`}
+                          aria-pressed={deviceMode === m.id}
+                          onClick={() => onDeviceModeChange?.(m.id)}
+                          title={m.id === 'auto' ? `Auto-detect: ${detection.label}` : `Switch to ${m.label}`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="or-header-menu__row">
+                    <span className="or-header-menu__label">Recording</span>
+                    <span className="or-res-chip" title="How this replay was recorded">
+                      {replayModeLabel(model) ?? 'Standard'}
+                    </span>
+                  </div>
+                  <div className="or-header-menu__row">
+                    <span className="or-header-menu__label">Resolution</span>
+                    <span className="or-res-chip">
+                      {model.kind === 'web' && model.viewport
+                        ? `${model.viewport.width} × ${model.viewport.height}`
+                        : model.kind === 'screen' && model.session.index.frames[0]
+                          ? `${model.session.index.frames[0].vw} × ${model.session.index.frames[0].vh}`
+                          : effectivePlatform === 'ios'
+                            ? '393 × 852'
+                            : effectivePlatform === 'android'
+                              ? '412 × 915'
+                              : '1440 × 900'}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
         {/* Dedicated Full-Width Route / Screen Location Strip */}
+        <div className="or-stage-col">
         {effectivePlatform !== 'web' && (
           <div className="or-route-strip">
             <span className="or-route-strip__label">
@@ -955,7 +1002,12 @@ export default function ReplayPlayer({
         )}
 
         {/* OpenReplay Studio Stage Canvas */}
-        <div className="or-stage">
+        <div className="or-stage" ref={stageWrapRef}>
+          <div
+            className={`or-stage__fit or-stage__fit--${effectivePlatform === 'web' ? 'web' : 'mobile'}`}
+            ref={fitRef}
+            style={{ transform: `scale(${fit})` }}
+          >
           {effectivePlatform === 'web' && (
             <div className="or-web-frame">
               <div className="or-web-frame__chrome">
@@ -1023,7 +1075,21 @@ export default function ReplayPlayer({
               </div>
             </div>
           )}
+          </div>
         </div>
+        </div>
+
+        <ReplaySidePanel
+          markers={markers}
+          activeMarkerId={activeMarker?.id ?? null}
+          activeFilter={activeFilter}
+          onFilterChange={setActiveFilter}
+          followPlayhead={followPlayhead}
+          onFollowChange={setFollowPlayhead}
+          onSeek={seekTo}
+          tab={sideTab}
+          onTabChange={setSideTab}
+        />
 
         {/* Unified Integrated Transport Bar & Multi-Lane Gantt Scrubber */}
         <div className="or-transport-bar">
@@ -1051,44 +1117,6 @@ export default function ReplayPlayer({
               >
                 {playbackSpeed}x
               </button>
-            </div>
-
-            {/* Quick Filter Badges for the Timeline */}
-            <div className="or-transport-filters" role="group" aria-label="Filter events">
-              <button
-                type="button"
-                className={`or-transport-filter-btn${activeFilter === 'all' ? ' is-active' : ''}`}
-                onClick={() => setActiveFilter('all')}
-              >
-                All ({markers.length})
-              </button>
-              {errorCount > 0 && (
-                <button
-                  type="button"
-                  className={`or-transport-filter-btn or-transport-filter-btn--error${activeFilter === 'error' ? ' is-active' : ''}`}
-                  onClick={() => setActiveFilter('error')}
-                >
-                  Errors ({errorCount})
-                </button>
-              )}
-              {networkCount > 0 && (
-                <button
-                  type="button"
-                  className={`or-transport-filter-btn or-transport-filter-btn--network${activeFilter === 'network' ? ' is-active' : ''}`}
-                  onClick={() => setActiveFilter('network')}
-                >
-                  Network ({networkCount})
-                </button>
-              )}
-              {gestureCount > 0 && (
-                <button
-                  type="button"
-                  className={`or-transport-filter-btn or-transport-filter-btn--gesture${activeFilter === 'gesture' ? ' is-active' : ''}`}
-                  onClick={() => setActiveFilter('gesture')}
-                >
-                  Gestures ({gestureCount})
-                </button>
-              )}
             </div>
           </div>
 
@@ -1191,139 +1219,6 @@ export default function ReplayPlayer({
             </div>
           </div>
         </div>
-      </div>
-
-      {/* Synchronized Activity Stream (Bounded with Auto-Scroll, Eliminates Page Scroll) */}
-      <div className="or-activity-panel">
-        <div className="or-activity-panel__head">
-          <div className="or-activity-panel__head-left">
-            <span className="or-activity-panel__title">Correlated Activity Stream</span>
-            <span className="badge badge--role">{visibleMarkers.length} event{visibleMarkers.length === 1 ? '' : 's'}</span>
-          </div>
-
-          <label className="or-activity-follow-label" title="Auto-scroll to follow video playhead">
-            <input
-              type="checkbox"
-              checked={followPlayhead}
-              onChange={(e) => setFollowPlayhead(e.target.checked)}
-            />
-            <span>Follow Playhead</span>
-          </label>
-        </div>
-
-        {visibleMarkers.length === 0 ? (
-          <p className="dash-empty" style={{ padding: '1.5rem 0', margin: 0 }}>
-            No events match the selected filter.
-          </p>
-        ) : (
-          <div
-            className="or-activity-list"
-            ref={activityListRef}
-            onWheel={() => setFollowPlayhead(false)}
-            onTouchMove={() => setFollowPlayhead(false)}
-          >
-            {visibleMarkers.map((m) => {
-              const isCurrent = activeMarker?.id === m.id
-              const isExpanded = expandedEventId === m.id
-              const attrs = (m.rawEvent?.attributes || {}) as Record<string, unknown>
-              const hasDetails = Object.keys(attrs).length > 0 || Boolean(m.rawEvent?.environment)
-
-              return (
-                <div
-                  key={m.id}
-                  ref={isCurrent ? activeItemRef : null}
-                  className={`or-activity-row${isCurrent ? ' is-active' : ''}${isExpanded ? ' is-expanded' : ''}`}
-                >
-                  <div
-                    className="or-activity-row__bar"
-                    onClick={() => seekTo(m.offsetMs)}
-                  >
-                    <span className="dash-code or-activity-time">{m.formattedTime}</span>
-                    <span
-                      className={`badge ${
-                        m.tone === 'error'
-                          ? 'badge--exception'
-                          : m.tone === 'warn'
-                            ? 'badge--console'
-                            : 'badge--network'
-                      }`}
-                    >
-                      {m.badgeLabel}
-                    </span>
-                    <span className="or-activity-text" title={m.text}>{m.text}</span>
-
-                    {hasDetails && (
-                      <button
-                        type="button"
-                        className="or-activity-expand-btn"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setExpandedEventId(isExpanded ? null : m.id)
-                        }}
-                        aria-expanded={isExpanded}
-                        title={isExpanded ? 'Collapse' : 'Inspect details'}
-                      >
-                        {isExpanded ? '▴' : '▾'}
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Inline Technical Inspector */}
-                  {isExpanded && (
-                    <div className="or-activity-expanded">
-                      <div className="or-activity-meta-grid">
-                        {m.rawEvent?.environment && (
-                          <div className="or-activity-meta-item">
-                            <span className="or-activity-meta-k">Env:</span>
-                            <span className="or-activity-meta-v">{m.rawEvent.environment}</span>
-                          </div>
-                        )}
-                        {m.rawEvent?.release_version && (
-                          <div className="or-activity-meta-item">
-                            <span className="or-activity-meta-k">Release:</span>
-                            <span className="or-activity-meta-v">{m.rawEvent.release_version}</span>
-                          </div>
-                        )}
-                        {Object.entries(attrs)
-                          .filter(([k, v]) => v !== undefined && v !== null && k !== 'stack')
-                          .slice(0, 6)
-                          .map(([k, v]) => (
-                            <div key={k} className="or-activity-meta-item">
-                              <span className="or-activity-meta-k">{k}:</span>
-                              <span className="or-activity-meta-v" title={String(v)}>
-                                {typeof v === 'object' ? JSON.stringify(v) : String(v)}
-                              </span>
-                            </div>
-                          ))}
-                      </div>
-
-                      {typeof attrs.stack === 'string' && attrs.stack && (
-                        <div className="or-activity-stack-wrap">
-                          <div className="or-activity-stack-head">
-                            <span>Stack Trace</span>
-                            <button
-                              type="button"
-                              className="dash-btn dash-btn--sm"
-                              style={{ padding: '1px 6px', fontSize: '0.625rem' }}
-                              onClick={() => {
-                                void navigator.clipboard.writeText(String(attrs.stack))
-                              }}
-                            >
-                              Copy
-                            </button>
-                          </div>
-                          <pre className="dash-code or-activity-stack-pre">
-                            {String(attrs.stack)}
-                          </pre>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
       </div>
     </div>
   )
