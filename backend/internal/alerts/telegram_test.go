@@ -142,3 +142,34 @@ func TestTransportErrorDoesNotLeakToken(t *testing.T) {
 		t.Fatalf("token leaked: %v", err)
 	}
 }
+
+func TestRetryAfterFallbacks(t *testing.T) {
+	cases := []struct {
+		name   string
+		header string
+		body   string
+		want   int
+	}{
+		{"envelope", "", `{"ok":false,"error_code":429,"parameters":{"retry_after":7}}`, 7},
+		{"header", "3", `{"ok":false,"error_code":429,"description":"Too Many Requests"}`, 3},
+		{"html body", "", `<html>429 Too Many Requests</html>`, 5},
+		{"zero retry_after", "", `{"ok":false,"error_code":429,"parameters":{"retry_after":0}}`, 5},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if c.header != "" {
+					w.Header().Set("Retry-After", c.header)
+				}
+				w.WriteHeader(429)
+				_, _ = w.Write([]byte(c.body))
+			}))
+			defer srv.Close()
+			err := NewTelegram(testToken, srv.URL, nil).SendMessage(context.Background(), 1, "x")
+			var e *RetryAfterError
+			if !errors.As(err, &e) || e.Seconds != c.want {
+				t.Fatalf("want Seconds %d, got %v", c.want, err)
+			}
+		})
+	}
+}

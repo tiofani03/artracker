@@ -34,6 +34,20 @@ func NewTelegram(token, apiBase string, hc *http.Client) *Telegram {
 	return &Telegram{token: token, apiBase: strings.TrimRight(apiBase, "/"), hc: hc}
 }
 
+const defaultRetryAfterSeconds = 5
+
+// retryAfterSeconds prefers the envelope value, then the Retry-After header,
+// then a fixed default, so the result is always >= 1.
+func retryAfterSeconds(param int, header string) int {
+	if param > 0 {
+		return param
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(header)); err == nil && n > 0 {
+		return n
+	}
+	return defaultRetryAfterSeconds
+}
+
 // RetryAfterError is a 429; retry after Seconds.
 type RetryAfterError struct{ Seconds int }
 
@@ -177,7 +191,7 @@ func (t *Telegram) call(ctx context.Context, httpMethod, method string, q url.Va
 	}
 	switch {
 	case code == http.StatusTooManyRequests:
-		return nil, &RetryAfterError{Seconds: env.Parameters.RetryAfter}
+		return nil, &RetryAfterError{Seconds: retryAfterSeconds(env.Parameters.RetryAfter, resp.Header.Get("Retry-After"))}
 	case code == http.StatusBadRequest && env.Parameters.MigrateToChatID != 0:
 		return nil, &MigratedError{NewChatID: env.Parameters.MigrateToChatID}
 	case code == http.StatusForbidden:
