@@ -73,6 +73,13 @@ func (f *fakeBotAPI) callsOf(method string) []botAPICall {
 	return out
 }
 
+// allCalls returns a copy of every recorded call, in order.
+func (f *fakeBotAPI) allCalls() []botAPICall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]botAPICall(nil), f.calls...)
+}
+
 // methods lists the Bot API methods called so far, in order.
 func (f *fakeBotAPI) methods() []string {
 	f.mu.Lock()
@@ -457,6 +464,11 @@ func TestBotEndpointsNeverEchoToken(t *testing.T) {
 	record("PUT shared", 404, code, body)
 
 	out := logs()
+	// Positive control: the 500 and unreachable paths log this line, so an
+	// empty capture (a broken logger swap) cannot pass the leak check below.
+	if !strings.Contains(out, "bot token check failed") {
+		t.Fatalf("log capture is missing the expected warning; captured: %q", out)
+	}
 	for i, body := range append(bodies, []byte(out)) {
 		for _, needle := range []string{hBotToken, hBotToken[:9] + ":", strings.SplitN(hBotToken, ":", 2)[1]} {
 			if strings.Contains(string(body), needle) {
@@ -898,5 +910,91 @@ func TestCreateChannelCrossProjectIsolation(t *testing.T) {
 	wantError(t, "org B test of org A channel", code, body, 404, "channel not found")
 	if n := len(b.api.callsOf("sendMessage")); n != 0 {
 		t.Fatalf("sendMessage called %d times for a foreign channel", n)
+	}
+}
+
+// hBotTokenB is org B's bot token in the two-bot test; distinct from hBotToken.
+const hBotTokenB = "987654321:BBHandlerFakeTokenForTests_zyxwvuTSR"
+
+// TestTwoOrgBotsStaySeparate: with a bot in each organisation, every request
+// for org A's project goes through A's token and A's bot is the one shown,
+// and the same for B.
+func TestTwoOrgBotsStaySeparate(t *testing.T) {
+	b := newBotEnv(t, "bot-two")
+	connect := func(org int64, token, username string, hdr map[string]string) {
+		t.Helper()
+		b.api.set("getMe", 200, `{"ok":true,"result":{"id":1,"username":"`+username+`"}}`)
+		defer b.api.reset("getMe")
+		if code, body := b.call(t, "PUT", b.botPath(org), `{"token":"`+token+`"}`, hdr); code != 200 {
+			t.Fatalf("PUT bot %s = %d %s", username, code, body)
+		}
+	}
+	connect(b.org, hBotToken, "BotA", b.admin)
+	connect(b.orgB, hBotTokenB, "BotB", b.adminB)
+
+	create := func(pid int64, chat string, hdr map[string]string) int64 {
+		t.Helper()
+		code, body := b.call(t, "POST", b.chanPath(pid), `{"chat":"`+chat+`","label":"Ops"}`, hdr)
+		if code != 201 {
+			t.Fatalf("create %s = %d %s", chat, code, body)
+		}
+		var ch channelResp
+		if err := json.Unmarshal(body, &ch); err != nil {
+			t.Fatal(err)
+		}
+		return ch.ID
+	}
+	chA := create(b.pid, "-1001111111111", b.admin)
+	chB := create(b.pidB, "-1002222222222", b.adminB)
+
+	for _, c := range []struct {
+		pid, id int64
+		hdr     map[string]string
+	}{{b.pid, chA, b.admin}, {b.pidB, chB, b.adminB}} {
+		if code, body := b.call(t, "POST", fmt.Sprintf("%s/%d/test", b.chanPath(c.pid), c.id), "", c.hdr); code != 204 {
+			t.Fatalf("test channel %d = %d %s", c.id, code, body)
+		}
+	}
+
+	type call struct{ token, method, chat string }
+	var got []call
+	for _, c := range b.api.allCalls() {
+		chat, _ := c.body["chat_id"].(string)
+		if f, ok := c.body["chat_id"].(float64); ok {
+			chat = fmt.Sprintf("%.0f", f)
+		}
+		got = append(got, call{c.token, c.method, chat})
+	}
+	want := []call{
+		{hBotToken, "getMe", ""},
+		{hBotTokenB, "getMe", ""},
+		{hBotToken, "sendMessage", "-1001111111111"},
+		{hBotTokenB, "sendMessage", "-1002222222222"},
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("Bot API calls (token, method, chat) =\n%v\nwant\n%v", got, want)
+	}
+
+	for _, c := range []struct {
+		pid      int64
+		hdr      map[string]string
+		username string
+	}{{b.pid, b.viewer, "BotA"}, {b.pidB, b.adminB, "BotB"}} {
+		code, body := b.call(t, "GET", b.chanPath(c.pid), "", c.hdr)
+		if code != 200 {
+			t.Fatalf("GET channels %d = %d %s", c.pid, code, body)
+		}
+		var out struct {
+			Bot botResp `json:"bot"`
+		}
+		if err := json.Unmarshal(body, &out); err != nil {
+			t.Fatal(err)
+		}
+		if !out.Bot.Configured || out.Bot.BotUsername != c.username {
+			t.Errorf("project %d bot = %+v, want %s", c.pid, out.Bot, c.username)
+		}
+		if strings.Contains(string(body), hBotToken) || strings.Contains(string(body), hBotTokenB) {
+			t.Fatalf("channels list leaks a token: %s", body)
+		}
 	}
 }
