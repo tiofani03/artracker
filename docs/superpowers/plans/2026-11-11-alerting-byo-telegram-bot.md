@@ -28,7 +28,7 @@
 - `Notifier.SendMessage` takes the chat as a **string** (decimal id or `@username`) so both modes share one interface; `NewService` still defaults to `shared` mode so existing constructors and tests keep working; `main.go` sets the configured mode.
 - One sealed blob per bot in `alert_bots.token_ciphertext`: `version(1) | wrapNonce(12) | wrappedDEK(48) | dataNonce(12) | ciphertext+tag`, a fresh random 32-byte data key per write wrapped under the master key; AAD = `"org:<id>|key:<keyID>"` for both wraps.
 - Telegram bot-token format check before any network call: `^[0-9]{5,15}:[A-Za-z0-9_-]{30,}$`.
-- Chat destination format: `^-?[0-9]{5,20}$` or `^@[A-Za-z][A-Za-z0-9_]{4,31}$`.
+- Chat destination format: `^-?[1-9][0-9]{4,19}$` or `^@[A-Za-z][A-Za-z0-9_]{4,31}$`.
 
 ## Review Focus
 
