@@ -44,6 +44,9 @@ func TestLoadRejectsWeakJWTSecretInProduction(t *testing.T) {
 func TestLoadAcceptsStrongJWTSecretInProduction(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("JWT_SECRET", "0123456789abcdef0123456789abcdef-strong")
+	t.Setenv("ALERTS_BOT_MODE", "shared") // tenant mode would also demand ALERTS_MASTER_KEY
+	t.Setenv("ALERTS_MASTER_KEY", "")
+	t.Setenv("ALERTS_MASTER_KEY_FILE", "")
 	if cfg := Load(); cfg.JWTSecret == "" {
 		t.Fatal("secret dropped")
 	}

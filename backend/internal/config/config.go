@@ -1,8 +1,10 @@
 package config
 
 import (
+	"encoding/base64"
 	"log/slog"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -59,6 +61,15 @@ type Config struct {
 	TelegramBotToken string
 	TelegramAPIBase  string
 	AlertsWorker     bool
+	// AlertsBotMode is "tenant" (each organisation connects its own bot, the
+	// default) or "shared" (one operator bot from TELEGRAM_BOT_TOKEN).
+	AlertsBotMode string
+	// AlertsMasterKey is the 32-byte key that encrypts per-tenant bot tokens;
+	// nil when unset (allowed in development and in shared mode). Never log it.
+	AlertsMasterKey []byte
+	// AlertsMasterKeyID labels the key and is bound into the encryption
+	// associated data, so it is restricted to [A-Za-z0-9._-]{1,32}.
+	AlertsMasterKeyID string
 }
 
 // Placeholders shipped in .env.example / used as the dev default; never valid in production.
@@ -119,6 +130,16 @@ func Load() Config {
 		slog.Warn("unrecognised ALERTS_WORKER value, keeping the alerts worker enabled", "value_length", len(rawWorker))
 	}
 
+	cfg.AlertsBotMode = loadAlertsBotMode()
+	cfg.AlertsMasterKey = loadAlertsMasterKey()
+	cfg.AlertsMasterKeyID = env("ALERTS_MASTER_KEY_ID", "v1")
+	if !masterKeyIDPattern.MatchString(cfg.AlertsMasterKeyID) {
+		panic("ALERTS_MASTER_KEY_ID must match [A-Za-z0-9._-]{1,32}")
+	}
+	if cfg.Env == "production" && cfg.AlertsBotMode == "tenant" && cfg.AlertsMasterKey == nil {
+		panic("ALERTS_MASTER_KEY (or ALERTS_MASTER_KEY_FILE) must be set when APP_ENV=production and ALERTS_BOT_MODE=tenant; generate one with: openssl rand -base64 32")
+	}
+
 	if cfg.R2Endpoint == "" && cfg.R2AccountID != "" {
 		cfg.R2Endpoint = "https://" + cfg.R2AccountID + ".r2.cloudflarestorage.com"
 	}
@@ -168,6 +189,58 @@ func loadTelegramToken() string {
 		panic("TELEGRAM_BOT_TOKEN_FILE is empty: " + path)
 	}
 	return token
+}
+
+var masterKeyIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,32}$`)
+
+// loadAlertsBotMode reads ALERTS_BOT_MODE: unset means "tenant"; only "tenant"
+// and "shared" are valid.
+func loadAlertsBotMode() string {
+	switch mode := strings.ToLower(strings.TrimSpace(os.Getenv("ALERTS_BOT_MODE"))); mode {
+	case "":
+		return "tenant"
+	case "tenant", "shared":
+		return mode
+	default:
+		panic("ALERTS_BOT_MODE must be \"tenant\" or \"shared\"")
+	}
+}
+
+// loadAlertsMasterKey returns the 32-byte master key from ALERTS_MASTER_KEY
+// (standard base64) or from the file named by ALERTS_MASTER_KEY_FILE, or nil
+// when neither is set. A key that is set but unusable always panics, in every
+// environment; whether an unset key is acceptable is decided by Load. Panic
+// messages never contain key material.
+func loadAlertsMasterKey() []byte {
+	direct := strings.TrimSpace(os.Getenv("ALERTS_MASTER_KEY"))
+	path := strings.TrimSpace(os.Getenv("ALERTS_MASTER_KEY_FILE"))
+	name := "ALERTS_MASTER_KEY"
+	encoded := direct
+	if path != "" {
+		if direct != "" {
+			panic("set only one of ALERTS_MASTER_KEY and ALERTS_MASTER_KEY_FILE")
+		}
+		name = "ALERTS_MASTER_KEY_FILE"
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			panic("ALERTS_MASTER_KEY_FILE cannot be read: " + err.Error())
+		}
+		encoded = strings.TrimSpace(string(raw))
+		if encoded == "" {
+			panic("ALERTS_MASTER_KEY_FILE is empty: " + path)
+		}
+	}
+	if encoded == "" {
+		return nil
+	}
+	key, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		panic(name + " is not valid standard base64")
+	}
+	if len(key) != 32 {
+		panic(name + " must decode to exactly 32 bytes (generate one with: openssl rand -base64 32)")
+	}
+	return key
 }
 
 // parseAlertsWorker reads ALERTS_WORKER. Unset or empty means enabled; any

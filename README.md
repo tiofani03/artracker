@@ -78,13 +78,31 @@ Anyone can create an organization and becomes its `owner`. Non-members get `404`
 
 ### Tests
 
-Handler and migration tests need Postgres: `TEST_DATABASE_URL=postgres://artracker:artracker@localhost:5433/artracker?sslmode=disable make test` (skipped when unset; CI provides it).
+Handler and migration tests need Postgres and are skipped when `TEST_DATABASE_URL` is unset (CI provides it). Use a separate database, never your dev one:
+
+```bash
+docker compose exec db psql -U artracker -d postgres -c "CREATE DATABASE artracker_test"
+TEST_DATABASE_URL='postgres://artracker:artracker@localhost:5433/artracker_test?sslmode=disable' make test
+```
+
+**These tests delete all users, organisations and projects in whatever database the DSN names.**
 
 ## Alerts (Telegram)
 
 Artracker can notify a Telegram chat when a project's errors need attention.
 
-1. Create a bot with [@BotFather](https://t.me/BotFather) and set `TELEGRAM_BOT_TOKEN` (one bot per deployment).
+Two bot modes, set with `ALERTS_BOT_MODE`:
+
+- `tenant` (default, the SaaS mode): each organisation connects its own bot (created with [@BotFather](https://t.me/BotFather)) in Settings. Bot tokens are stored encrypted with the master key.
+- `shared` (self-hosting): one operator bot for the whole deployment, from `TELEGRAM_BOT_TOKEN` or `TELEGRAM_BOT_TOKEN_FILE`.
+
+The master key is `ALERTS_MASTER_KEY` (standard base64 of exactly 32 bytes) or `ALERTS_MASTER_KEY_FILE` (a file holding it); generate one with `openssl rand -base64 32` and keep it safe, since losing it makes stored bot tokens unreadable. It is optional in development and in `shared` mode, but a key that is set and malformed stops startup. `ALERTS_MASTER_KEY_ID` (default `v1`) labels the key.
+
+**Upgrading:** `ALERTS_BOT_MODE` defaults to `tenant`, and in production that mode refuses to start without `ALERTS_MASTER_KEY`. An existing deployment must set either `ALERTS_MASTER_KEY` or `ALERTS_BOT_MODE=shared` **before** deploying this version (`docker-compose.prod.yml` already forwards the variables through `env_file: .env`).
+
+Steps:
+
+1. In `shared` mode set `TELEGRAM_BOT_TOKEN`; in `tenant` mode connect a bot in Settings.
 2. Run exactly **one** API instance as the alerts worker. It polls Telegram and evaluates alert rules. Set `ALERTS_WORKER=false` on every extra replica (the default is `true`).
 3. In the dashboard open **Alerts** for a project and use the connect link to add the bot to a group or a private chat, then send a test message.
 
