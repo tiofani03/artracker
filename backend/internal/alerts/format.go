@@ -21,6 +21,51 @@ type MessageContext struct {
 	ProjectID   int64
 	PublicURL   string
 	HasReplay   bool
+	// Detail is how much of the issue the message carries. The zero value
+	// formats as DetailFull.
+	Detail DetailLevel
+}
+
+func (mc MessageContext) minimal() bool { return mc.Detail == DetailMinimal }
+
+// genericPhrase replaces the issue title in minimal messages.
+func genericPhrase(k RuleKind) string {
+	switch k {
+	case KindRegression:
+		return "A resolved error occurred again"
+	case KindIssueSpike:
+		return "Error volume is unusually high"
+	default:
+		return "A new error was detected"
+	}
+}
+
+// digestCounts is the one-line per-kind summary used by minimal digests.
+func digestCounts(incs []Incident) string {
+	var n, r, sp int
+	for _, inc := range incs {
+		switch inc.RuleKind {
+		case KindRegression:
+			r++
+		case KindIssueSpike:
+			sp++
+		default:
+			n++
+		}
+	}
+	var parts []string
+	add := func(c int, one, many string) {
+		switch {
+		case c == 1:
+			parts = append(parts, "1 "+one)
+		case c > 1:
+			parts = append(parts, fmt.Sprintf("%d %s", c, many))
+		}
+	}
+	add(n, "new issue", "new issues")
+	add(r, "regression", "regressions")
+	add(sp, "spike", "spikes")
+	return strings.Join(parts, ", ")
 }
 
 func truncateRunes(s string, n int) string {
@@ -84,7 +129,11 @@ func formatBaseline(b float64) string {
 func FormatFire(inc Incident, mc MessageContext) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s · %s\n", kindHeader(inc.RuleKind), esc(mc.ProjectName))
-	b.WriteString(esc(truncateRunes(inc.Title, maxTitleRunes)) + "\n")
+	if mc.minimal() {
+		b.WriteString(genericPhrase(inc.RuleKind) + "\n")
+	} else {
+		b.WriteString(esc(truncateRunes(inc.Title, maxTitleRunes)) + "\n")
+	}
 	if inc.RuleKind == KindIssueSpike && inc.Spike != nil {
 		fmt.Fprintf(&b, "%d events in %d min, baseline %s\n", inc.Spike.Count, inc.Spike.WindowMinutes, formatBaseline(inc.Spike.Baseline))
 	}
@@ -92,7 +141,7 @@ func FormatFire(inc Incident, mc MessageContext) string {
 		b.WriteString(er + "\n")
 	}
 	b.WriteString(link(mc.issueURL(inc.IssueID), "Open issue"))
-	if mc.HasReplay && inc.SessionID != "" {
+	if !mc.minimal() && mc.HasReplay && inc.SessionID != "" {
 		b.WriteString(" · " + link(mc.replayURL(inc.SessionID), "Watch replay"))
 	}
 	return b.String()
@@ -102,7 +151,11 @@ func FormatFire(inc Incident, mc MessageContext) string {
 func FormatRecovered(inc Incident, mc MessageContext) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "✅ Spike recovered · %s\n", esc(mc.ProjectName))
-	b.WriteString(esc(truncateRunes(inc.Title, maxTitleRunes)) + "\n")
+	if mc.minimal() {
+		b.WriteString("The error volume is back to normal\n")
+	} else {
+		b.WriteString(esc(truncateRunes(inc.Title, maxTitleRunes)) + "\n")
+	}
 	if er := envRelease(inc); er != "" {
 		b.WriteString(er + "\n")
 	}
@@ -114,6 +167,11 @@ func FormatRecovered(inc Incident, mc MessageContext) string {
 func FormatDigest(incs []Incident, mc MessageContext) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "🚨 %d new alerts · %s\n", len(incs), esc(mc.ProjectName))
+	if mc.minimal() {
+		b.WriteString(digestCounts(incs) + "\n")
+		b.WriteString(link(mc.alertsURL(), "Open alerts"))
+		return b.String()
+	}
 	for i, inc := range incs {
 		if i == maxDigestTitles {
 			break

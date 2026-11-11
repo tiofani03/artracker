@@ -281,6 +281,9 @@ func (s *Service) dispatchProject(ctx context.Context, now time.Time, incs []pen
 	}
 
 	mc := MessageContext{ProjectName: incs[0].ProjectName, OrgID: incs[0].OrgID, ProjectID: pid, PublicURL: s.publicURL}
+	if snd.org != nil && snd.org.bot != nil {
+		mc.Detail = snd.org.bot.level // this organisation's own level, never another's
+	}
 	// fireState is each incident's fire notify_state after this tick's sends;
 	// a recovery goes out only once its fire message has.
 	fireState := make(map[int64]string, len(incs))
