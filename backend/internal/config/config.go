@@ -111,7 +111,12 @@ func Load() Config {
 
 		TelegramBotToken: env("TELEGRAM_BOT_TOKEN", ""),
 		TelegramAPIBase:  env("TELEGRAM_API_BASE", "https://api.telegram.org"),
-		AlertsWorker:     parseBool(env("ALERTS_WORKER", "true")),
+	}
+	rawWorker := env("ALERTS_WORKER", "")
+	var workerRecognised bool
+	cfg.AlertsWorker, workerRecognised = parseAlertsWorker(rawWorker)
+	if !workerRecognised {
+		slog.Warn("unrecognised ALERTS_WORKER value, keeping the alerts worker enabled", "value_length", len(rawWorker))
 	}
 
 	if cfg.R2Endpoint == "" && cfg.R2AccountID != "" {
@@ -137,6 +142,20 @@ func parseBool(s string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// parseAlertsWorker reads ALERTS_WORKER. Unset or empty means enabled; any
+// value other than the usual true/false spellings also keeps the worker
+// enabled, with recognised false so a typo cannot silently stop alerts.
+func parseAlertsWorker(raw string) (enabled bool, recognised bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "1", "true", "yes", "on":
+		return true, true
+	case "0", "false", "no", "off":
+		return false, true
+	default:
+		return true, false
 	}
 }
 

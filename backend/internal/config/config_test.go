@@ -90,13 +90,47 @@ func TestAlertsConfigDefaults(t *testing.T) {
 }
 
 func TestAlertsWorkerParsing(t *testing.T) {
-	for v, want := range map[string]bool{"true": true, "1": true, "false": false, "0": false} {
+	cases := map[string]bool{
+		"": true, "true": true, "1": true, " true ": true, "yes": true, "ON": true,
+		"false": false, "0": false, "  OFF ": false, "No": false,
+		// Typos keep the worker on rather than silently disabling alerts.
+		"ture": true, "enabled": true, "t": true,
+	}
+	for v, want := range cases {
 		t.Run(v, func(t *testing.T) {
 			t.Setenv("ALERTS_WORKER", v)
 			if got := Load().AlertsWorker; got != want {
 				t.Errorf("ALERTS_WORKER=%q -> %v, want %v", v, got, want)
 			}
 		})
+	}
+}
+
+func TestParseAlertsWorkerRecognition(t *testing.T) {
+	cases := []struct {
+		raw        string
+		enabled    bool
+		recognised bool
+	}{
+		{"", true, true},
+		{"   ", true, true},
+		{"1", true, true},
+		{" true ", true, true},
+		{"Yes", true, true},
+		{"on", true, true},
+		{"0", false, true},
+		{"false", false, true},
+		{"No", false, true},
+		{"  OFF ", false, true},
+		{"ture", true, false},
+		{"enabled", true, false},
+		{"t", true, false},
+	}
+	for _, c := range cases {
+		enabled, recognised := parseAlertsWorker(c.raw)
+		if enabled != c.enabled || recognised != c.recognised {
+			t.Errorf("parseAlertsWorker(%q) = (%v, %v), want (%v, %v)", c.raw, enabled, recognised, c.enabled, c.recognised)
+		}
 	}
 }
 
