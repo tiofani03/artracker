@@ -3412,6 +3412,7 @@
 }
 
 .or-activity-list {
+  position: relative; /* offsetParent for follow-playhead scrolling */
   max-height: 260px;
   overflow-y: auto;
   display: flex;

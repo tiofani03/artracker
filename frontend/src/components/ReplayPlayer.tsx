@@ -25,6 +25,8 @@ import {
   routeStrip,
 } from '../replay/playback'
 import { activeScreenFrameAt } from '../replay/screen'
+import { nextScrollTop } from '../replay/followScroll'
+import { adjacentEventOffset, resolveHotkey, SEEK_STEP_MS } from '../replay/hotkeys'
 import { fitScreenStage } from '../replay/screenPlanner'
 import { probeScreenSession } from '../replay/screenProbe'
 import type { ScreenReplaySession } from '../replay/screenSession'
@@ -662,13 +664,60 @@ export default function ReplayPlayer({
     return past.length > 0 ? past[past.length - 1] : markers[0]
   }, [markers, currentTimeMs])
 
-  // Follow Playhead: auto-scroll current active event into view as video plays
+  // Follow Playhead: keep the active event visible by scrolling ONLY the list. `scrollIntoView` would also
+  // scroll the page, pushing the video out of view. Runs on every active-event change (playing or seeking).
   useEffect(() => {
-    if (!followPlayhead || !isPlaying) return
-    if (activeItemRef.current) {
-      activeItemRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    if (!followPlayhead) return
+    const list = activityListRef.current
+    const item = activeItemRef.current
+    if (!list || !item) return
+    const top = nextScrollTop(list, item)
+    if (top !== null) list.scrollTop = top
+  }, [activeMarker?.id, followPlayhead])
+
+  // Keyboard shortcuts. The handlers are re-created every render, so the single listener reads them via a ref.
+  const hotkeyRef = useRef({ togglePlay, seekTo, cycleSpeed, markers, currentTimeMs })
+  useEffect(() => {
+    hotkeyRef.current = { togglePlay, seekTo, cycleSpeed, markers, currentTimeMs }
+  })
+  useEffect(() => {
+    let swallowSpaceUp = false
+    const onKeyDown = (e: KeyboardEvent) => {
+      const action = resolveHotkey({
+        key: e.key,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        altKey: e.altKey,
+        target: e.target as HTMLElement | null,
+      })
+      if (!action) return
+      const h = hotkeyRef.current
+      if (action === 'toggle-play') {
+        h.togglePlay()
+        swallowSpaceUp = true
+      } else if (action === 'seek-back') h.seekTo(h.currentTimeMs - SEEK_STEP_MS)
+      else if (action === 'seek-forward') h.seekTo(h.currentTimeMs + SEEK_STEP_MS)
+      else if (action === 'cycle-speed') h.cycleSpeed()
+      else {
+        const target = adjacentEventOffset(h.markers, h.currentTimeMs, action === 'next-event' ? 1 : -1)
+        if (target !== null) h.seekTo(target)
+      }
+      e.preventDefault()
     }
-  }, [activeMarker?.id, followPlayhead, isPlaying])
+    // A focused button would otherwise also "click" on Space release.
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === ' ' && swallowSpaceUp) {
+        swallowSpaceUp = false
+        e.preventDefault()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+    }
+  }, [])
 
   const notice = fallbackNotice(model)
 
@@ -891,17 +940,19 @@ export default function ReplayPlayer({
         </div>
 
         {/* Dedicated Full-Width Route / Screen Location Strip */}
-        <div className="or-route-strip">
-          <span className="or-route-strip__label">
-            {strip.label}
-          </span>
-          <span
-            className={`or-route-strip__path${strip.value === 'Not recorded' ? ' is-empty' : ''}`}
-            title={activeScreen ?? recordedUrl ?? undefined}
-          >
-            {strip.value}
-          </span>
-        </div>
+        {effectivePlatform !== 'web' && (
+          <div className="or-route-strip">
+            <span className="or-route-strip__label">
+              {strip.label}
+            </span>
+            <span
+              className={`or-route-strip__path${strip.value === 'Not recorded' ? ' is-empty' : ''}`}
+              title={activeScreen ?? recordedUrl ?? undefined}
+            >
+              {strip.value}
+            </span>
+          </div>
+        )}
 
         {/* OpenReplay Studio Stage Canvas */}
         <div className="or-stage">
@@ -1165,7 +1216,12 @@ export default function ReplayPlayer({
             No events match the selected filter.
           </p>
         ) : (
-          <div className="or-activity-list" ref={activityListRef}>
+          <div
+            className="or-activity-list"
+            ref={activityListRef}
+            onWheel={() => setFollowPlayhead(false)}
+            onTouchMove={() => setFollowPlayhead(false)}
+          >
             {visibleMarkers.map((m) => {
               const isCurrent = activeMarker?.id === m.id
               const isExpanded = expandedEventId === m.id
