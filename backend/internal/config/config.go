@@ -109,7 +109,7 @@ func Load() Config {
 		ReplayProxyUpload:   parseBool(env("REPLAY_PROXY_UPLOAD", "true")),
 		ReplayLocalDir:      env("REPLAY_LOCAL_DIR", ""),
 
-		TelegramBotToken: env("TELEGRAM_BOT_TOKEN", ""),
+		TelegramBotToken: loadTelegramToken(),
 		TelegramAPIBase:  env("TELEGRAM_API_BASE", "https://api.telegram.org"),
 	}
 	rawWorker := env("ALERTS_WORKER", "")
@@ -143,6 +143,31 @@ func parseBool(s string) bool {
 	default:
 		return false
 	}
+}
+
+// loadTelegramToken returns the bot token from TELEGRAM_BOT_TOKEN or, for
+// secret stores that mount files (Docker/Kubernetes secrets), from the file named
+// by TELEGRAM_BOT_TOKEN_FILE. Setting both, or pointing at a file that cannot be
+// read or is empty, panics at boot: an operator who configured a secret must not
+// silently end up with Telegram off. Panic messages never contain the token.
+func loadTelegramToken() string {
+	direct := strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN"))
+	path := strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN_FILE"))
+	if path == "" {
+		return direct
+	}
+	if direct != "" {
+		panic("set only one of TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN_FILE")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		panic("TELEGRAM_BOT_TOKEN_FILE cannot be read: " + err.Error())
+	}
+	token := strings.TrimSpace(string(raw))
+	if token == "" {
+		panic("TELEGRAM_BOT_TOKEN_FILE is empty: " + path)
+	}
+	return token
 }
 
 // parseAlertsWorker reads ALERTS_WORKER. Unset or empty means enabled; any
