@@ -110,6 +110,13 @@ Alert kinds: **new issue** (a never-seen error group), **regression** (a resolve
 
 Rules default to the environment `production` and match the environment string your SDK reports exactly (case-sensitive): an app reporting `prod` or `Production` gets no alerts from a `production` rule. Clear a rule's environment field to alert on every environment, or set it to your SDK's value. An issue is "new" the first time it is seen in any environment; one first seen in staging will not raise a new-issue alert when it later appears in production.
 
+**Troubleshooting**
+
+1. Bots show as connected but alerts are not delivered after a deploy: check that `ALERTS_MASTER_KEY` is the same value as before. A wrong or rotated key cannot decrypt stored tokens; the dispatcher keeps the incidents pending and logs `cannot decrypt org bot token`. It does not mark the bots invalid.
+2. The process refuses to start in production: set `ALERTS_MASTER_KEY` or `ALERTS_BOT_MODE=shared`.
+3. A bot shows `invalid`: Telegram rejected its token (revoked or regenerated in BotFather). Paste the new token in Settings.
+4. Incidents older than 24 hours with no working bot are skipped; this shows only in the log.
+
 ## Images & deploy
 
 Same flow as portalsafekamu: images are built in CI and published to Docker
