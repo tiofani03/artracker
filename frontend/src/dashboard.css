@@ -7861,3 +7861,18 @@ select {
 }
 
 .dash-user-search__clear:hover { background: var(--color-paper-3); color: var(--color-ink); }
+
+/* ===== Alerts page ===== */
+.dash-list__row:has(.dash-input) {
+  flex-wrap: wrap;
+}
+
+.dash-list__row .dash-input[type='number'] {
+  width: 96px;
+}
+
+@media (max-width: 640px) {
+  .dash-list__row:has(.dash-input) .dash-list__main {
+    flex-basis: 100%;
+  }
+}
