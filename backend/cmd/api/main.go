@@ -163,23 +163,32 @@ func main() {
 	defer stopAlerts()
 	var alertsWG sync.WaitGroup
 	if pool != nil {
-		// Typed-nil guard: n and src stay nil interfaces unless Telegram works.
+		// Typed-nil guard: n and src stay nil interfaces unless a token is set.
+		// Only an empty token turns Telegram off; a failing getMe is retried.
 		var n alerts.Notifier
 		var src alerts.UpdateSource
-		var botName string
+		var tg *alerts.Telegram
 		if cfg.TelegramBotToken != "" {
-			tg := alerts.NewTelegram(cfg.TelegramBotToken, cfg.TelegramAPIBase, nil)
+			tg = alerts.NewTelegram(cfg.TelegramBotToken, cfg.TelegramAPIBase, nil)
+			n, src = tg, tg
+		}
+		svc := alerts.NewService(pool, n, cfg.PublicURL)
+		if tg != nil {
 			meCtx, meCancel := context.WithTimeout(ctx, 10*time.Second)
 			name, err := tg.GetMe(meCtx)
 			meCancel()
 			if err != nil {
-				log.Warn("telegram getMe failed; alerts will not be sent to Telegram", "error_class", fmt.Sprintf("%T", err))
+				log.Warn("telegram getMe failed; retrying in the background", "error_class", fmt.Sprintf("%T", err))
+				alertsWG.Add(1)
+				go func() {
+					defer alertsWG.Done()
+					svc.RetryBotUsername(alertsCtx, tg.GetMe)
+				}()
 			} else {
-				n, src, botName = tg, tg, name
+				svc.SetBotUsername(name)
 				log.Info("telegram alerts configured", "bot", name)
 			}
 		}
-		svc := alerts.NewService(pool, n, cfg.PublicURL).WithBotUsername(botName)
 		h.WithAlerts(svc)
 		if cfg.AlertsWorker {
 			alertsWG.Add(1)

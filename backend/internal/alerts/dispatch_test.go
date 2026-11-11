@@ -474,3 +474,26 @@ func TestDispatchDigestFailureRetriesAll(t *testing.T) {
 		}
 	}
 }
+
+// A notifier without a known bot username (getMe failed at boot) must still
+// deliver: only a missing notifier means Telegram is off.
+func TestDispatchSendsWithoutBotUsername(t *testing.T) {
+	pool := testDB(t)
+	_, pid := seedProject(t, pool)
+	seedChannel(t, pool, pid, -42)
+	inc := seedIncident(t, pool, pid, KindNewIssue, "TypeError: boom")
+	fn := &fakeNotifier{}
+	s := NewService(pool, fn, "http://app")
+	if s.BotUsername() != "" {
+		t.Fatal("precondition: username must be empty")
+	}
+
+	dispatch(t, s, dispatchNow)
+
+	if len(fn.Sent()) != 1 {
+		t.Fatalf("sent = %+v, want one message", fn.Sent())
+	}
+	if st := incidentState(t, pool, inc); st.Notify != "sent" {
+		t.Fatalf("notify_state = %s, want sent (not skipped)", st.Notify)
+	}
+}

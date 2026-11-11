@@ -274,3 +274,131 @@ func TestSendTestFailureRecordsErrorAndForbiddenDisables(t *testing.T) {
 		t.Fatal("forbidden channel should be disabled")
 	}
 }
+
+func TestRunStartsPollingOnceBotUsernameIsSet(t *testing.T) {
+	g := pollGateInterval
+	pollGateInterval = 10 * time.Millisecond
+	t.Cleanup(func() { pollGateInterval = g })
+	pool := testDB(t)
+	src := &blockingSource{started: make(chan struct{})}
+	s := NewService(pool, &fakeNotifier{}, "http://app") // notifier set, username unknown
+	ctx, cancel := context.WithCancel(context.Background())
+	done := runAsync(s, ctx, src)
+	defer func() { cancel(); waitDone(t, done, time.Second) }()
+
+	select {
+	case <-src.started:
+		t.Fatal("poller started before the bot username was known")
+	case <-time.After(10 * pollGateInterval):
+	}
+
+	s.SetBotUsername("ArtBot")
+	select {
+	case <-src.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("poller never started after SetBotUsername")
+	}
+}
+
+func TestBotUsernameConcurrentAccess(t *testing.T) {
+	g := pollGateInterval
+	pollGateInterval = time.Millisecond
+	t.Cleanup(func() { pollGateInterval = g })
+	pool := testDB(t)
+	s := NewService(pool, &fakeNotifier{}, "http://app")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := runAsync(s, ctx, &blockingSource{started: make(chan struct{})})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				s.SetBotUsername("ArtBot")
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				_ = s.TelegramConfigured()
+				_ = s.BotUsername()
+			}
+		}()
+	}
+	wg.Wait()
+	cancel()
+	waitDone(t, done, time.Second)
+	if !s.TelegramConfigured() || s.BotUsername() != "ArtBot" {
+		t.Fatalf("configured=%v username=%q", s.TelegramConfigured(), s.BotUsername())
+	}
+}
+
+func TestWithBotUsernameReturnsReceiver(t *testing.T) {
+	s := NewService(nil, &fakeNotifier{}, "http://app")
+	if got := s.WithBotUsername("ArtBot"); got != s || s.BotUsername() != "ArtBot" || !s.TelegramConfigured() {
+		t.Fatalf("WithBotUsername: receiver=%v username=%q", got == s, s.BotUsername())
+	}
+}
+
+func TestNextBackoff(t *testing.T) {
+	cases := []struct {
+		attempt int
+		want    time.Duration
+	}{
+		{0, 5 * time.Second},
+		{1, 10 * time.Second},
+		{2, 20 * time.Second},
+		{5, 160 * time.Second},
+		{6, 5 * time.Minute},
+		{62, 5 * time.Minute},
+		{1000, 5 * time.Minute},
+		{-1, 5 * time.Second},
+	}
+	for _, c := range cases {
+		if got := nextBackoff(c.attempt); got != c.want {
+			t.Errorf("nextBackoff(%d) = %v, want %v", c.attempt, got, c.want)
+		}
+	}
+}
+
+func TestRetryBotUsernameRetriesUntilSuccess(t *testing.T) {
+	b := getMeBackoff
+	getMeBackoff = func(int) time.Duration { return time.Millisecond }
+	t.Cleanup(func() { getMeBackoff = b })
+	s := NewService(nil, &fakeNotifier{}, "http://app")
+	calls := 0
+	s.RetryBotUsername(context.Background(), func(context.Context) (string, error) {
+		calls++
+		if calls < 3 {
+			return "", errors.New("dns hiccup")
+		}
+		return "ArtBot", nil
+	})
+	if calls != 3 || s.BotUsername() != "ArtBot" || !s.TelegramConfigured() {
+		t.Fatalf("calls=%d username=%q configured=%v", calls, s.BotUsername(), s.TelegramConfigured())
+	}
+}
+
+func TestRetryBotUsernameStopsOnCancel(t *testing.T) {
+	b := getMeBackoff
+	getMeBackoff = func(int) time.Duration { return time.Millisecond }
+	t.Cleanup(func() { getMeBackoff = b })
+	s := NewService(nil, &fakeNotifier{}, "http://app")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		s.RetryBotUsername(ctx, func(context.Context) (string, error) { return "", errors.New("down") })
+		close(done)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("RetryBotUsername did not return after cancel")
+	}
+	if s.BotUsername() != "" {
+		t.Fatalf("username = %q, want empty", s.BotUsername())
+	}
+}

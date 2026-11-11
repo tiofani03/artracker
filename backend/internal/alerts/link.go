@@ -66,7 +66,8 @@ func generateLinkCode() (string, error) {
 // CreateLinkCode issues a code valid for 15 minutes. A non-positive userID is
 // stored as NULL.
 func (s *Service) CreateLinkCode(ctx context.Context, projectID, userID int64) (LinkCode, error) {
-	if !s.TelegramConfigured() {
+	bot := s.BotUsername()
+	if s.n == nil || bot == "" {
 		return LinkCode{}, ErrTelegramDisabled
 	}
 	code, err := generateLinkCode()
@@ -83,8 +84,8 @@ RETURNING expires_at`, code, projectID, userID).Scan(&exp)
 	}
 	return LinkCode{
 		Code:        code,
-		GroupLink:   "https://t.me/" + s.botUsername + "?startgroup=" + code,
-		PrivateLink: "https://t.me/" + s.botUsername + "?start=" + code,
+		GroupLink:   "https://t.me/" + bot + "?startgroup=" + code,
+		PrivateLink: "https://t.me/" + bot + "?start=" + code,
 		ExpiresAt:   exp,
 	}, nil
 }

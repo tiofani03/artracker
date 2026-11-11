@@ -14,14 +14,59 @@ import (
 var (
 	dispatchInterval = 5 * time.Second
 	evaluateInterval = 60 * time.Second
+	// pollGateInterval is how often the poller checks whether the bot
+	// username has become known (getMe may succeed only after boot).
+	pollGateInterval = 2 * time.Second
 )
+
+// getMe retry backoff: 5 s doubling per attempt, capped at 5 min.
+const (
+	backoffBase = 5 * time.Second
+	backoffCap  = 5 * time.Minute
+)
+
+// nextBackoff returns the wait before getMe retry number attempt (0-based).
+func nextBackoff(attempt int) time.Duration {
+	d := backoffBase
+	for i := 0; i < attempt && d < backoffCap; i++ {
+		d *= 2
+	}
+	return min(d, backoffCap)
+}
+
+// getMeBackoff is nextBackoff; a variable so tests can shorten the waits.
+var getMeBackoff = nextBackoff
+
+// RetryBotUsername calls getMe until it succeeds or ctx ends, waiting
+// nextBackoff before each attempt, then records the bot's username. Failures are
+// logged by error class only, never with the token.
+func (s *Service) RetryBotUsername(ctx context.Context, getMe func(context.Context) (string, error)) {
+	for attempt := 0; ; attempt++ {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(getMeBackoff(attempt)):
+		}
+		name, err := getMe(ctx)
+		if err == nil {
+			s.SetBotUsername(name)
+			slog.Info("alerts: telegram getMe succeeded; Telegram alerts configured", "bot", name, "attempt", attempt+1)
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		slog.Warn("alerts: telegram getMe retry failed", "attempt", attempt+1, "error_class", errClass(err))
+	}
+}
 
 // ErrChannelNotFound means the project has no channel with the given id.
 var ErrChannelNotFound = errors.New("channel not found")
 
 // Run drives the alert workers until ctx is done: it dispatches pending
-// notifications, evaluates spike rules and, when Telegram is configured and
-// src is non-nil, long-polls for updates. It returns only after every
+// notifications, evaluates spike rules and, when src is non-nil, long-polls
+// for updates as soon as Telegram is configured (the bot username may only
+// become known after boot). It returns only after every
 // goroutine has exited. A tick failure is logged and never fatal.
 func (s *Service) Run(ctx context.Context, src UpdateSource) {
 	var wg sync.WaitGroup
@@ -43,14 +88,31 @@ func (s *Service) Run(ctx context.Context, src UpdateSource) {
 	}
 	loop("dispatch", dispatchInterval, s.DispatchPending)
 	loop("evaluate", evaluateInterval, s.Evaluate)
-	if src != nil && s.TelegramConfigured() {
+	if src != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.PollUpdates(ctx, src)
+			if s.waitTelegramConfigured(ctx) {
+				s.PollUpdates(ctx, src)
+			}
 		}()
 	}
 	wg.Wait()
+}
+
+// waitTelegramConfigured blocks until TelegramConfigured is true (returning
+// true) or ctx ends (returning false), checking every pollGateInterval.
+func (s *Service) waitTelegramConfigured(ctx context.Context) bool {
+	t := time.NewTicker(pollGateInterval)
+	defer t.Stop()
+	for !s.TelegramConfigured() {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-t.C:
+		}
+	}
+	return true
 }
 
 // safeTick runs one tick, converting a panic into a log line so a bug in one

@@ -3,6 +3,7 @@ package alerts
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -13,22 +14,34 @@ type Service struct {
 	db          *pgxpool.Pool
 	n           Notifier
 	publicURL   string
-	botUsername string
+	// botUsername is set at boot or later by the getMe retry loop, while the
+	// workers and HTTP handlers read it, hence the atomic.
+	botUsername atomic.Pointer[string]
 }
 
 func NewService(db *pgxpool.Pool, n Notifier, publicURL string) *Service {
 	return &Service{db: db, n: n, publicURL: strings.TrimRight(publicURL, "/")}
 }
 
+// SetBotUsername records the bot's username; safe for concurrent use.
+func (s *Service) SetBotUsername(u string) { s.botUsername.Store(&u) }
+
 // WithBotUsername records the bot's username and returns the receiver.
 func (s *Service) WithBotUsername(u string) *Service {
-	s.botUsername = u
+	s.SetBotUsername(u)
 	return s
 }
 
-func (s *Service) BotUsername() string { return s.botUsername }
+func (s *Service) BotUsername() string {
+	if u := s.botUsername.Load(); u != nil {
+		return *u
+	}
+	return ""
+}
 
-func (s *Service) TelegramConfigured() bool { return s.n != nil && s.botUsername != "" }
+// TelegramConfigured reports whether link codes and polling can work: a
+// notifier exists and the bot's username is known.
+func (s *Service) TelegramConfigured() bool { return s.n != nil && s.BotUsername() != "" }
 
 // OnIssue opens a firing incident when an enabled rule of the signal's kind
 // matches the environment. A duplicate for an issue that already has a firing
