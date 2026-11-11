@@ -334,7 +334,13 @@ func (h *Handler) UpdateIssueStatus(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
 	defer cancel()
 
-	it, err := scanIssue(h.db.QueryRow(ctx, `
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	it, err := scanIssue(tx.QueryRow(ctx, `
 		UPDATE issues SET status = $1
 		WHERE id = $2 AND project_id = $3
 		RETURNING id, project_id, fingerprint, title, type, status, first_seen, last_seen, count,
@@ -349,7 +355,29 @@ func (h *Handler) UpdateIssueStatus(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	if status == "resolved" || status == "ignored" {
+		if err := closeIssueIncidents(ctx, tx, projectID, issueID); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
 	return c.JSON(it)
+}
+
+// closeIssueIncidents silently closes the issue's firing new_issue and
+// regression incidents, so the next regression opens a fresh incident instead
+// of being absorbed by a stale one. Spike incidents are left to the evaluator.
+func closeIssueIncidents(ctx context.Context, tx pgx.Tx, projectID, issueID int64) error {
+	_, err := tx.Exec(ctx, `
+		UPDATE alert_incidents
+		   SET status = 'resolved', resolved_at = now(),
+		       notify_state = CASE WHEN notify_state = 'pending' THEN 'skipped' ELSE notify_state END
+		 WHERE project_id = $1 AND issue_id = $2 AND status = 'firing'
+		   AND rule_kind IN ('new_issue', 'regression')`,
+		projectID, issueID)
+	return err
 }
 
 // AssignIssue assigns the issue to the current authenticated user (or a

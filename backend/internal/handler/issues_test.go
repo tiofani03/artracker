@@ -20,6 +20,7 @@ import (
 
 type issueEnv struct {
 	app       *fiber.App
+	h         *Handler
 	pool      *pgxpool.Pool
 	projectID int64
 	userID    int64
@@ -68,7 +69,7 @@ func newIssueEnv(t *testing.T) *issueEnv {
 	api.Post("/projects/:projectID/issues/:issueID/assign", h.AssignIssue)
 	api.Post("/projects/:projectID/releases/:version/sourcemaps", h.UploadSourceMap)
 
-	return &issueEnv{app: app, pool: pool, projectID: projectID, userID: userID}
+	return &issueEnv{app: app, h: h, pool: pool, projectID: projectID, userID: userID}
 }
 
 func errorRow(projectID int64, message, stack string) ingest.TelemetryRow {
@@ -428,5 +429,189 @@ func TestIssueServiceWiresAlerterOnlyWhenConfigured(t *testing.T) {
 	}
 	if err := env.pool.QueryRow(ctx, `SELECT count(*) FROM alert_incidents WHERE project_id=$1 AND status='firing'`, env.projectID).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("firing incidents = %d (err %v), want 1", n, err)
+	}
+}
+
+// newAlertingIssueEnv wires a real alerts.Service (no notifier) into the
+// issue env and seeds the project's default rules, so ingestion really opens
+// incidents through OnIssue.
+func newAlertingIssueEnv(t *testing.T) *issueEnv {
+	t.Helper()
+	env := newIssueEnv(t)
+	if _, err := env.pool.Exec(context.Background(), alerts.SeedRulesSQL, env.projectID); err != nil {
+		t.Fatal(err)
+	}
+	env.h.WithAlerts(alerts.NewService(env.pool, nil, "http://app"))
+	return env
+}
+
+func (e *issueEnv) ingestSignal(t *testing.T) int64 {
+	t.Helper()
+	ctx := context.Background()
+	if err := e.h.IssueService().ProcessRows(ctx, []ingest.TelemetryRow{signalRow(e.projectID)}); err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	if err := e.pool.QueryRow(ctx, `SELECT id FROM issues WHERE project_id = $1`, e.projectID).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func (e *issueEnv) patchStatus(t *testing.T, issueID int64, status string) {
+	t.Helper()
+	req := httptest.NewRequest("PATCH", "/api/v1/projects/999/issues/"+strconv.FormatInt(issueID, 10),
+		strings.NewReader(`{"status":"`+status+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := e.app.Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("PATCH %s status = %d, want 200", status, resp.StatusCode)
+	}
+	var out Issue
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.ID != issueID || out.Status != status {
+		t.Fatalf("PATCH response = %+v, want id %d status %s", out, issueID, status)
+	}
+}
+
+type incidentRow struct {
+	kind, status, notify, recovery string
+	resolvedAt                     *time.Time
+}
+
+func incidentsOf(t *testing.T, pool *pgxpool.Pool, projectID, issueID int64) []incidentRow {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), `
+SELECT rule_kind, status, notify_state, recovery_notify_state, resolved_at
+FROM alert_incidents WHERE project_id = $1 AND issue_id = $2 ORDER BY id`, projectID, issueID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []incidentRow
+	for rows.Next() {
+		var r incidentRow
+		if err := rows.Scan(&r.kind, &r.status, &r.notify, &r.recovery, &r.resolvedAt); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestResolveIssueClosesNewIssueIncident(t *testing.T) {
+	env := newAlertingIssueEnv(t)
+	issueID := env.ingestSignal(t)
+	got := incidentsOf(t, env.pool, env.projectID, issueID)
+	if len(got) != 1 || got[0].kind != "new_issue" || got[0].status != "firing" || got[0].notify != "pending" {
+		t.Fatalf("before resolve = %+v, want one pending firing new_issue", got)
+	}
+
+	env.patchStatus(t, issueID, "resolved")
+
+	got = incidentsOf(t, env.pool, env.projectID, issueID)
+	if len(got) != 1 || got[0].status != "resolved" || got[0].resolvedAt == nil ||
+		got[0].notify != "skipped" || got[0].recovery != "none" {
+		t.Fatalf("after resolve = %+v, want resolved, notify skipped, recovery none", got)
+	}
+}
+
+func TestResolveIssueKeepsSentNotifyState(t *testing.T) {
+	env := newAlertingIssueEnv(t)
+	issueID := env.ingestSignal(t)
+	if _, err := env.pool.Exec(context.Background(),
+		`UPDATE alert_incidents SET notify_state = 'sent' WHERE issue_id = $1`, issueID); err != nil {
+		t.Fatal(err)
+	}
+	env.patchStatus(t, issueID, "resolved")
+	got := incidentsOf(t, env.pool, env.projectID, issueID)
+	if len(got) != 1 || got[0].status != "resolved" || got[0].notify != "sent" {
+		t.Fatalf("after resolve = %+v, want resolved with notify sent kept", got)
+	}
+}
+
+func TestRepeatedRegressionAfterResolveIsReported(t *testing.T) {
+	env := newAlertingIssueEnv(t)
+	issueID := env.ingestSignal(t)
+	env.patchStatus(t, issueID, "resolved")
+	env.ingestSignal(t) // regression R1
+	env.patchStatus(t, issueID, "resolved")
+	env.ingestSignal(t) // regression R2 must not be absorbed by a stale R1
+
+	var firing, resolved int
+	for _, r := range incidentsOf(t, env.pool, env.projectID, issueID) {
+		if r.kind != "regression" {
+			continue
+		}
+		switch r.status {
+		case "firing":
+			firing++
+		case "resolved":
+			resolved++
+		}
+	}
+	if firing != 1 || resolved != 1 {
+		t.Fatalf("regression incidents firing=%d resolved=%d, want 1 and 1", firing, resolved)
+	}
+}
+
+func TestIgnoreIssueClosesFiringIncidents(t *testing.T) {
+	env := newAlertingIssueEnv(t)
+	issueID := env.ingestSignal(t)
+	env.patchStatus(t, issueID, "ignored")
+	got := incidentsOf(t, env.pool, env.projectID, issueID)
+	if len(got) != 1 || got[0].status != "resolved" || got[0].notify != "skipped" {
+		t.Fatalf("after ignore = %+v, want resolved and skipped", got)
+	}
+}
+
+func TestReopenIssueLeavesIncidents(t *testing.T) {
+	env := newAlertingIssueEnv(t)
+	issueID := env.ingestSignal(t)
+	env.patchStatus(t, issueID, "open")
+	got := incidentsOf(t, env.pool, env.projectID, issueID)
+	if len(got) != 1 || got[0].status != "firing" || got[0].notify != "pending" {
+		t.Fatalf("after open = %+v, want untouched firing pending", got)
+	}
+}
+
+func TestResolveIssueLeavesOtherProjectAndSpikeIncidents(t *testing.T) {
+	env := newAlertingIssueEnv(t)
+	ctx := context.Background()
+	issueID := env.ingestSignal(t)
+
+	var otherProject int64
+	if err := env.pool.QueryRow(ctx, `
+INSERT INTO projects(org_id, name, slug, platform)
+SELECT org_id, 'Other', 'other-issues', 'web' FROM projects WHERE id = $1 RETURNING id`, env.projectID).Scan(&otherProject); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.pool.Exec(ctx, `
+INSERT INTO alert_incidents(project_id, rule_kind, issue_id) VALUES ($1, 'new_issue', $3), ($2, 'issue_spike', $3)`,
+		otherProject, env.projectID, issueID); err != nil {
+		t.Fatal(err)
+	}
+
+	env.patchStatus(t, issueID, "resolved")
+
+	other := incidentsOf(t, env.pool, otherProject, issueID)
+	if len(other) != 1 || other[0].status != "firing" || other[0].notify != "pending" {
+		t.Fatalf("other project incident = %+v, want untouched", other)
+	}
+	for _, r := range incidentsOf(t, env.pool, env.projectID, issueID) {
+		if r.kind == "issue_spike" && (r.status != "firing" || r.notify != "pending") {
+			t.Fatalf("spike incident = %+v, want untouched", r)
+		}
+		if r.kind == "new_issue" && r.status != "resolved" {
+			t.Fatalf("new_issue incident = %+v, want resolved", r)
+		}
 	}
 }
