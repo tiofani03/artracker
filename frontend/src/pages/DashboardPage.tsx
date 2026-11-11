@@ -14,6 +14,7 @@ import {
 import DashboardShell from '../components/DashboardShell'
 import ReplayPlayer, { type DeviceMode } from '../components/ReplayPlayer'
 import { fillHeight } from '../replay/fit'
+import { browserStorage, defaultQueueOpen, readBool, writeBool } from '../replay/prefs'
 import GrowthAnalyticsView from '../components/analytics/GrowthAnalyticsView'
 import CampaignsView from '../components/campaigns/CampaignsView'
 import { navigate } from '../router'
@@ -58,6 +59,7 @@ type OverviewCampaignItem = {
 
 type ReplayFilter = 'all' | 'error' | 'rage' | 'dead'
 const REPLAY_PAGE_SIZE = 10
+const QUEUE_OPEN_KEY = 'artracker.replay.queueOpen'
 
 function formatDurationMs(ms: number): string {
   const totalSec = Math.max(0, Math.round(ms / 1000))
@@ -330,6 +332,14 @@ function DashboardInner({
   const [replayDeviceMode, setReplayDeviceMode] = useState<DeviceMode>('auto')
   // The replay workspace is exactly viewport-high (no page scroll); measured from its position on the page.
   const replayContainerRef = useRef<HTMLDivElement | null>(null)
+  const [queueOpen, setQueueOpen] = useState<boolean>(() =>
+    readBool(browserStorage(), QUEUE_OPEN_KEY, defaultQueueOpen(typeof window === 'undefined' ? 0 : window.innerWidth)),
+  )
+  const toggleQueue = () => {
+    const next = !queueOpen
+    setQueueOpen(next)
+    writeBool(browserStorage(), QUEUE_OPEN_KEY, next)
+  }
   const [replayHeight, setReplayHeight] = useState<number | null>(null)
   const [replayLoading, setReplayLoading] = useState<boolean>(true)
 
@@ -379,6 +389,8 @@ function DashboardInner({
     }
     return replaySessions[0] ?? null
   }, [sessionDetail, selectedSessionId, replaySessions])
+  // Never hide the queue while nothing is selected, or the user would have no way to pick a session
+  const queueVisible = queueOpen || !activeReplaySession
 
   const handleLogPageSizeChange = (size: number) => {
     const validSize = Math.max(1, Math.min(500, size))
@@ -1098,32 +1110,6 @@ function DashboardInner({
                 ref={replayContainerRef}
                 style={replayHeight ? { height: replayHeight } : undefined}
               >
-                <div className="dash-replay-toolbar">
-                  <div className="dash-seg" role="group" aria-label="Filter replays">
-                    {(
-                      [
-                        { id: 'all', label: 'All Sessions' },
-                        { id: 'error', label: 'Errors Only' },
-                        { id: 'rage', label: 'Rage Clicks' },
-                        { id: 'dead', label: 'Dead Clicks' },
-                      ] as { id: ReplayFilter; label: string }[]
-                    ).map((f) => (
-                      <button
-                        key={f.id}
-                        type="button"
-                        className={`dash-seg__btn${replayFilter === f.id ? ' is-active' : ''}`}
-                        aria-pressed={replayFilter === f.id}
-                        onClick={() => {
-                          setReplayFilter(f.id)
-                          setReplayOffset(0)
-                        }}
-                      >
-                        {f.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
                 {replayError && (
                   <p className="dash-error" role="alert" style={{ marginBottom: '1rem' }}>
                     {replayError}
@@ -1175,8 +1161,9 @@ function DashboardInner({
                     </div>
                   </section>
                 ) : (
-                  <div className="dash-replay-grid">
+                  <div className={`dash-replay-grid${queueVisible ? '' : ' is-rail-closed'}`}>
                     {/* Left Column: Session Queue with Pagination */}
+                    {queueVisible && (
                     <section className="dash-card dash-card--compact" aria-label="Recorded sessions">
                       <div className="dash-card__head">
                         <div>
@@ -1185,6 +1172,29 @@ function DashboardInner({
                             {replayTotal} total · PII masked on client
                           </p>
                         </div>
+                      </div>
+                      <div className="dash-seg dash-replay-filters" role="group" aria-label="Filter replays">
+                        {(
+                          [
+                            { id: 'all', label: 'All' },
+                            { id: 'error', label: 'Errors' },
+                            { id: 'rage', label: 'Rage clicks' },
+                            { id: 'dead', label: 'Dead clicks' },
+                          ] as { id: ReplayFilter; label: string }[]
+                        ).map((f) => (
+                          <button
+                            key={f.id}
+                            type="button"
+                            className={`dash-seg__btn${replayFilter === f.id ? ' is-active' : ''}`}
+                            aria-pressed={replayFilter === f.id}
+                            onClick={() => {
+                              setReplayFilter(f.id)
+                              setReplayOffset(0)
+                            }}
+                          >
+                            {f.label}
+                          </button>
+                        ))}
                       </div>
 
                       <div className="dash-session-list">
@@ -1272,6 +1282,7 @@ function DashboardInner({
                         </div>
                       )}
                     </section>
+                    )}
 
                     {/* Right Column: OpenReplay Unified Studio Theater */}
                     <div className="or-player-col" aria-label="Session player">
@@ -1301,6 +1312,8 @@ function DashboardInner({
                           projectPlatform={project?.platform}
                           deviceMode={replayDeviceMode}
                           onDeviceModeChange={setReplayDeviceMode}
+                          queueOpen={queueVisible}
+                          onToggleQueue={toggleQueue}
                         />
                       ) : replayLoading ? (
                         <div className="or-theater or-theater--placeholder" role="status" aria-label="Loading session replay">

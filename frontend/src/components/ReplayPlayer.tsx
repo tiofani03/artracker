@@ -135,6 +135,8 @@ export default function ReplayPlayer({
   projectPlatform,
   deviceMode = 'auto',
   onDeviceModeChange,
+  queueOpen,
+  onToggleQueue,
 }: {
   session: ReplaySessionItem
   chunks: ReplayChunkDetail[]
@@ -144,6 +146,8 @@ export default function ReplayPlayer({
   projectPlatform?: Platform
   deviceMode?: DeviceMode
   onDeviceModeChange?: (mode: DeviceMode) => void
+  queueOpen?: boolean
+  onToggleQueue?: () => void
 }) {
   const stageWrapRef = useRef<HTMLDivElement | null>(null)
   const playerRef = useRef<rrwebPlayer | null>(null)
@@ -900,6 +904,17 @@ export default function ReplayPlayer({
         {/* Unified Single Header (Replaces Staked Duplicate Headers) */}
         <div className="or-unified-header">
           <div className="or-unified-header__left">
+            {onToggleQueue && (
+              <button
+                type="button"
+                className={`or-queue-toggle${queueOpen ? ' is-active' : ''}`}
+                aria-pressed={queueOpen}
+                aria-label="Toggle session list"
+                onClick={onToggleQueue}
+              >
+                ≡ Sessions
+              </button>
+            )}
             <span className="or-user-avatar" aria-hidden="true">
               {(session.user_id || 'U')[0].toUpperCase()}
             </span>

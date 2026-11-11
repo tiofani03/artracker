@@ -7359,3 +7359,38 @@ select {
   .or-side-panel[data-snap="full"] { height: 85dvh; }
   .or-side-panel__sheet-toggle { display: inline-flex; }
 }
+
+/* Session queue rail: collapsible, filters live in its header */
+.dash-replay-grid.is-rail-closed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.dash-replay-filters {
+  flex-wrap: wrap;
+  margin: 8px 0 10px;
+}
+
+.or-queue-toggle {
+  appearance: none;
+  padding: 3px 9px;
+  background: transparent;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-card);
+  color: var(--color-ink-2);
+  font: inherit;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.or-queue-toggle:hover,
+.or-queue-toggle.is-active {
+  background: var(--color-paper-3);
+  color: var(--color-ink);
+}
+
+@media (max-width: 980px) {
+  .dash-replay-grid.is-rail-closed {
+    grid-template-rows: minmax(0, 1fr);
+  }
+}
