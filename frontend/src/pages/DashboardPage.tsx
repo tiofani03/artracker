@@ -15,6 +15,7 @@ import {
 import DashboardShell from '../components/DashboardShell'
 import ReplayPlayer, { type DeviceMode } from '../components/ReplayPlayer'
 import { useFillHeight } from '../replay/useFillHeight'
+import { replayViewState } from '../replay/viewState'
 import { browserStorage, defaultQueueOpen, readBool, writeBool } from '../replay/prefs'
 import GrowthAnalyticsView from '../components/analytics/GrowthAnalyticsView'
 import CampaignsView from '../components/campaigns/CampaignsView'
@@ -61,6 +62,12 @@ type OverviewCampaignItem = {
 type ReplayFilter = 'all' | 'error' | 'rage' | 'dead'
 const REPLAY_PAGE_SIZE = 10
 const QUEUE_OPEN_KEY = 'artracker.replay.queueOpen'
+const REPLAY_FILTER_LABEL: Record<ReplayFilter, string> = {
+  all: 'All',
+  error: 'Errors',
+  rage: 'Rage clicks',
+  dead: 'Dead clicks',
+}
 
 function formatDurationMs(ms: number): string {
   const totalSec = Math.max(0, Math.round(ms / 1000))
@@ -378,7 +385,8 @@ function DashboardInner({
     return replaySessions[0] ?? null
   }, [sessionDetail, selectedSessionId, replaySessions])
   // Never hide the queue while nothing is selected, or the user would have no way to pick a session
-  const queueVisible = queueOpen || !activeReplaySession
+  const queueVisible = queueOpen || !activeReplaySession || replaySessions.length === 0
+  const replayView = replayViewState({ loading: replayLoading, sessionCount: replaySessions.length, filter: replayFilter })
 
   const handleLogPageSizeChange = (size: number) => {
     const validSize = Math.max(1, Math.min(500, size))
@@ -1125,7 +1133,7 @@ function DashboardInner({
                   </p>
                 )}
 
-                {replayLoading && replaySessions.length === 0 ? (
+                {replayView === 'skeleton' ? (
                   <div className="replay-queue-skeleton" role="status" aria-label="Loading recorded sessions">
                     {[1, 2, 3, 4, 5].map((i) => (
                       <div key={i} className="replay-queue-skeleton__item">
@@ -1137,7 +1145,7 @@ function DashboardInner({
                       </div>
                     ))}
                   </div>
-                ) : replaySessions.length === 0 ? (
+                ) : replayView === 'onboarding' ? (
                   <section className="dash-card dash-card--compact" style={{ padding: '3.5rem 1.5rem', textAlign: 'center' }}>
                     <div style={{ maxWidth: 440, margin: '0 auto' }}>
                       <div style={{ fontSize: '2.25rem', marginBottom: '0.75rem' }}>📹</div>
@@ -1207,6 +1215,27 @@ function DashboardInner({
                       </div>
 
                       <div className="dash-session-list">
+                        {replaySessions.length === 0 && (
+                          <div className="dash-session-empty" role="status">
+                            <p>
+                              {replayLoading
+                                ? 'Loading sessions…'
+                                : `No sessions match “${REPLAY_FILTER_LABEL[replayFilter]}”.`}
+                            </p>
+                            {!replayLoading && (
+                              <button
+                                type="button"
+                                className="dash-btn dash-btn--sm"
+                                onClick={() => {
+                                  setReplayFilter('all')
+                                  setReplayOffset(0)
+                                }}
+                              >
+                                Show all sessions
+                              </button>
+                            )}
+                          </div>
+                        )}
                         {replaySessions.map((s) => {
                           const selected = s.id === selectedSessionId
                           const durFormatted = formatDurationMs(s.duration_ms)
@@ -1295,7 +1324,7 @@ function DashboardInner({
 
                     {/* Right Column: OpenReplay Unified Studio Theater */}
                     <div className="or-player-col" aria-label="Session player">
-                      {activeReplaySession ? (
+                      {activeReplaySession && replaySessions.length > 0 ? (
                         <ReplayPlayer
                           session={activeReplaySession}
                           chunks={
@@ -1384,7 +1413,11 @@ function DashboardInner({
                         </div>
                       ) : (
                         <section className="dash-card dash-card--compact" style={{ padding: '3.5rem 1rem', textAlign: 'center' }}>
-                          <p className="dash-empty">Select a session from the queue to start replay.</p>
+                          <p className="dash-empty">
+                            {replaySessions.length === 0
+                              ? 'No session to replay for this filter.'
+                              : 'Select a session from the queue to start replay.'}
+                          </p>
                         </section>
                       )}
                     </div>

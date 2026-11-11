@@ -7750,3 +7750,16 @@ select {
 .console-content:has(> .dash-replay-container) {
   max-width: none;
 }
+
+/* Filter matched nothing: the rail keeps its filters and says so, with a way back */
+.dash-session-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-2xs);
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+}
+
+.dash-session-empty p { margin: 0; }
