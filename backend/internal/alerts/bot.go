@@ -3,6 +3,7 @@ package alerts
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -202,10 +203,15 @@ func (s *Service) DeleteBot(ctx context.Context, orgID int64) error {
 }
 
 // workingBot decrypts the organisation's active bot. It returns nil, nil when
+// not in tenant mode (a leftover row is never used by the shared bot), when
 // there is no bot, it is invalid, there is no sealer, or the ciphertext does
-// not open (a rotated key or a row copied from another organisation); only a
-// database failure is an error. A decrypt failure is logged, not written back.
+// not open (ErrSealOpen: a rotated key or a row copied from another
+// organisation). A database failure or any other sealer failure is an error.
+// A decrypt failure is logged, not written back.
 func (s *Service) workingBot(ctx context.Context, orgID int64) (*orgBot, error) {
+	if s.mode != ModeTenant {
+		return nil, nil
+	}
 	if s.sealer == nil {
 		return nil, nil
 	}
@@ -224,9 +230,12 @@ SELECT token_ciphertext, key_id, bot_username, status, detail_level FROM alert_b
 		return nil, nil
 	}
 	pt, err := s.sealer.Open(orgID, keyID, blob)
-	if err != nil {
+	if errors.Is(err, ErrSealOpen) {
 		slog.Error("alerts: cannot decrypt org bot token", "org_id", orgID, "error_class", errClass(err))
 		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("alerts: open org bot token: %w", err)
 	}
 	tg := NewTelegram(string(pt), s.apiBase, nil)
 	for i := range pt {

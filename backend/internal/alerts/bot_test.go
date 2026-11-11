@@ -209,7 +209,7 @@ func TestNullChatChannelsDoNotBreakExistingReaders(t *testing.T) {
 	}
 	n := &fakeNotifier{}
 	s := NewService(pool, n, "http://app").WithBotUsername("TestBot")
-	chs, err := s.enabledChannels(ctx, pid)
+	chs, err := s.enabledChannels(ctx, pid, originLinked)
 	if err != nil {
 		t.Fatalf("enabledChannels: %v", err)
 	}

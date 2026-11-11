@@ -118,11 +118,12 @@ type envelope struct {
 	} `json:"parameters"`
 }
 
-// SendMessage sends html to chat. A numeric chat id goes on the wire as a JSON
-// number (as it always has); anything else, such as "@news", as a JSON string.
+// SendMessage sends html to chat. A chat in canonical decimal form goes on
+// the wire as a JSON number (as it always has); anything else, such as
+// "@news", "007" or "+123", as a JSON string, so it is never reinterpreted.
 func (t *Telegram) SendMessage(ctx context.Context, chat, html string) error {
 	var chatID any = chat
-	if n, err := strconv.ParseInt(chat, 10, 64); err == nil {
+	if n, err := strconv.ParseInt(chat, 10, 64); err == nil && strconv.FormatInt(n, 10) == chat {
 		chatID = n
 	}
 	body, _ := json.Marshal(map[string]any{

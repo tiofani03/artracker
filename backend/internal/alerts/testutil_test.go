@@ -126,7 +126,8 @@ type strictTelegram struct {
 	mu     sync.Mutex
 	reqs   []strictRequest
 	byMeth map[string]strictReply
-	byTok  map[string]strictReply // key: token + "/" + method
+	byTok  map[string]strictReply   // key: token + "/" + method
+	queued map[string][]strictReply // key: method; one-shot replies, used first
 }
 
 // errorfer is the slice of *testing.T the server reports through; the helper's
@@ -142,7 +143,8 @@ func newStrictTelegramServer(t *testing.T) *strictTelegram {
 
 func newStrictTelegramServerReporting(t *testing.T, rep errorfer) *strictTelegram {
 	t.Helper()
-	st := &strictTelegram{t: rep, byMeth: map[string]strictReply{}, byTok: map[string]strictReply{}}
+	st := &strictTelegram{t: rep, byMeth: map[string]strictReply{}, byTok: map[string]strictReply{},
+		queued: map[string][]strictReply{}}
 	srv := httptest.NewServer(http.HandlerFunc(st.handle))
 	t.Cleanup(srv.Close)
 	st.URL = srv.URL
@@ -162,6 +164,14 @@ func (s *strictTelegram) SetReplyForToken(token, method string, status int, json
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.byTok[token+"/"+method] = strictReply{status, jsonBody}
+}
+
+// QueueReply makes the next call of method (any token) get this reply once; it
+// wins over SetReply and SetReplyForToken. Queued replies are used in order.
+func (s *strictTelegram) QueueReply(method string, status int, jsonBody string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.queued[method] = append(s.queued[method], strictReply{status, jsonBody})
 }
 
 // Requests returns a copy of every request recorded so far, in arrival order.
@@ -200,7 +210,15 @@ func (s *strictTelegram) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	s.reqs = append(s.reqs, strictRequest{Token: token, Method: method, Body: body})
-	rep, ok := s.byTok[token+"/"+method]
+	var rep strictReply
+	ok := false
+	if q := s.queued[method]; len(q) > 0 {
+		rep, ok = q[0], true
+		s.queued[method] = q[1:]
+	}
+	if !ok {
+		rep, ok = s.byTok[token+"/"+method]
+	}
 	if !ok {
 		rep, ok = s.byMeth[method]
 	}

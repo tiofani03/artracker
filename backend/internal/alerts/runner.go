@@ -65,8 +65,8 @@ func (s *Service) RetryBotUsername(ctx context.Context, getMe func(context.Conte
 var ErrChannelNotFound = errors.New("channel not found")
 
 // Run drives the alert workers until ctx is done: it dispatches pending
-// notifications, evaluates spike rules and, when src is non-nil, long-polls
-// for updates as soon as Telegram is configured (the bot username may only
+// notifications, evaluates spike rules and, in shared mode when src is
+// non-nil, long-polls for updates as soon as Telegram is configured (the bot username may only
 // become known after boot). It returns only after every
 // goroutine has exited. A tick failure is logged and never fatal.
 func (s *Service) Run(ctx context.Context, src UpdateSource) {
@@ -89,7 +89,8 @@ func (s *Service) Run(ctx context.Context, src UpdateSource) {
 	}
 	loop("dispatch", dispatchInterval, s.DispatchPending)
 	loop("evaluate", evaluateInterval, s.Evaluate)
-	if src != nil {
+	// Tenant mode never receives Telegram updates, whatever src is.
+	if s.Mode() == ModeShared && src != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
