@@ -9,6 +9,7 @@ import {
   type ProjectStats,
   type ReplayChunkDetail,
   type ReplaySessionItem,
+  type SessionPerfResponse,
   type TelemetryEvent,
 } from '../api'
 import DashboardShell from '../components/DashboardShell'
@@ -506,6 +507,27 @@ function DashboardInner({
       cancelled = true
     }
   }, [projectReady, targetPid, selectedSessionId, liveCapture])
+
+  // Profiling samples load in parallel with the session detail; any failure just means "no profiling data"
+  const [sessionPerf, setSessionPerf] = useState<{ sessionId: string; data: SessionPerfResponse } | null>(null)
+  useEffect(() => {
+    if (!projectReady || !selectedSessionId) {
+      setSessionPerf(null)
+      return
+    }
+    let cancelled = false
+    replayApi
+      .getSessionPerf(targetPid, selectedSessionId)
+      .then((data) => {
+        if (!cancelled) setSessionPerf({ sessionId: selectedSessionId, data })
+      })
+      .catch(() => {
+        if (!cancelled) setSessionPerf(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectReady, targetPid, selectedSessionId])
 
   const handleStartLiveCapture = () => {
     if (isCapturingLive) return
@@ -1312,6 +1334,7 @@ function DashboardInner({
                           projectPlatform={project?.platform}
                           deviceMode={replayDeviceMode}
                           onDeviceModeChange={setReplayDeviceMode}
+                          perf={sessionPerf?.sessionId === activeReplaySession.id ? sessionPerf.data : null}
                           queueOpen={queueVisible}
                           onToggleQueue={toggleQueue}
                         />

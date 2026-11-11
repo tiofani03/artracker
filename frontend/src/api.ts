@@ -465,6 +465,29 @@ export type ReplaySessionDetailResponse = {
   timeline_events: TelemetryEvent[]
 }
 
+export type PerfThermal = 'nominal' | 'fair' | 'serious' | 'critical'
+
+/** One profiling reading; absent metrics were not measured (never 0). `t` is epoch ms. */
+export type PerfSample = {
+  t: number
+  cpu?: number
+  mem_mb?: number
+  fps?: number
+  jank?: number
+  frozen?: number
+  threads?: number
+  battery?: number
+  thermal?: PerfThermal
+}
+
+export type SessionPerfResponse = {
+  interval_ms: number
+  device: { ram_mb?: number; cores?: number; refresh_hz?: number }
+  metrics: string[]
+  samples: PerfSample[]
+  downsampled: boolean
+}
+
 export const replayApi = {
   listSessions: (projectId: number, params: ReplaySessionListParams = {}) => {
     const qs = new URLSearchParams()
@@ -484,6 +507,9 @@ export const replayApi = {
     request<ReplaySessionDetailResponse>(
       `/projects/${projectId}/sessions/${encodeURIComponent(sessionId)}`,
     ),
+  /** CPU / memory / FPS samples SDKs reported for the session (empty arrays when it has none). */
+  getSessionPerf: (projectId: number, sessionId: string) =>
+    request<SessionPerfResponse>(`/projects/${projectId}/sessions/${encodeURIComponent(sessionId)}/perf`),
   /** Freshly signed URLs for chunks `fromSeq..toSeq` of a session (used after earlier URLs expired). */
   listSessionChunks: (projectId: number, sessionId: string, fromSeq: number, toSeq: number) =>
     request<{ chunks: ReplayChunkDetail[] }>(

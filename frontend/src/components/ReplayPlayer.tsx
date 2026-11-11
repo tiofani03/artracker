@@ -10,7 +10,14 @@ import {
 import { EventType, type eventWithTime } from 'rrweb'
 import rrwebPlayer from 'rrweb-player'
 import 'rrweb-player/dist/style.css'
-import { replayApi, type Platform, type ReplayChunkDetail, type ReplaySessionItem, type TelemetryEvent } from '../api'
+import {
+  replayApi,
+  type Platform,
+  type ReplayChunkDetail,
+  type ReplaySessionItem,
+  type SessionPerfResponse,
+  type TelemetryEvent,
+} from '../api'
 import { loadChunkPayloads } from '../utils/replayChunkLoader'
 import { ScreenChunkSource } from '../utils/screenChunkSource'
 import { buildReplayModel } from '../replay/normalize'
@@ -149,6 +156,8 @@ export default function ReplayPlayer({
   onDeviceModeChange?: (mode: DeviceMode) => void
   queueOpen?: boolean
   onToggleQueue?: () => void
+  /** Profiling samples for this session (CPU / memory / FPS); drawn as timeline tracks. */
+  perf?: SessionPerfResponse | null
 }) {
   const stageWrapRef = useRef<HTMLDivElement | null>(null)
   const playerRef = useRef<rrwebPlayer | null>(null)
