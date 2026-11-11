@@ -268,6 +268,10 @@ describe('validateLabel', () => {
     expect(validateLabel('a'.repeat(80))).toBeNull()
     expect(validateLabel('a'.repeat(81))).not.toBeNull()
   })
+  it('counts code points, not UTF-16 units', () => {
+    expect(validateLabel('😀'.repeat(80))).toBeNull()
+    expect(validateLabel('😀'.repeat(81))).not.toBeNull()
+  })
   it('rejects an all-whitespace label and accepts surrounding spaces', () => {
     expect(validateLabel('   ')).not.toBeNull()
     expect(validateLabel(' ops ')).toBeNull()
@@ -300,6 +304,11 @@ describe('botBannerText', () => {
   })
   it('explains an invalid bot with its reason', () => {
     expect(botBannerText(bot({ status: 'invalid', status_reason: 'token revoked' }), true)).toContain('token revoked')
+  })
+  it('is always null in shared mode', () => {
+    expect(botBannerText(bot({ mode: 'shared', configured: false, status: '' }), true)).toBeNull()
+    expect(botBannerText(bot({ mode: 'shared', configured: false, status: '' }), false)).toBeNull()
+    expect(botBannerText(bot({ mode: 'shared', status: 'invalid', status_reason: 'x' }), true)).toBeNull()
   })
   it('is null for an active bot', () => {
     expect(botBannerText(bot(), true)).toBeNull()

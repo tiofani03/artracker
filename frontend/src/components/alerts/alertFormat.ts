@@ -176,7 +176,7 @@ export function validateChat(input: string): string | null {
  */
 export function validateLabel(input: string): string | null {
   if (input.trim() === '') return 'Enter a label.'
-  if (input.length > 80) return 'Label must be at most 80 characters.'
+  if ([...input].length > 80) return 'Label must be at most 80 characters.'
   return null
 }
 
@@ -188,6 +188,7 @@ export function validateBotToken(input: string): string | null {
 
 /** Banner for the alerts view; null when the bot is fine. */
 export function botBannerText(bot: AlertBot, canManage: boolean): string | null {
+  if (bot.mode === 'shared') return null
   if (!bot.configured) {
     return canManage
       ? 'Connect a Telegram bot in Settings to receive alerts.'
