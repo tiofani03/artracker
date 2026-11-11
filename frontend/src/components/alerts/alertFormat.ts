@@ -214,3 +214,24 @@ export function channelActivityLabel(c: AlertChannel, mode: AlertBotMode): strin
 export function detailLevelLabel(level: AlertDetailLevel): string {
   return level === 'full' ? 'Full (includes error text)' : 'Minimal (no error text)'
 }
+
+export function canShowTest(c: AlertChannel): boolean {
+  return c.active
+}
+
+/** Channels that actually receive alerts. */
+export function countActiveChannels(channels: AlertChannel[]): number {
+  return channels.filter((c) => c.active && c.enabled).length
+}
+
+/** The shared-bot link flow exists only when the server owns the bot. */
+export function showLinkFlow(mode: AlertBotMode): boolean {
+  return mode === 'shared'
+}
+
+export function botBadge(bot: AlertBot): { className: string; text: string } {
+  if (bot.status === 'invalid') {
+    return { className: 'badge--revoked', text: bot.status_reason === '' ? 'Invalid' : `Invalid: ${bot.status_reason}` }
+  }
+  return { className: 'badge--active', text: 'Active' }
+}

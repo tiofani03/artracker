@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { AlertBot, AlertChannel, AlertIncident, AlertRule } from '../../api'
 import {
   botBannerText,
+  canShowTest,
+  countActiveChannels,
+  showLinkFlow,
+  botBadge,
   buildRulePatch,
   channelActivityLabel,
   countEnabledChannels,
@@ -334,5 +338,44 @@ describe('detailLevelLabel', () => {
   it('describes each level', () => {
     expect(detailLevelLabel('minimal')).toBe('Minimal (no error text)')
     expect(detailLevelLabel('full')).toBe('Full (includes error text)')
+  })
+})
+
+describe('canShowTest', () => {
+  it('only offers Test for an active channel', () => {
+    expect(canShowTest({ ...channel(1), active: true })).toBe(true)
+    expect(canShowTest({ ...channel(1), active: false })).toBe(false)
+  })
+})
+
+describe('countActiveChannels', () => {
+  it('counts channels that are both active and enabled', () => {
+    const items = [
+      { ...channel(1), active: true, enabled: true },
+      { ...channel(2), active: false, enabled: true },
+      { ...channel(3), active: true, enabled: false },
+    ]
+    expect(countActiveChannels(items)).toBe(1)
+  })
+})
+
+describe('showLinkFlow', () => {
+  it('is only for shared mode', () => {
+    expect(showLinkFlow('shared')).toBe(true)
+    expect(showLinkFlow('tenant')).toBe(false)
+  })
+})
+
+describe('botBadge', () => {
+  it('maps status to a badge class and text', () => {
+    expect(botBadge(bot())).toEqual({ className: 'badge--active', text: 'Active' })
+    expect(botBadge(bot({ status: 'invalid', status_reason: 'token revoked' }))).toEqual({
+      className: 'badge--revoked',
+      text: 'Invalid: token revoked',
+    })
+    expect(botBadge(bot({ status: 'invalid', status_reason: '' }))).toEqual({
+      className: 'badge--revoked',
+      text: 'Invalid',
+    })
   })
 })

@@ -10,7 +10,10 @@ import {
 import { Link } from '../../router'
 import {
   SPIKE_WINDOWS,
+  botBannerText,
   buildRulePatch,
+  canShowTest,
+  channelActivityLabel,
   detectLinked,
   draftFromRule,
   formatCountdown,
@@ -18,7 +21,10 @@ import {
   notifyLabel,
   ruleDescription,
   ruleTitle,
+  showLinkFlow,
   timeAgo,
+  validateChat,
+  validateLabel,
   validateRulePatch,
   type RuleDraft,
 } from './alertFormat'
@@ -30,12 +36,14 @@ function errMsg(err: unknown, fallback: string): string {
 }
 
 type Props = { projectId: number; canManage: boolean }
+type ViewProps = Props & { orgId: number }
 
-export default function AlertsView({ projectId, canManage }: Props) {
-  // keyed by project so each card starts from fresh state and its timers are torn down on switch
+export default function AlertsView({ projectId, orgId, canManage }: ViewProps) {
+  // keyed by project (and org, whose bot decides the mode) so each card starts from fresh state
+  // and its timers are torn down on switch
   return (
     <div className="dash-panel-stack">
-      <ChannelsCard key={`c${projectId}`} projectId={projectId} canManage={canManage} />
+      <ChannelsCard key={`c${orgId}-${projectId}`} projectId={projectId} canManage={canManage} />
       <RulesCard key={`r${projectId}`} projectId={projectId} canManage={canManage} />
       <IncidentsCard key={`i${projectId}`} projectId={projectId} />
     </div>
@@ -54,7 +62,13 @@ function ChannelsCard({ projectId, canManage }: Props) {
   const [now, setNow] = useState(() => Date.now())
   const [creating, setCreating] = useState(false)
   const [testResult, setTestResult] = useState<Record<number, string>>({})
+  const [pending, setPending] = useState<Set<number>>(() => new Set())
+  const [chat, setChat] = useState('')
+  const [label, setLabel] = useState('')
+  const [adding, setAdding] = useState(false)
+  const [addWarning, setAddWarning] = useState('')
   const mounted = useRef(true)
+  const pendingRef = useRef<Set<number>>(new Set())
 
   useEffect(() => {
     mounted.current = true
@@ -140,7 +154,39 @@ function ChannelsCard({ projectId, canManage }: Props) {
     }
   }
 
-  const test = async (ch: AlertChannel) => {
+  // Guards double clicks: a channel's buttons are disabled (and ignored) while one of its requests runs.
+  const guarded = async (id: number, fn: () => Promise<void>) => {
+    if (pendingRef.current.has(id)) return
+    pendingRef.current.add(id)
+    setPending(new Set(pendingRef.current))
+    try {
+      await fn()
+    } finally {
+      pendingRef.current.delete(id)
+      if (mounted.current) setPending(new Set(pendingRef.current))
+    }
+  }
+
+  const addChat = async () => {
+    if (adding || validateChat(chat) !== null || validateLabel(label) !== null) return
+    setAdding(true)
+    setError('')
+    setAddWarning('')
+    try {
+      const res = await alertApi.createChannel(projectId, { chat, label })
+      if (!mounted.current) return
+      setChat('')
+      setLabel('')
+      setAddWarning(res.warning ?? '')
+      await load()
+    } catch (err) {
+      if (mounted.current) setError(errMsg(err, 'Failed to add the chat'))
+    } finally {
+      if (mounted.current) setAdding(false)
+    }
+  }
+
+  const test = (ch: AlertChannel) => guarded(ch.id, async () => {
     setTestResult((r) => ({ ...r, [ch.id]: 'Sending…' }))
     let result = 'Sent ✓'
     try {
@@ -149,18 +195,18 @@ function ChannelsCard({ projectId, canManage }: Props) {
       result = errMsg(err, 'Test failed')
     }
     if (mounted.current) setTestResult((r) => ({ ...r, [ch.id]: result }))
-  }
+  })
 
-  const toggle = async (ch: AlertChannel) => {
+  const toggle = (ch: AlertChannel) => guarded(ch.id, async () => {
     try {
       await alertApi.setChannelEnabled(projectId, ch.id, !ch.enabled)
       await load()
     } catch (err) {
       if (mounted.current) setError(errMsg(err, 'Failed to update channel'))
     }
-  }
+  })
 
-  const remove = async (ch: AlertChannel) => {
+  const remove = (ch: AlertChannel) => guarded(ch.id, async () => {
     if (!window.confirm(`Remove ${ch.title}? Alerts will no longer be sent there.`)) return
     try {
       await alertApi.deleteChannel(projectId, ch.id)
@@ -168,7 +214,12 @@ function ChannelsCard({ projectId, canManage }: Props) {
     } catch (err) {
       if (mounted.current) setError(errMsg(err, 'Failed to remove channel'))
     }
-  }
+  })
+
+  const banner = data ? botBannerText(data.bot, canManage) : null
+  const chatProblem = chat === '' ? null : validateChat(chat)
+  const labelProblem = label === '' ? null : validateLabel(label)
+  const activity = (ch: AlertChannel) => (data ? channelActivityLabel(ch, data.mode) : null)
 
   return (
     <section className="dash-card dash-card--compact" aria-labelledby="alert-channels-title">
@@ -179,7 +230,7 @@ function ChannelsCard({ projectId, canManage }: Props) {
           </h2>
           <p className="dash-card__desc">Chats that receive alerts for this project.</p>
         </div>
-        {canManage && data?.telegram.configured && (
+        {canManage && data && showLinkFlow(data.mode) && data.telegram.configured && (
           <button type="button" className="dash-btn" onClick={() => void connect()} disabled={creating || linkActive}>
             Connect Telegram
           </button>
@@ -194,11 +245,75 @@ function ChannelsCard({ projectId, canManage }: Props) {
 
       {data === null ? (
         !error && <p className="dash-empty">Loading…</p>
-      ) : !data.telegram.configured ? (
+      ) : showLinkFlow(data.mode) && !data.telegram.configured ? (
         <p className="dash-empty">Telegram is not configured on this server. Set TELEGRAM_BOT_TOKEN.</p>
       ) : (
         <>
-          {link && (
+          {banner && (
+            <p className="dash-note" role="status">
+              {banner}
+              {canManage && (
+                <>
+                  {' '}
+                  <Link to="/dashboard/settings">Open Settings</Link>
+                </>
+              )}
+            </p>
+          )}
+
+          {canManage && !showLinkFlow(data.mode) && (
+            <div className="dash-form">
+              <p className="dash-list__sub" id="alert-add-chat-help">
+                Add your bot to the chat or group and send a message there, then enter the chat id (or @channel_username)
+                below.
+              </p>
+              <div className="dash-list__top">
+                <input
+                  type="text"
+                  className="dash-input"
+                  aria-label="Chat id or @channel_username"
+                  aria-describedby={chatProblem ? 'alert-add-chat-error' : 'alert-add-chat-help'}
+                  placeholder="-1001234567890"
+                  value={chat}
+                  disabled={adding}
+                  onChange={(e) => setChat(e.target.value)}
+                />
+                <input
+                  type="text"
+                  className="dash-input"
+                  aria-label="Chat label"
+                  aria-describedby={labelProblem ? 'alert-add-label-error' : undefined}
+                  placeholder="Label, e.g. On-call"
+                  value={label}
+                  disabled={adding}
+                  onChange={(e) => setLabel(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="dash-btn"
+                  disabled={adding || validateChat(chat) !== null || validateLabel(label) !== null}
+                  onClick={() => void addChat()}
+                >
+                  {adding ? 'Adding…' : 'Add chat'}
+                </button>
+              </div>
+              {chatProblem && (
+                <p id="alert-add-chat-error" className="dash-error">
+                  {chatProblem}
+                </p>
+              )}
+              {labelProblem && (
+                <p id="alert-add-label-error" className="dash-error">
+                  {labelProblem}
+                </p>
+              )}
+              <p className="dash-list__sub" aria-live="polite">
+                {addWarning}
+              </p>
+            </div>
+          )}
+
+          {link && showLinkFlow(data.mode) && (
             <div className="dash-list__row" aria-live="polite">
               <div className="dash-list__main">
                 {link.phase === 'active' && (
@@ -233,10 +348,12 @@ function ChannelsCard({ projectId, canManage }: Props) {
                         {ch.enabled ? 'Enabled' : 'Disabled'}
                       </span>
                       <span className="dash-code">{ch.chat_type}</span>
+                      {activity(ch) && <span className="dash-code">{activity(ch)}</span>}
                       {!ch.enabled && ch.disabled_reason && <span className="dash-code">{ch.disabled_reason}</span>}
                       {ch.last_sent_at && <span className="dash-code">Last sent {timeAgo(ch.last_sent_at, new Date(now))}</span>}
                     </div>
                     <p className="dash-list__title">{ch.title}</p>
+                    {ch.destination !== '' && <p className="dash-list__sub dash-code">{ch.destination}</p>}
                     {ch.last_error !== '' && <p className="dash-list__sub dash-code">{ch.last_error}</p>}
                     <p className="dash-list__sub" aria-live="polite">
                       {testResult[ch.id] ?? ''}
@@ -244,13 +361,15 @@ function ChannelsCard({ projectId, canManage }: Props) {
                   </div>
                   {canManage && (
                     <div className="dash-list__top">
-                      <button type="button" className="dash-btn" onClick={() => void test(ch)}>
-                        Test
-                      </button>
-                      <button type="button" className="dash-btn" onClick={() => void toggle(ch)}>
+                      {canShowTest(ch) && (
+                        <button type="button" className="dash-btn" disabled={pending.has(ch.id)} onClick={() => void test(ch)}>
+                          Test
+                        </button>
+                      )}
+                      <button type="button" className="dash-btn" disabled={pending.has(ch.id)} onClick={() => void toggle(ch)}>
                         {ch.enabled ? 'Disable' : 'Enable'}
                       </button>
-                      <button type="button" className="dash-btn" onClick={() => void remove(ch)}>
+                      <button type="button" className="dash-btn" disabled={pending.has(ch.id)} onClick={() => void remove(ch)}>
                         Remove
                       </button>
                     </div>

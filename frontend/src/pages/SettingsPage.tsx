@@ -2,6 +2,7 @@ import { useState } from 'react'
 import ApiKeysPanel from '../components/ApiKeysPanel'
 import DashboardShell from '../components/DashboardShell'
 import ReplaySettingsPanel from '../components/ReplaySettingsPanel'
+import TelegramBotCard from '../components/TelegramBotCard'
 import TeamMembersPanel from '../components/TeamMembersPanel'
 import '../dashboard.css'
 
@@ -74,11 +75,14 @@ export default function SettingsPage() {
               )}
 
               {activeOrg && activeTab === 'team' && (
-                <TeamMembersPanel
-                  org={{ ...activeOrg, created_at: '' }}
-                  canManage={canManage}
-                  currentUserRole={activeOrg.role}
-                />
+                <>
+                  <TeamMembersPanel
+                    org={{ ...activeOrg, created_at: '' }}
+                    canManage={canManage}
+                    currentUserRole={activeOrg.role}
+                  />
+                  <TelegramBotCard orgId={activeOrg.id} canManage={canManage} />
+                </>
               )}
 
               {activeOrg && activeTab === 'replay' && (
