@@ -98,7 +98,7 @@ Two bot modes, set with `ALERTS_BOT_MODE`:
 
 The master key is `ALERTS_MASTER_KEY` (standard base64 of exactly 32 bytes) or `ALERTS_MASTER_KEY_FILE` (a file holding it); generate one with `openssl rand -base64 32` and keep it safe, since losing it makes stored bot tokens unreadable. It is optional in development and in `shared` mode, but a key that is set and malformed stops startup. `ALERTS_MASTER_KEY_ID` (default `v1`) labels the key.
 
-**Upgrading:** `ALERTS_BOT_MODE` defaults to `tenant`, and in production that mode refuses to start without `ALERTS_MASTER_KEY`. An existing deployment must set either `ALERTS_MASTER_KEY` or `ALERTS_BOT_MODE=shared` **before** deploying this version (`docker-compose.prod.yml` already forwards the variables through `env_file: .env`).
+**Upgrading:** `ALERTS_BOT_MODE` defaults to `tenant`, and in production that mode refuses to start without the master key. An existing deployment must set either `ALERTS_MASTER_KEY` or `ALERTS_BOT_MODE=shared` in the server's `.env` **before** deploying this version (`docker-compose.prod.yml` forwards it through `env_file: .env`). The shipped `docker-compose.prod.yml` mounts no secret file, so with it use `ALERTS_MASTER_KEY`; `ALERTS_MASTER_KEY_FILE` only works after you mount the key file into the `api` container yourself (a compose change). The deploy workflow checks this first: when `.env` sets none of `ALERTS_MASTER_KEY`, `ALERTS_MASTER_KEY_FILE` or `ALERTS_BOT_MODE=shared`, it fails with a clear error before pulling anything and leaves the running containers untouched.
 
 Steps:
 
