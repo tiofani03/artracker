@@ -350,7 +350,7 @@ var openAPISpecBytes = []byte(`{
           { "name": "sessionID", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
-          "200": { "description": "{ interval_ms, device{ram_mb,cores,refresh_hz}, metrics[], samples[{t,cpu,mem_mb,fps,jank,frozen,threads,battery,thermal}], downsampled }" },
+          "200": { "description": "{ interval_ms, device{ram_mb,storage_mb,os_version,cores,refresh_hz}, metrics[], samples[{t,cpu,mem_mb,fps,jank,frozen,threads,battery,thermal,ram_free_mb,storage_free_mb,net}], downsampled }" },
           "400": { "description": "Invalid session id" }
         }
       }
@@ -659,6 +659,131 @@ var openAPISpecBytes = []byte(`{
         ],
         "responses": {
           "200": { "description": "List of artifacts for the release" }
+        }
+      }
+    },
+    "/projects/{projectID}/alerts/rules": {
+      "get": {
+        "summary": "List Alert Rules",
+        "operationId": "listAlertRules",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "{items: Rule[]} ordered new_issue, regression, issue_spike" }
+        }
+      }
+    },
+    "/projects/{projectID}/alerts/rules/{kind}": {
+      "patch": {
+        "summary": "Update an Alert Rule (admin)",
+        "operationId": "updateAlertRule",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "kind", "in": "path", "required": true, "schema": { "type": "string", "enum": ["new_issue", "regression", "issue_spike"] } }
+        ],
+        "responses": {
+          "200": { "description": "The updated rule" },
+          "400": { "description": "Invalid value, empty body, or spike field on a non-spike rule" },
+          "404": { "description": "Unknown rule kind" }
+        }
+      }
+    },
+    "/projects/{projectID}/alerts/channels": {
+      "get": {
+        "summary": "List Alert Channels",
+        "operationId": "listAlertChannels",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "{telegram: {configured, bot_username}, items: Channel[]}; the chat id is never returned" }
+        }
+      }
+    },
+    "/projects/{projectID}/alerts/channels/link-code": {
+      "post": {
+        "summary": "Create a Telegram Link Code (admin)",
+        "operationId": "createAlertLinkCode",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "201": { "description": "Link code with group_link and private_link, valid 15 minutes" },
+          "503": { "description": "Telegram is not configured on this server" }
+        }
+      }
+    },
+    "/projects/{projectID}/alerts/channels/{channelID}": {
+      "patch": {
+        "summary": "Enable or Disable a Channel (admin)",
+        "operationId": "updateAlertChannel",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "channelID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "The updated channel; enabling clears disabled_reason" },
+          "404": { "description": "Channel not found" }
+        }
+      },
+      "delete": {
+        "summary": "Delete a Channel (admin)",
+        "operationId": "deleteAlertChannel",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "channelID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "204": { "description": "Channel deleted" },
+          "404": { "description": "Channel not found" }
+        }
+      }
+    },
+    "/projects/{projectID}/alerts/channels/{channelID}/test": {
+      "post": {
+        "summary": "Send a Test Message (admin)",
+        "operationId": "testAlertChannel",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "channelID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "204": { "description": "Test message sent" },
+          "404": { "description": "Channel not found" },
+          "502": { "description": "Telegram rejected the test message" },
+          "503": { "description": "Telegram is not configured on this server" }
+        }
+      }
+    },
+    "/projects/{projectID}/alerts/incidents": {
+      "get": {
+        "summary": "List Alert Incidents",
+        "operationId": "listAlertIncidents",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "status", "in": "query", "required": false, "schema": { "type": "string", "enum": ["firing", "resolved", "all"], "default": "all" } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 50, "minimum": 1, "maximum": 200 } }
+        ],
+        "responses": {
+          "200": { "description": "{items: Incident[]} newest first" },
+          "400": { "description": "Invalid status filter" }
         }
       }
     }

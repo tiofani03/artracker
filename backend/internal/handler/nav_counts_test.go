@@ -10,6 +10,7 @@ import (
 type navCounts struct {
 	FrustratedReplays24h int `json:"frustrated_replays_24h"`
 	OpenIssues           int `json:"open_issues"`
+	FiringAlerts         int `json:"firing_alerts"`
 }
 
 func (e *testEnv) addReplaySession(t *testing.T, pid int64, id, ageSQL string, errFlag, rage, dead bool) {
@@ -52,6 +53,23 @@ func TestNavCountsReflectRealData(t *testing.T) {
 	e.addIssue(t, pid, "d", "ignored")
 	e.addIssue(t, other, "e", "open")
 
+	for _, in := range []struct {
+		pid    int64
+		fp     string
+		status string
+	}{{pid, "f1", "firing"}, {pid, "f2", "firing"}, {pid, "f3", "resolved"}, {other, "f4", "firing"}} {
+		var issueID int64
+		if err := e.pool.QueryRow(context.Background(),
+			`INSERT INTO issues(project_id, fingerprint, title, status) VALUES ($1,$2,$2,'resolved') RETURNING id`, in.pid, in.fp).Scan(&issueID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.pool.Exec(context.Background(),
+			`INSERT INTO alert_incidents(project_id, rule_kind, issue_id, status, title) VALUES ($1,'new_issue',$2,$3,'t')`,
+			in.pid, issueID, in.status); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	resp := e.do(t, "GET", fmt.Sprintf("/api/v1/projects/%d/nav-counts", pid), nil, hdr)
 	if resp.StatusCode != 200 {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
@@ -65,6 +83,9 @@ func TestNavCountsReflectRealData(t *testing.T) {
 	}
 	if got.OpenIssues != 2 {
 		t.Errorf("open_issues = %d, want 2 (open only, this project only)", got.OpenIssues)
+	}
+	if got.FiringAlerts != 2 {
+		t.Errorf("firing_alerts = %d, want 2 (firing only, this project only)", got.FiringAlerts)
 	}
 }
 
