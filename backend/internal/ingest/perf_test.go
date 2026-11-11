@@ -101,3 +101,28 @@ func TestParsePerfItemDropsUnknownKeys(t *testing.T) {
 		t.Errorf("unknown key leaked: %s", b)
 	}
 }
+
+func TestParsePerfItemDeviceAndNetwork(t *testing.T) {
+	item := perfItem("ses_a", `{
+		"v":1,"platform":"android","interval_ms":1000,
+		"device":{"ram_mb":6000,"storage_mb":128000,"os_version":"  14  "},
+		"samples":[{"t":1000,"ram_free_mb":-5,"storage_free_mb":50000,"net":"wifi"},{"t":2000,"net":"5g"}]
+	}`)
+	row, err := ParsePerfItem(1, time.Now(), item)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if row.Device.OSVersion != "14" || row.Device.StorageMB != 128000 {
+		t.Errorf("bad device: %+v", row.Device)
+	}
+	a, b := row.Samples[0], row.Samples[1]
+	if a.RAMFreeMB == nil || *a.RAMFreeMB != 0 {
+		t.Errorf("ram_free_mb not clamped to 0: %v", a.RAMFreeMB)
+	}
+	if a.StorageFreeMB == nil || *a.StorageFreeMB != 50000 || a.Net != "wifi" {
+		t.Errorf("bad sample: %+v", a)
+	}
+	if b.Net != "" {
+		t.Errorf("unknown net should be dropped, got %q", b.Net)
+	}
+}

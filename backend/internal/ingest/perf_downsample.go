@@ -5,6 +5,9 @@ import "sort"
 // MaxPerfResponseSamples caps how many samples the read API returns for one session.
 const MaxPerfResponseSamples = 1200
 
+// netSeverity ranks connections from healthiest to worst so a downsampled bucket keeps its worst moment.
+var netSeverity = map[string]int{"": 0, "ethernet": 1, "wifi": 2, "cellular": 3, "none": 4}
+
 var thermalSeverity = map[string]int{"": 0, "nominal": 1, "fair": 2, "serious": 3, "critical": 4}
 
 // MergePerfSamples flattens batches into one series sorted by T. SDK retries can deliver the same instant
@@ -31,8 +34,8 @@ func MergePerfSamples(batches [][]PerfSample) []PerfSample {
 }
 
 // DownsamplePerf reduces s to at most maxPoints samples. Each output sample summarizes a contiguous bucket
-// and keeps the WORST value of every metric (max cpu/mem/jank/frozen/threads, min fps/battery, most severe
-// thermal), so a single spike is never averaged away. The bool reports whether anything was reduced.
+// and keeps the WORST value of every metric (max cpu/mem/jank/frozen/threads, min fps/battery/free ram/free storage, most severe
+// thermal and connection), so a single spike is never averaged away. The bool reports whether anything was reduced.
 func DownsamplePerf(s []PerfSample, maxPoints int) ([]PerfSample, bool) {
 	n := len(s)
 	if maxPoints <= 0 || n <= maxPoints {
@@ -56,6 +59,11 @@ func worstOf(bucket []PerfSample) PerfSample {
 		w.MemMB = pickFloat(w.MemMB, s.MemMB, true)
 		w.FPS = pickFloat(w.FPS, s.FPS, false)
 		w.Battery = pickFloat(w.Battery, s.Battery, false)
+		w.RAMFreeMB = pickFloat(w.RAMFreeMB, s.RAMFreeMB, false)
+		w.StorageFreeMB = pickFloat(w.StorageFreeMB, s.StorageFreeMB, false)
+		if netSeverity[s.Net] > netSeverity[w.Net] {
+			w.Net = s.Net
+		}
 		w.Jank = pickInt(w.Jank, s.Jank)
 		w.Frozen = pickInt(w.Frozen, s.Frozen)
 		w.Threads = pickInt(w.Threads, s.Threads)
@@ -90,7 +98,7 @@ func pickInt(cur, next *int) *int {
 
 // PresentPerfMetrics lists, in stable order, the metric keys that at least one sample carries.
 func PresentPerfMetrics(s []PerfSample) []string {
-	var cpu, mem, fps, jank, frozen, threads, battery, thermal bool
+	var cpu, mem, fps, jank, frozen, threads, battery, thermal, ramFree, storageFree, net bool
 	for _, x := range s {
 		cpu = cpu || x.CPU != nil
 		mem = mem || x.MemMB != nil
@@ -100,12 +108,15 @@ func PresentPerfMetrics(s []PerfSample) []string {
 		threads = threads || x.Threads != nil
 		battery = battery || x.Battery != nil
 		thermal = thermal || x.Thermal != ""
+		ramFree = ramFree || x.RAMFreeMB != nil
+		storageFree = storageFree || x.StorageFreeMB != nil
+		net = net || x.Net != ""
 	}
 	out := []string{}
 	for _, m := range []struct {
 		key string
 		ok  bool
-	}{{"cpu", cpu}, {"mem_mb", mem}, {"fps", fps}, {"jank", jank}, {"frozen", frozen}, {"threads", threads}, {"battery", battery}, {"thermal", thermal}} {
+	}{{"cpu", cpu}, {"mem_mb", mem}, {"fps", fps}, {"jank", jank}, {"frozen", frozen}, {"threads", threads}, {"battery", battery}, {"thermal", thermal}, {"ram_free_mb", ramFree}, {"storage_free_mb", storageFree}, {"net", net}} {
 		if m.ok {
 			out = append(out, m.key)
 		}
