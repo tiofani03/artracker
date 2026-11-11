@@ -69,10 +69,13 @@ the dashboard and must be changeable at runtime without a restart or redeploy.
   `token_ciphertext`, `key_id`, `bot_id`, `bot_username`, `status` (`active` | `invalid`),
   `status_reason`, `detail_level` (`minimal` | `full`, §6.5), `created_by`, `created_at`, `updated_at`,
   `last_validated_at`.
-- `alert_channels` (already per project, one row per destination chat) keeps its shape. A channel now
-  means "send to this chat id through the organisation's bot". Its destination must be stored so that
-  both a numeric chat id and a public `@channelusername` are possible. The migration from the current
-  numeric column is the builder's to design.
+- `alert_channels` (already per project, one row per destination chat) keeps its shape and gains two
+  **additive** columns; nothing existing is dropped or rewritten. `origin` (`linked` | `manual`, existing
+  rows are `linked`, §6.8) and `destination` (TEXT: a numeric chat id as a string, or a public
+  `@channelusername`). `manual` channels use `destination`; `linked` channels keep using the existing
+  `telegram_chat_id`, which becomes nullable. Uniqueness: keep `UNIQUE (project_id, telegram_chat_id)` and add a
+  partial unique index on `(project_id, destination)` for `manual` rows. The `migrate_to_chat_id` handling
+  (group upgraded to supergroup) must update whichever column the channel uses.
 - Channels need a human label entered by the admin (the platform cannot learn the chat title without
   reading from Telegram). Optionally the platform may call `getChat` once at save time to show the
   title and type; that returns metadata only, never messages. Treat `getChat` as optional.
@@ -87,9 +90,16 @@ the dashboard and must be changeable at runtime without a restart or redeploy.
   can be rotated. The organisation id is bound to the ciphertext as additional authenticated data, so
   a ciphertext copied to another organisation fails to decrypt.
 - Put encryption behind a small interface so a cloud KMS can replace the local master key later.
-- The master key is the one secret that stays outside the database. If tenant-bot mode is on and the
-  master key is missing or malformed, the process refuses to start in production (same fail-fast rule as
-  `JWT_SECRET`); in development it must be set explicitly.
+- The master key is the one secret that stays outside the database. It is read from `ALERTS_MASTER_KEY`
+  (base64 of exactly 32 random bytes) or from the file named by `ALERTS_MASTER_KEY_FILE`; setting both, or an
+  unreadable/empty file, is a startup error, the same convention as `TELEGRAM_BOT_TOKEN_FILE`. It is required
+  whenever the bot mode is `tenant` (§6.8). In production a missing or malformed key stops the process at
+  boot (same fail-fast rule as `JWT_SECRET`). In development the process still starts, the alerts engine keeps
+  running, and only the bot API answers "alerts master key is not configured". `.env.example` documents how
+  to generate one (`openssl rand -base64 32`) and ships no usable value.
+- Key rotation in this work is only the `key_id` column and the decrypt-by-`key_id` path; no rotation tool or
+  admin endpoint. Each organisation's data key is generated randomly and wrapped by the master key (not
+  derived from it).
 - Decrypted tokens exist only in memory, only while a request or a dispatcher tick needs them.
 
 ### 6.3 API (organisation level, owner or admin)
@@ -98,9 +108,15 @@ the dashboard and must be changeable at runtime without a restart or redeploy.
   `getMe`, stores it encrypted, returns `{bot_username, status, detail_level, updated_at}`. Replacing
   overwrites; there is no way to read the old token back.
 - `GET /orgs/:orgID/alerts/telegram-bot`: returns only `{configured, bot_username, status,
-  status_reason, detail_level, updated_at}`. Readable by any member; never the token.
-- `PATCH` for `detail_level`; `DELETE` removes the bot and pauses the organisation's channels with the
-  reason "no bot configured".
+  status_reason, detail_level, updated_at}`. Readable by **any organisation member** (the project-level Alerts
+  page needs `configured` and `status` for every viewer); never the token.
+- `PUT`, `PATCH` (for `detail_level`) and `DELETE` need `RequireOrgRole(auth.RoleAdmin)`, which already includes
+  owners. `DELETE` removes the bot; the organisation's `manual` channels then count as paused because
+  there is no working bot. Pausing is derived, not written (§6.4), so re-adding a bot resumes them with no
+  re-enabling step.
+- Adding a channel may call `getChat` once, best-effort, to show the chat title and type. A failed `getChat`
+  (for example the bot is not in the chat yet) never blocks saving: the channel is saved and the response
+  carries a warning. The admin-typed label is always required and always shown.
 - Project-level channel endpoints keep their routes and roles from the MVP. Creating a channel now takes
   `{chat, label}` instead of using a link code. `POST .../channels/:id/test` sends a test message through
   the organisation's bot. The link-code endpoint returns 404/disabled outside shared-bot mode.
@@ -114,7 +130,13 @@ the dashboard and must be changeable at runtime without a restart or redeploy.
   - Telegram 401 on a bot: mark the bot `invalid` with a reason; pause that organisation's channels; show
     a banner in the dashboard. Other organisations are unaffected.
   - 403 / "chat not found" / "bot was kicked" on a channel: disable that channel with the reason.
-  - 429: keep pending and retry after the delay Telegram gives (the MVP's existing handling), per bot.
+  - 429: keep pending and retry after the delay Telegram gives (the MVP's existing handling). The backoff
+    scope is the **bot**, so it defers every pending incident of every project of that organisation, and
+    nobody else's.
+  - No working bot (none configured, or `invalid`): incidents stay `pending` instead of becoming `skipped`,
+    so "nothing lost silently" holds and fixing the token delivers them. They expire after **24 hours**:
+    older pending incidents become `skipped` with a reason. After a fix, the dispatcher's existing digest rule
+    (more than 3 pending fires for one project in a tick become one digest message) prevents a flood.
   - A group upgraded to a supergroup (`migrate_to_chat_id`): update the stored chat and retry once, as in
     the MVP.
 - Respect Telegram's limits per bot and per chat so one noisy tenant does not exhaust its own bot's
@@ -129,6 +151,11 @@ Each organisation chooses a **detail level**:
   the issue. No error title, no session id, no replay link text from user data.
 - `full`: today's message, including the issue title.
 
+The level applies to **every message the platform sends**: alert, recovery and the test message. `minimal`
+keeps the aggregate numbers of a spike alert (event count, baseline, window), which are not personal data, so
+spike alerts stay useful; it drops only the free text and identifiers that come from users' data. Incident rows
+in the platform's own database still store the title; this setting governs what leaves for Telegram.
+
 This setting matters for privacy at least as much as who owns the bot, because the content still passes
 through Telegram.
 
@@ -142,7 +169,8 @@ through Telegram.
 
 ### 6.7 Dashboard
 
-- **Organisation settings, "Telegram bot" card (admins):** a write-only token field, the bot's name and
+- **Organisation settings, "Telegram bot" card (admins)** on the existing `SettingsPage` next to the team
+  members panel (the Alerts-page banner links there): a write-only token field, the bot's name and
   status once connected, replace and remove actions, the detail level, and a short how-to (create a bot
   with @BotFather, paste the token). The token field is cleared after saving and never shown again.
 - **Alerts page, Channels card (project admins):** "Add chat" takes a chat id (or `@channelusername`) and a
@@ -153,12 +181,23 @@ through Telegram.
 
 ### 6.8 The existing shared bot and link flow
 
-- Keep the code, but put it behind `ALERTS_SHARED_BOT` (default **off**), intended for self-hosted or
-  internal use where the operator owns the data. In SaaS mode it is off, so no code path receives tenant
-  messages. `TELEGRAM_BOT_TOKEN` and `TELEGRAM_BOT_TOKEN_FILE` (added in an uncommitted change on
-  `feat/alerting-telegram`) apply only in shared-bot mode.
-- Channels already created through the link flow keep working only when the flag is on. When it is off they
-  are disabled with the reason "bot not configured", and nothing is deleted.
+- A deployment runs in exactly one **bot mode**, set by `ALERTS_BOT_MODE`: `tenant` (the default, for SaaS) or
+  `shared` (self-hosted or internal use where the operator owns the data). The modes are **mutually
+  exclusive and never mixed**: there is no fallback from a tenant without a bot to the shared bot, because
+  that fallback is exactly the path that would let the operator receive a tenant's messages.
+- In `tenant` mode no code path receives Telegram updates: the poller, link codes and `/start` handling do
+  not run. In `shared` mode the MVP behaves exactly as today, and `TELEGRAM_BOT_TOKEN` /
+  `TELEGRAM_BOT_TOKEN_FILE` (the latter added in an uncommitted change on `feat/alerting-telegram`) apply only
+  there. The master key (§6.2) is not needed in `shared` mode.
+- Channels carry an `origin`: `linked` (created by the link flow, destination is a numeric chat id of a chat
+  where the shared bot was added) or `manual` (created by an admin typing a chat id, delivered through the
+  organisation's bot). A channel is **active only in the mode that matches its origin**: `linked` in
+  `shared` mode, `manual` in `tenant` mode. This is derived at read time. **No rows are rewritten and nothing
+  is deleted**, so switching the mode back and forth is lossless and a channel disabled for a real reason
+  (for example a 403) is never confused with one that is merely inactive in the current mode. The dashboard
+  shows an inactive channel as "belongs to the shared bot".
+- Old `linked` chat ids are not assumed valid for a tenant's own bot (a different bot was added to those
+  chats); they stay inactive in `tenant` mode rather than being tried.
 - Alternative the product owner may prefer: delete the shared-bot code outright.
 
 ## 7. Constraints
@@ -172,5 +211,21 @@ through Telegram.
 ## 8. Left to the builder
 
 Crypto package layout and key-id format; whether to cache decrypted tokens within a tick; the exact rate-limit
-numbers; the migration for the channel destination column; UI copy and the wording of the chat-id instructions;
-how the master key is generated and documented; test layout.
+numbers; the exact SQL of the additive channel columns (§6.1); UI copy and the wording of the chat-id
+instructions; test layout.
+
+## 9. Calls made after the builder check (Claude's calls, listed for a quick check)
+
+1. The two bot modes (`tenant`, `shared`) are mutually exclusive, chosen by `ALERTS_BOT_MODE`, default `tenant`;
+   no fallback from a tenant without a bot to the shared bot (§6.8). This replaces the earlier `ALERTS_SHARED_BOT` flag.
+2. Channels get an `origin`; activity is derived from `origin` and the mode at read time. No rows are rewritten,
+   so nothing is lost and mode switches are reversible (§6.8).
+3. The channel destination is an additive TEXT column; the old numeric column stays for `linked` channels (§6.1).
+4. Org settings card lives on the existing `SettingsPage`; `GET` for any member, `PUT`/`PATCH`/`DELETE` for org admins
+   (owners included) (§6.3, §6.7).
+5. The detail level applies to alert, recovery and test messages; `minimal` keeps spike counts (§6.5).
+6. Rate limiting and the 429 backoff are per bot, that is per organisation (§6.4).
+7. With no working bot, incidents stay `pending` for up to 24 hours, then become `skipped` (§6.4).
+8. `getChat` is best-effort and never blocks saving a channel (§6.3).
+9. Master key: `ALERTS_MASTER_KEY` (base64, 32 bytes) or `_FILE`; required in `tenant` mode; fatal at boot in production,
+   an API error in development; rotation is schema only (§6.2).
