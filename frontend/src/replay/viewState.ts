@@ -10,3 +10,17 @@ export function replayViewState(a: { loading: boolean; sessionCount: number; fil
   if (a.filter !== 'all') return 'workspace'
   return a.loading ? 'skeleton' : 'onboarding'
 }
+
+const FILTER_LABEL: Record<string, string> = {
+  all: 'All',
+  error: 'Errors',
+  rage: 'Rage clicks',
+  dead: 'Dead clicks',
+}
+
+/** The one sentence the empty replay panel shows, naming the filter that matched nothing. */
+export function replayEmptyMessage(filter: string, loading: boolean): string {
+  if (loading) return 'Loading sessions…'
+  if (filter === 'all') return 'No sessions yet'
+  return `No sessions match “${FILTER_LABEL[filter] ?? filter}”`
+}

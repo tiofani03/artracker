@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { replayViewState } from './viewState'
+import { replayEmptyMessage, replayViewState } from './viewState'
 
 const s = (loading: boolean, sessionCount: number, filter: string) => replayViewState({ loading, sessionCount, filter })
 
@@ -25,5 +25,21 @@ describe('replayViewState', () => {
 
   it('shows onboarding only when the project truly has no sessions', () => {
     expect(s(false, 0, 'all')).toBe('onboarding')
+  })
+})
+
+describe('replayEmptyMessage', () => {
+  it('names the filter that matched nothing', () => {
+    expect(replayEmptyMessage('error', false)).toBe('No sessions match “Errors”')
+    expect(replayEmptyMessage('rage', false)).toBe('No sessions match “Rage clicks”')
+    expect(replayEmptyMessage('dead', false)).toBe('No sessions match “Dead clicks”')
+  })
+
+  it('says loading while a request is in flight', () => {
+    expect(replayEmptyMessage('error', true)).toBe('Loading sessions…')
+  })
+
+  it('has a generic message for the unfiltered case', () => {
+    expect(replayEmptyMessage('all', false)).toBe('No sessions yet')
   })
 })
