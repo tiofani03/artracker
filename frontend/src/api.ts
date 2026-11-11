@@ -163,12 +163,93 @@ export const keyApi = {
 export type NavCounts = {
   frustrated_replays_24h: number
   open_issues: number
+  firing_alerts: number
 }
 
 export const projectApi = {
   navCounts: (projectId: number) => request<NavCounts>(`/projects/${projectId}/nav-counts`),
   setReplaySettings: (projectId: number, body: { screenshot_enabled: boolean }) =>
     request<Project>(`/projects/${projectId}/replay-settings`, { method: 'PATCH', body: JSON.stringify(body) }),
+}
+
+export type AlertRuleKind = 'new_issue' | 'regression' | 'issue_spike'
+
+export type AlertRule = {
+  kind: AlertRuleKind
+  enabled: boolean
+  environment: string
+  spike_multiplier: number
+  spike_min_count: number
+  spike_window_minutes: number
+  cooldown_minutes: number
+  updated_at: string
+}
+
+export type AlertRulePatch = {
+  enabled?: boolean
+  environment?: string
+  spike_multiplier?: number
+  spike_min_count?: number
+  spike_window_minutes?: number
+  cooldown_minutes?: number
+}
+
+export type AlertChannel = {
+  id: number
+  kind: string
+  title: string
+  chat_type: string
+  enabled: boolean
+  disabled_reason: string
+  last_sent_at: string | null
+  last_error: string
+  created_at: string
+}
+
+export type AlertChannelsResponse = {
+  telegram: { configured: boolean; bot_username: string }
+  items: AlertChannel[]
+}
+
+export type AlertIncident = {
+  id: number
+  rule_kind: AlertRuleKind
+  issue_id: number
+  status: 'firing' | 'resolved'
+  title: string
+  environment: string
+  release_version: string
+  session_id: string
+  spike: { count: number; baseline: number; window_minutes: number } | null
+  fired_at: string
+  resolved_at: string | null
+  notify_state: string
+}
+
+export type AlertLinkCode = {
+  code: string
+  group_link: string
+  private_link: string
+  expires_at: string
+}
+
+export const alertApi = {
+  rules: (projectId: number) => request<{ items: AlertRule[] }>(`/projects/${projectId}/alerts/rules`),
+  patchRule: (projectId: number, kind: AlertRuleKind, body: AlertRulePatch) =>
+    request<AlertRule>(`/projects/${projectId}/alerts/rules/${kind}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  channels: (projectId: number) => request<AlertChannelsResponse>(`/projects/${projectId}/alerts/channels`),
+  createLinkCode: (projectId: number) => post<AlertLinkCode>(`/projects/${projectId}/alerts/channels/link-code`),
+  setChannelEnabled: (projectId: number, channelId: number, enabled: boolean) =>
+    request<AlertChannel>(`/projects/${projectId}/alerts/channels/${channelId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled }),
+    }),
+  deleteChannel: (projectId: number, channelId: number) =>
+    request<void>(`/projects/${projectId}/alerts/channels/${channelId}`, { method: 'DELETE' }),
+  testChannel: (projectId: number, channelId: number) =>
+    post<void>(`/projects/${projectId}/alerts/channels/${channelId}/test`),
+  incidents: (projectId: number, status: 'firing' | 'resolved' | 'all' = 'all') =>
+    request<{ items: AlertIncident[] }>(`/projects/${projectId}/alerts/incidents?status=${status}`),
 }
 
 export type BucketPoint = {
