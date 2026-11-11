@@ -33,7 +33,9 @@ import { activeScreenFrameAt } from '../replay/screen'
 import { fitScale } from '../replay/fit'
 import { filterMarkers, type MarkerFilter } from '../replay/markerFilter'
 import { ReplaySidePanel, type SidePanelTab } from './replay/ReplaySidePanel'
+import { PerformancePanel } from './replay/PerformancePanel'
 import { TimelineTracks } from './replay/TimelineTracks'
+import { describeBreach, detectBreaches, perfValueAt, toSeries } from '../replay/perf'
 import { browserStorage, readBool, writeBool } from '../replay/prefs'
 import type { TrackDef } from '../replay/tracks'
 import { adjacentEventOffset, resolveHotkey, SEEK_STEP_MS } from '../replay/hotkeys'
@@ -145,6 +147,7 @@ export default function ReplayPlayer({
   onDeviceModeChange,
   queueOpen,
   onToggleQueue,
+  perf,
 }: {
   session: ReplaySessionItem
   chunks: ReplayChunkDetail[]
@@ -433,7 +436,7 @@ export default function ReplayPlayer({
 
   // Scrubber: click or drag anywhere on the track to seek
   // Build timeline markers (red = error, yellow = warn / click / frustration)
-  const markers: TimelineMarker[] = useMemo(() => {
+  const eventMarkers: TimelineMarker[] = useMemo(() => {
     if (timelineEvents.length === 0) return []
     return timelineEvents.map((ev, idx) => {
       const evTs = new Date(ev.event_timestamp).getTime()
@@ -469,6 +472,35 @@ export default function ReplayPlayer({
       }
     })
   }, [timelineEvents, baseTimestampMs, durationMs])
+
+  // Profiling breaches (high CPU, low FPS, jank bursts) are shown as events too, so they can be found,
+  // filtered and sought to like any other marker.
+  const perfBreaches = useMemo(
+    () =>
+      perf && perf.samples.length > 0
+        ? detectBreaches(perf.samples, baseTimestampMs, perf.interval_ms, perf.device.refresh_hz)
+        : [],
+    [perf, baseTimestampMs],
+  )
+  const markers: TimelineMarker[] = useMemo(() => {
+    if (perfBreaches.length === 0) return eventMarkers
+    const refresh = perf?.device.refresh_hz
+    const breachMarkers: TimelineMarker[] = perfBreaches.map((b) => {
+      const offsetMs = Math.min(durationMs, Math.max(0, b.startMs))
+      const d = describeBreach(b, refresh)
+      return {
+        id: `perf-${b.kind}-${b.startMs}`,
+        offsetMs,
+        pct: durationMs > 0 ? Math.min(99, Math.max(1, (offsetMs / durationMs) * 100)) : 50,
+        formattedTime: formatOffsetMs(offsetMs),
+        tone: 'warn' as const,
+        badgeLabel: d.badge,
+        text: d.text,
+        category: 'perf' as const,
+      }
+    })
+    return [...eventMarkers, ...breachMarkers].sort((a, b) => a.offsetMs - b.offsetMs)
+  }, [eventMarkers, perfBreaches, perf, durationMs])
 
   // Screen spans from frames or telemetry
   const screenSpans = useMemo(() => {
@@ -567,6 +599,51 @@ export default function ReplayPlayer({
         })),
       })
     }
+    if (perf && perf.samples.length > 0) {
+      const at = (tMs: number) => perfValueAt(perf.samples, baseTimestampMs + tMs, perf.interval_ms)
+      if (perf.metrics.includes('cpu')) {
+        defs.push({
+          id: 'cpu',
+          label: 'CPU',
+          kind: 'series',
+          points: toSeries(perf.samples, 'cpu', baseTimestampMs),
+          max: 100,
+          unit: '%',
+          valueAt: (t) => {
+            const v = at(t)?.cpu
+            return v === undefined ? null : `${Math.round(v)}%`
+          },
+        })
+      }
+      if (perf.metrics.includes('mem_mb')) {
+        const peak = Math.max(...perf.samples.map((s) => s.mem_mb ?? 0))
+        defs.push({
+          id: 'mem',
+          label: 'RAM',
+          kind: 'series',
+          points: toSeries(perf.samples, 'mem_mb', baseTimestampMs),
+          max: perf.device.ram_mb ?? Math.max(1, peak * 1.2),
+          unit: 'MB',
+          valueAt: (t) => {
+            const v = at(t)?.mem_mb
+            return v === undefined ? null : `${Math.round(v)} MB`
+          },
+        })
+      }
+      if (perf.metrics.includes('fps')) {
+        defs.push({
+          id: 'fps',
+          label: 'FPS',
+          kind: 'series',
+          points: toSeries(perf.samples, 'fps', baseTimestampMs),
+          max: perf.device.refresh_hz ?? 60,
+          valueAt: (t) => {
+            const v = at(t)?.fps
+            return v === undefined ? null : String(Math.round(v))
+          },
+        })
+      }
+    }
     defs.push({
       id: 'events',
       label: 'Events',
@@ -579,7 +656,7 @@ export default function ReplayPlayer({
       })),
     })
     return defs
-  }, [screenSpans, networkSpans, visibleMarkers])
+  }, [screenSpans, networkSpans, visibleMarkers, perf, baseTimestampMs])
 
   // Close the header ⋯ menu on an outside press or Escape
   useEffect(() => {
@@ -1150,6 +1227,14 @@ export default function ReplayPlayer({
           onSeek={seekTo}
           tab={sideTab}
           onTabChange={setSideTab}
+          performance={
+            <PerformancePanel
+              perf={perf ?? null}
+              currentAbsTs={baseTimestampMs + currentTimeMs}
+              startMs={baseTimestampMs}
+              onSeek={seekTo}
+            />
+          }
         />
 
         {/* Unified Integrated Transport Bar & Multi-Lane Gantt Scrubber */}

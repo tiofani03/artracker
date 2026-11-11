@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PerfSample } from '../api'
-import { detectBreaches, perfValueAt, summarizePerf, toSeries } from './perf'
+import { describeBreach, detectBreaches, perfValueAt, summarizePerf, toSeries } from './perf'
 
 const S = (t: number, rest: Partial<PerfSample> = {}): PerfSample => ({ t, ...rest })
 const START = 1_000_000
@@ -101,5 +101,29 @@ describe('summarizePerf', () => {
 
   it('leaves metrics undefined when no sample has them', () => {
     expect(summarizePerf([S(1)])).toEqual({ jankTotal: 0, frozenTotal: 0 })
+  })
+})
+
+describe('describeBreach', () => {
+  it('describes high cpu with its duration and peak', () => {
+    expect(describeBreach({ kind: 'high_cpu', startMs: 5000, endMs: 9000, peak: 94.6 }, 60)).toEqual({
+      badge: 'High CPU',
+      text: 'CPU ≥ 80% for 4s (peak 95%)',
+    })
+  })
+
+  it('describes low fps against half the display refresh rate', () => {
+    expect(describeBreach({ kind: 'low_fps', startMs: 12000, endMs: 15000, peak: 18 }, 60)).toEqual({
+      badge: 'Low FPS',
+      text: 'FPS below 30 for 3s (lowest 18)',
+    })
+    expect(describeBreach({ kind: 'low_fps', startMs: 0, endMs: 2000, peak: 40 }, 120).text).toContain('below 60')
+  })
+
+  it('describes a jank burst', () => {
+    expect(describeBreach({ kind: 'jank_burst', startMs: 1000, endMs: 2000, peak: 7 }, 60)).toEqual({
+      badge: 'Jank burst',
+      text: '7 janky frames in 1s',
+    })
   })
 })

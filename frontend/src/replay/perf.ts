@@ -111,3 +111,18 @@ export function summarizePerf(samples: PerfSample[]): PerfSummary {
     frozenTotal: samples.reduce((n, s) => n + (s.frozen ?? 0), 0),
   }
 }
+
+/** Short label and sentence for a breach, shared by the timeline markers, the event list and the Performance tab. */
+export function describeBreach(b: PerfBreach, refreshHz: number = DEFAULT_REFRESH_HZ): { badge: string; text: string } {
+  const secs = Math.max(1, Math.round((b.endMs - b.startMs) / 1000))
+  if (b.kind === 'high_cpu') {
+    return { badge: 'High CPU', text: `CPU ≥ ${HIGH_CPU_PCT}% for ${secs}s (peak ${Math.round(b.peak)}%)` }
+  }
+  if (b.kind === 'low_fps') {
+    return {
+      badge: 'Low FPS',
+      text: `FPS below ${Math.round(refreshHz * LOW_FPS_RATIO)} for ${secs}s (lowest ${Math.round(b.peak)})`,
+    }
+  }
+  return { badge: 'Jank burst', text: `${Math.round(b.peak)} janky frames in ${secs}s` }
+}
