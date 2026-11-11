@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { overflowCount, seriesPath, TRACK_ORDER, visibleTracks, type TrackDef } from './tracks'
+import { mergeScreenRuns, overflowCount, seriesPath, TRACK_ORDER, visibleTracks, type TrackDef } from './tracks'
 
 const def = (id: TrackDef['id']): TrackDef => ({ id, label: id, kind: 'spans' })
 
@@ -79,5 +79,34 @@ describe('overflowCount', () => {
   it('is the number of hidden items', () => {
     expect(overflowCount(20, 15)).toBe(5)
     expect(overflowCount(3, 15)).toBe(0)
+  })
+})
+
+describe('mergeScreenRuns', () => {
+  it('collapses consecutive frames of the same screen into one span', () => {
+    const merged = mergeScreenRuns([
+      { screen: 'home', startMs: 0, endMs: 500 },
+      { screen: 'home', startMs: 500, endMs: 1000 },
+      { screen: 'home', startMs: 1000, endMs: 1500 },
+      { screen: 'detail', startMs: 1500, endMs: 2000 },
+      { screen: 'detail', startMs: 2000, endMs: 4000 },
+    ])
+    expect(merged).toEqual([
+      { screen: 'home', startMs: 0, endMs: 1500 },
+      { screen: 'detail', startMs: 1500, endMs: 4000 },
+    ])
+  })
+
+  it('keeps a screen that is revisited as a separate span', () => {
+    const merged = mergeScreenRuns([
+      { screen: 'home', startMs: 0, endMs: 500 },
+      { screen: 'detail', startMs: 500, endMs: 1000 },
+      { screen: 'home', startMs: 1000, endMs: 1500 },
+    ])
+    expect(merged.map((s) => s.screen)).toEqual(['home', 'detail', 'home'])
+  })
+
+  it('handles empty input', () => {
+    expect(mergeScreenRuns([])).toEqual([])
   })
 })

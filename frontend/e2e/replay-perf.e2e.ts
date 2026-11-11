@@ -42,11 +42,11 @@ test('perf tracks, Performance tab and breach seeking', async ({ page }) => {
   await expect(page.locator('.or-track-label', { hasText: 'CPU' })).toContainText('95%')
 })
 
-test('breaches also appear as markers behind the Performance filter chip', async ({ page }) => {
+test('breaches also appear in the Events list, without filter chips that would only repeat All', async ({ page }) => {
   await mount(page, '&perfFixture=1')
   await page.getByRole('tab', { name: 'Events' }).click()
-  await page.getByRole('button', { name: /Performance \(2\)/ }).click()
   await expect(page.locator('.or-activity-row')).toHaveCount(2)
+  await expect(page.getByRole('group', { name: 'Filter events' })).toHaveCount(0)
 })
 
 test('hiding a track is remembered across reloads', async ({ page }) => {
@@ -67,15 +67,17 @@ test('a session without profiling data has no perf tracks and shows the empty st
   await expect(page.getByText('No profiling data for this session.')).toBeVisible()
 })
 
-test('summary totals are labelled approximate when the series was downsampled', async ({ page }) => {
+test('the metric table says its averages are approximate only when the series was downsampled', async ({ page }) => {
   await mount(page, '&perfFixture=1&perfDownsampled=1')
   await page.getByRole('tab', { name: /Performance/ }).click()
-  await expect(page.getByText('Jank frames (approx.)')).toBeVisible()
-  await expect(page.getByText('CPU peak / avg (approx.)')).toBeVisible()
+  await expect(page.getByText(/approximate/)).toBeVisible()
 })
 
-test('exact summary labels when the series was not downsampled', async ({ page }) => {
+test('no approximation note for a full-resolution series; table shows now and session values', async ({ page }) => {
   await mount(page, '&perfFixture=1')
   await page.getByRole('tab', { name: /Performance/ }).click()
-  await expect(page.getByText('Jank frames', { exact: true })).toBeVisible()
+  await expect(page.getByText(/approximate/)).toHaveCount(0)
+  const cpu = page.locator('.or-perf-table tbody tr', { hasText: 'CPU' })
+  await expect(cpu).toContainText('peak 95%')
+  await expect(cpu.locator('.or-spark')).toBeVisible()
 })

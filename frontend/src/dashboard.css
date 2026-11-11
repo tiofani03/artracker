@@ -2250,11 +2250,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 16px;
+  padding: 6px 16px;
   background: var(--color-paper-hi);
   border-bottom: var(--rule-hair) solid var(--color-rule);
   gap: 16px;
-  min-height: 48px;
+  min-height: 44px;
   box-sizing: border-box;
 }
 
@@ -2299,10 +2299,6 @@
   font-family: var(--font-outlier);
   font-size: 0.6875rem;
   color: var(--color-muted);
-  background: var(--color-paper-3);
-  padding: 2px 6px;
-  border-radius: 4px;
-  border: var(--rule-hair) solid var(--color-rule);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -2329,13 +2325,9 @@
 
 .or-unified-header__duration {
   font-family: var(--font-outlier);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  color: var(--color-accent);
-  background: var(--color-accent-wash);
-  padding: 3px 8px;
-  border-radius: 4px;
-  border: var(--rule-hair) solid var(--color-rule);
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
@@ -2344,8 +2336,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 16px;
-  background: var(--color-paper);
+  padding: 5px 16px;
+  background: var(--color-paper-2);
   border-bottom: var(--rule-hair) solid var(--color-rule);
   font-size: 0.6875rem;
   min-width: 0;
@@ -2354,15 +2346,8 @@
 
 .or-route-strip__label {
   font-family: var(--font-outlier);
-  font-size: 0.5625rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: var(--color-paper-3);
+  font-size: 0.6875rem;
   color: var(--color-muted);
-  border: var(--rule-hair) solid var(--color-rule);
   flex-shrink: 0;
 }
 
@@ -2402,10 +2387,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px 16px;
-  background: var(--color-paper);
-  background-image: radial-gradient(var(--color-rule) 1px, transparent 1px);
-  background-size: 20px 20px;
+  padding: 16px;
+  background: var(--color-paper-3);
   position: relative;
   overflow: hidden;
 }
@@ -2934,10 +2917,10 @@
   top: 0;
   bottom: 0;
   border-radius: 3px;
-  background: rgba(59, 130, 246, 0.15);
-  border: 1px solid rgba(59, 130, 246, 0.35);
-  color: var(--color-accent);
-  font-size: 0.6rem;
+  background: var(--color-paper-3);
+  border: 1px solid var(--color-rule-2);
+  color: var(--color-ink-2);
+  font-size: 0.625rem;
   padding: 0 4px;
   display: flex;
   align-items: center;
@@ -2955,7 +2938,7 @@
   top: 1px;
   height: 4px;
   border-radius: 2px;
-  background: rgba(139, 92, 246, 0.65);
+  background: var(--color-ink-2);
 }
 
 .or-gantt-net-span.is-error {
@@ -7513,16 +7496,13 @@ select {
 
 .or-track-line {
   fill: none;
-  stroke: var(--color-accent);
-  stroke-width: 1.5;
+  stroke: var(--color-ink-2);
+  stroke-width: 1.25;
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
 }
 
-.or-track-line--cpu { stroke: var(--color-error); }
-.or-track-line--mem { stroke: var(--color-accent); }
-.or-track-line--fps { stroke: var(--color-success, #10b981); }
 
 .or-gantt-overflow {
   position: absolute;
@@ -7539,71 +7519,6 @@ select {
 .or-gantt-lane--network { height: 100%; }
 .or-gantt-net-span { top: 2px; height: 6px; }
 .or-tracks__area > .or-gantt-needle { top: -2px; bottom: -2px; }
-
-/* Performance tab */
-.or-perf {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 12px;
-}
-
-.or-perf__title {
-  margin: 0 0 6px;
-  font-size: 0.6875rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--color-muted);
-}
-
-.or-perf__hint {
-  margin: 0;
-  font-size: 0.75rem;
-  color: var(--color-muted);
-}
-
-.or-perf-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.or-perf-stat {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 8px 10px;
-  background: var(--color-paper);
-  border: var(--rule-hair) solid var(--color-rule);
-  border-radius: var(--radius-card);
-  min-width: 0;
-}
-
-.or-perf-stat__label {
-  font-size: 0.625rem;
-  color: var(--color-muted);
-}
-
-.or-perf-stat__value {
-  font-size: 0.9375rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--color-ink);
-}
-
-.or-perf-stat__sub {
-  font-size: 0.625rem;
-  color: var(--color-muted);
-}
-
-.or-perf-breaches {
-  display: flex;
-  flex-direction: column;
-  border: var(--rule-hair) solid var(--color-rule);
-  border-radius: var(--radius-card);
-  overflow: hidden;
-}
 
 .or-perf-breach {
   appearance: none;
@@ -7623,3 +7538,215 @@ select {
 
 .or-perf-breach:last-child { border-bottom: 0; }
 .or-perf-breach:hover { background: var(--color-paper-3); }
+
+
+/* =====================================================================
+   Replay workspace v2: video first, quiet chrome, tokens only.
+   One ink colour for every series; warn marks thresholds and breaches;
+   the accent is spent on the playhead and the play control only.
+   ===================================================================== */
+.or-transport-bar {
+  position: relative;
+  padding: 8px 16px 10px;
+  gap: 6px;
+}
+
+.or-transport-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-input);
+}
+
+.or-transport-time {
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.or-transport-time__sep { color: var(--color-rule-2); }
+
+/* Track controls share the transport row instead of costing a row of their own */
+.or-tracks { gap: 0; }
+
+.or-tracks__head {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  z-index: var(--z-raised);
+}
+
+.or-tracks__grid { column-gap: 12px; }
+
+.or-tracks__labels,
+.or-tracks__area { gap: 3px; }
+
+.or-track-row--screens { height: 16px; }
+.or-track-row--network { height: 8px; }
+.or-track-row--cpu,
+.or-track-row--mem,
+.or-track-row--fps { height: 22px; }
+.or-track-row--events { height: 18px; }
+
+.or-gantt-needle {
+  width: 2px;
+  box-shadow: none;
+}
+
+.or-gantt-lane--series {
+  position: relative;
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+}
+
+.or-track-threshold {
+  stroke: var(--color-warn);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.or-track-band { fill: var(--color-warn-wash); }
+
+.or-track-scale {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  font-family: var(--font-outlier);
+  font-size: 0.5625rem;
+  line-height: 1;
+  color: var(--color-muted);
+  pointer-events: none;
+}
+
+/* Side panel: counts are plain numbers, not pills */
+.or-side-tab__count {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-weight: 500;
+  color: var(--color-muted);
+}
+
+/* Performance tab: a dense metric table, not a card grid */
+.or-perf {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 12px;
+}
+
+.or-perf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.or-perf-table th,
+.or-perf-table td {
+  padding: 7px 10px;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+}
+
+.or-perf-table thead th {
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.or-perf-table tbody th {
+  font-weight: 500;
+  color: var(--color-ink-2);
+  white-space: nowrap;
+}
+
+.or-perf-table__num {
+  font-family: var(--font-outlier);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+
+.or-perf-table__session {
+  font-size: 0.6875rem;
+  color: var(--color-muted);
+}
+
+.or-perf-table__trend { width: 84px; }
+
+.or-spark {
+  display: block;
+  width: 100%;
+  height: 20px;
+  overflow: visible;
+}
+
+.or-spark__line {
+  fill: none;
+  stroke: var(--color-ink-2);
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.or-spark__now {
+  stroke: var(--color-accent);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.or-perf__title {
+  margin: 0;
+  padding: 0 10px 6px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.or-perf__hint,
+.or-perf__note {
+  margin: 0;
+  padding: 0 10px;
+  font-size: 0.6875rem;
+  color: var(--color-muted);
+}
+
+.or-perf-breaches { border-top: var(--rule-hair) solid var(--color-rule); }
+
+.or-perf-breach__kind {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--color-warn);
+}
+
+/* The route caption floats over the stage instead of taking a row, so the video gets the height */
+.or-stage-col { position: relative; }
+
+.or-route-strip {
+  position: absolute;
+  top: 8px;
+  left: 16px;
+  z-index: var(--z-raised);
+  max-width: calc(100% - 32px);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  pointer-events: none;
+}
+
+/* Scale labels sit on a quiet backing so a threshold line never strikes through them */
+.or-track-scale {
+  padding: 0 3px;
+  background: var(--color-paper-2);
+}
+
+/* The replay workspace is video-first: it may use the full content width on large screens */
+.console-content:has(> .dash-replay-container) {
+  max-width: none;
+}

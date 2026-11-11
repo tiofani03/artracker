@@ -12,3 +12,11 @@ export function countByFilter(markers: { category: MarkerCategory }[]): Record<M
   }
   return counts
 }
+
+const CATEGORY_FILTERS: MarkerFilter[] = ['error', 'network', 'gesture', 'perf']
+
+/** Filter chips worth showing: none until at least two categories exist, then All + each non-empty category. */
+export function selectableFilters(counts: Record<MarkerFilter, number>): MarkerFilter[] {
+  const present = CATEGORY_FILTERS.filter((f) => counts[f] > 0)
+  return present.length < 2 ? [] : ['all', ...present]
+}

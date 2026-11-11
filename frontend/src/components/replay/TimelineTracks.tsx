@@ -62,12 +62,27 @@ function Lane({
   }
 
   if (def.kind === 'series') {
-    const d = seriesPath(def.points ?? [], durationMs, 100, SERIES_H, def.max ?? 100)
+    const maxV = def.max ?? 100
+    const d = seriesPath(def.points ?? [], durationMs, 100, SERIES_H, maxV)
+    const thresholdY =
+      def.threshold === undefined ? null : SERIES_H - Math.min(1, Math.max(0, def.threshold / maxV)) * SERIES_H
+    const scale = `${Math.round(maxV)}${def.unit === '%' ? '%' : def.unit ? ` ${def.unit}` : ''}`
     return (
       <div className={`or-gantt-lane or-gantt-lane--series or-gantt-lane--${def.id}`}>
         <svg className="or-track-svg" viewBox={`0 0 100 ${SERIES_H}`} preserveAspectRatio="none" aria-hidden="true">
+          {(def.bands ?? []).map((b, i) => {
+            const x = clampPct((b.startMs / durationMs) * 100)
+            const w = Math.min(100 - x, Math.max(0.4, ((b.endMs - b.startMs) / durationMs) * 100))
+            return <rect key={i} className="or-track-band" x={x} y={0} width={w} height={SERIES_H} />
+          })}
+          {thresholdY !== null && (
+            <line className="or-track-threshold" x1={0} x2={100} y1={thresholdY} y2={thresholdY} />
+          )}
           <path d={d} className={`or-track-line or-track-line--${def.id}`} />
         </svg>
+        <span className="or-track-scale" aria-hidden="true">
+          {scale}
+        </span>
       </div>
     )
   }

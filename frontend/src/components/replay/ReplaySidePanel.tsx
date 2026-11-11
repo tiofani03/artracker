@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { nextScrollTop } from '../../replay/followScroll'
-import { countByFilter, filterMarkers, type MarkerFilter } from '../../replay/markerFilter'
+import { countByFilter, filterMarkers, selectableFilters, type MarkerFilter } from '../../replay/markerFilter'
 import type { TimelineMarker } from '../ReplayPlayer'
 
 export type { MarkerFilter }
@@ -128,6 +128,7 @@ export function ReplaySidePanel({
   const activeItemRef = useRef<HTMLDivElement | null>(null)
 
   const counts = countByFilter(markers)
+  const chips = selectableFilters(counts)
   const rows = tab === 'network' ? filterMarkers(markers, 'network') : filterMarkers(markers, activeFilter)
   const selected = rows.find((m) => m.id === selectedId) ?? null
 
@@ -177,9 +178,11 @@ export function ReplaySidePanel({
 
       {showList && (
         <div className="or-side-panel__toolbar">
-          {tab === 'events' ? (
+          {tab === 'events' && chips.length === 0 ? (
+            <span className="or-side-panel__hint">{counts.all} {counts.all === 1 ? 'event' : 'events'}</span>
+          ) : tab === 'events' ? (
             <div className="or-transport-filters" role="group" aria-label="Filter events">
-              {FILTERS.filter((f) => f.id === 'all' || counts[f.id] > 0).map((f) => (
+              {FILTERS.filter((f) => chips.includes(f.id)).map((f) => (
                 <button
                   key={f.id}
                   type="button"

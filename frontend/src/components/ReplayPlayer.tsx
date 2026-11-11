@@ -37,7 +37,7 @@ import { PerformancePanel } from './replay/PerformancePanel'
 import { TimelineTracks } from './replay/TimelineTracks'
 import { describeBreach, detectBreaches, memTrackMax, perfValueAt, toSeries } from '../replay/perf'
 import { browserStorage, readBool, writeBool } from '../replay/prefs'
-import type { TrackDef } from '../replay/tracks'
+import { mergeScreenRuns, type TrackDef } from '../replay/tracks'
 import { adjacentEventOffset, resolveHotkey, SEEK_STEP_MS } from '../replay/hotkeys'
 import { fitScreenStage } from '../replay/screenPlanner'
 import { probeScreenSession } from '../replay/screenProbe'
@@ -59,6 +59,9 @@ export type TimelineMarker = {
 }
 
 export type DeviceMode = 'auto' | 'web' | 'ios' | 'android'
+
+/** A phone chassis may be enlarged up to this factor to fill a tall stage. */
+const PHONE_MAX_SCALE = 1.6
 
 /** rrweb-player is a Svelte component; its typings omit the Svelte instance API. */
 type SvelteHandle = { $set?: (props: Record<string, unknown>) => void; $destroy?: () => void }
@@ -522,7 +525,7 @@ export default function ReplayPlayer({
         raw.push({ screen: f.screen, startMs: start, endMs: Math.min(durationMs, end) })
       }
     }
-    return raw.map((s) => ({
+    return mergeScreenRuns(raw).map((s) => ({
       ...s,
       durationMs: Math.max(1, s.endMs - s.startMs),
       pctStart: durationMs > 0 ? (s.startMs / durationMs) * 100 : 0,
@@ -609,6 +612,8 @@ export default function ReplayPlayer({
           points: toSeries(perf.samples, 'cpu', baseTimestampMs),
           max: 100,
           unit: '%',
+          threshold: 80,
+          bands: perfBreaches.filter((b) => b.kind === 'high_cpu').map((b) => ({ startMs: b.startMs, endMs: b.endMs })),
           valueAt: (t) => {
             const v = at(t)?.cpu
             return v === undefined ? null : `${Math.round(v)}%`
@@ -636,6 +641,8 @@ export default function ReplayPlayer({
           kind: 'series',
           points: toSeries(perf.samples, 'fps', baseTimestampMs),
           max: perf.device.refresh_hz ?? 60,
+          threshold: (perf.device.refresh_hz ?? 60) * 0.5,
+          bands: perfBreaches.filter((b) => b.kind === 'low_fps').map((b) => ({ startMs: b.startMs, endMs: b.endMs })),
           valueAt: (t) => {
             const v = at(t)?.fps
             return v === undefined ? null : String(Math.round(v))
@@ -655,7 +662,7 @@ export default function ReplayPlayer({
       })),
     })
     return defs
-  }, [screenSpans, networkSpans, visibleMarkers, perf, baseTimestampMs])
+  }, [screenSpans, networkSpans, visibleMarkers, perf, perfBreaches, baseTimestampMs])
 
   // Close the header ⋯ menu on an outside press or Escape
   useEffect(() => {
@@ -674,8 +681,9 @@ export default function ReplayPlayer({
     }
   }, [menuOpen])
 
-  // Scale the device chassis down so it always fits the stage (no fixed min-height, no page scroll)
+  // Scale the device chassis to fit the stage: down when it is short, up (phones only) when it is tall
   useEffect(() => {
+    const platform = effectivePlatform
     const stageEl = stageWrapRef.current
     const fitEl = fitRef.current
     if (!stageEl || !fitEl || typeof ResizeObserver === 'undefined') return
@@ -686,6 +694,8 @@ export default function ReplayPlayer({
       const next = fitScale(
         { w: stageEl.clientWidth - padX, h: stageEl.clientHeight - padY },
         { w: fitEl.offsetWidth, h: fitEl.offsetHeight },
+        // a phone may be enlarged to fill a tall stage; a web frame is already sized to the stage width
+        platform === 'web' ? 1 : PHONE_MAX_SCALE,
       )
       setFit(Math.round(next * 1000) / 1000)
     }
@@ -694,7 +704,7 @@ export default function ReplayPlayer({
     ro.observe(stageEl)
     ro.observe(fitEl)
     return () => ro.disconnect()
-  }, [])
+  }, [effectivePlatform])
 
   // Mount the rrweb player once per web event set; resizes go through $set below (Review Focus #4)
   useEffect(() => {
@@ -1037,9 +1047,6 @@ export default function ReplayPlayer({
                 ≡ Sessions
               </button>
             )}
-            <span className="or-user-avatar" aria-hidden="true">
-              {(session.user_id || 'U')[0].toUpperCase()}
-            </span>
             <strong className="or-unified-header__user" title={session.user_id || 'anonymous_user'}>
               {session.user_id || 'anonymous_user'}
             </strong>
@@ -1247,11 +1254,17 @@ export default function ReplayPlayer({
                 aria-label={isPlaying ? 'Pause replay' : 'Play replay'}
                 title={isPlaying ? 'Pause replay (Space)' : 'Play replay (Space)'}
               >
-                {isPlaying ? '⏸' : '▶'}
+                <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor">
+                  {isPlaying ? (
+                    <path d="M4 2h3v12H4zM9 2h3v12H9z" />
+                  ) : (
+                    <path d="M4 2.5v11a.5.5 0 0 0 .76.43l9-5.5a.5.5 0 0 0 0-.86l-9-5.5A.5.5 0 0 0 4 2.5z" />
+                  )}
+                </svg>
               </button>
 
               <span className="or-transport-time">
-                {formatOffsetMs(currentTimeMs)} <span style={{ opacity: 0.35 }}>/</span> {formatOffsetMs(durationMs)}
+                {formatOffsetMs(currentTimeMs)} <span className="or-transport-time__sep">/</span> {formatOffsetMs(durationMs)}
               </span>
 
               <button

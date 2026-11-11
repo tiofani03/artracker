@@ -10,6 +10,15 @@ describe('fitScale', () => {
     expect(fitScale({ w: 2000, h: 2000 }, { w: 320, h: 560 })).toBe(1)
   })
 
+  it('can scale up to an explicit ceiling so a phone fills a tall stage', () => {
+    expect(fitScale({ w: 900, h: 840 }, { w: 320, h: 560 }, 1.6)).toBeCloseTo(1.5, 5)
+    expect(fitScale({ w: 900, h: 2000 }, { w: 320, h: 560 }, 1.6)).toBe(1.6)
+  })
+
+  it('still never goes below 0.25', () => {
+    expect(fitScale({ w: 10, h: 10 }, { w: 320, h: 560 }, 1.6)).toBe(0.25)
+  })
+
   it('never goes below 0.25', () => {
     expect(fitScale({ w: 10, h: 10 }, { w: 320, h: 560 })).toBe(0.25)
   })

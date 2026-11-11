@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { countByFilter, filterMarkers } from './markerFilter'
+import { countByFilter, filterMarkers, selectableFilters } from './markerFilter'
 
 const m = (id: string, category: 'error' | 'network' | 'gesture' | 'perf' | 'other') => ({ id, category })
 
@@ -23,5 +23,17 @@ describe('countByFilter', () => {
 
   it('is all zero for no markers', () => {
     expect(countByFilter([])).toEqual({ all: 0, error: 0, network: 0, gesture: 0, perf: 0 })
+  })
+})
+
+describe('selectableFilters', () => {
+  it('offers no chips when at most one category exists (they would only repeat All)', () => {
+    expect(selectableFilters(countByFilter([]))).toEqual([])
+    expect(selectableFilters(countByFilter([m('a', 'perf'), m('b', 'perf')]))).toEqual([])
+  })
+
+  it('offers All plus every non-empty category once there are two or more', () => {
+    const counts = countByFilter([m('a', 'error'), m('b', 'network'), m('c', 'network'), m('d', 'other')])
+    expect(selectableFilters(counts)).toEqual(['all', 'error', 'network'])
   })
 })

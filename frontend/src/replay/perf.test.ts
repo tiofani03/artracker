@@ -153,3 +153,17 @@ describe('memTrackMax', () => {
     expect(memTrackMax([S(1), S(2, { mem_mb: 50 })])).toBeCloseTo(60, 5)
   })
 })
+
+describe('summarizePerf extras', () => {
+  it('reports the lowest fps and the peak thread count', () => {
+    const sum = summarizePerf([S(1, { fps: 60, threads: 30 }), S(2, { fps: 18, threads: 42 }), S(3, { fps: 58 })])
+    expect(sum.fpsMin).toBe(18)
+    expect(sum.threadsPeak).toBe(42)
+  })
+
+  it('leaves them undefined without data', () => {
+    const sum = summarizePerf([S(1, { cpu: 5 })])
+    expect(sum.fpsMin).toBeUndefined()
+    expect(sum.threadsPeak).toBeUndefined()
+  })
+})

@@ -96,6 +96,8 @@ export type PerfSummary = {
   cpuPeak?: number
   cpuAvg?: number
   memPeak?: number
+  fpsMin?: number
+  threadsPeak?: number
   jankTotal: number
   frozenTotal: number
 }
@@ -103,10 +105,14 @@ export type PerfSummary = {
 export function summarizePerf(samples: PerfSample[]): PerfSummary {
   const cpus = samples.flatMap((s) => (typeof s.cpu === 'number' ? [s.cpu] : []))
   const mems = samples.flatMap((s) => (typeof s.mem_mb === 'number' ? [s.mem_mb] : []))
+  const fpss = samples.flatMap((s) => (typeof s.fps === 'number' ? [s.fps] : []))
+  const threads = samples.flatMap((s) => (typeof s.threads === 'number' ? [s.threads] : []))
   return {
     cpuPeak: cpus.length ? Math.max(...cpus) : undefined,
     cpuAvg: cpus.length ? cpus.reduce((a, b) => a + b, 0) / cpus.length : undefined,
     memPeak: mems.length ? Math.max(...mems) : undefined,
+    fpsMin: fpss.length ? Math.min(...fpss) : undefined,
+    threadsPeak: threads.length ? Math.max(...threads) : undefined,
     jankTotal: samples.reduce((n, s) => n + (s.jank ?? 0), 0),
     frozenTotal: samples.reduce((n, s) => n + (s.frozen ?? 0), 0),
   }

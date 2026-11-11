@@ -6,6 +6,9 @@ export type SeriesPoint = { tMs: number; v: number }
 export type Span = { startMs: number; endMs: number; label: string; tone?: 'error' }
 export type TrackMarker = { id: string; offsetMs: number; tone: 'error' | 'warn' | 'info'; label: string }
 
+/** A stretch of the timeline highlighted on a series track (e.g. a CPU breach). Offsets are from session start. */
+export type TrackBand = { startMs: number; endMs: number }
+
 export type TrackDef = {
   id: TrackId
   label: string
@@ -15,6 +18,10 @@ export type TrackDef = {
   markers?: TrackMarker[]
   /** Value that maps to the top of a series track. */
   max?: number
+  /** Dashed reference line on a series track, in the same units as `max` (e.g. 80 for the high-CPU limit). */
+  threshold?: number
+  /** Highlighted stretches (breaches) drawn behind the line. */
+  bands?: TrackBand[]
   unit?: string
   /** Text shown next to the label for the playhead position (e.g. "87%"); null when there is no value there. */
   valueAt?(tMs: number): string | null
@@ -82,4 +89,20 @@ export function seriesPath(
 /** How many items a lane could not show (e.g. "+5" on the network lane). */
 export function overflowCount(total: number, shown: number): number {
   return Math.max(0, total - shown)
+}
+
+/**
+ * Collapse consecutive same-screen spans into one. Screenshot sessions record several frames per second, so a
+ * span per frame would draw dozens of identical tags; a revisited screen stays a separate span.
+ */
+export function mergeScreenRuns(
+  raw: { screen: string; startMs: number; endMs: number }[],
+): { screen: string; startMs: number; endMs: number }[] {
+  const out: { screen: string; startMs: number; endMs: number }[] = []
+  for (const s of raw) {
+    const last = out[out.length - 1]
+    if (last && last.screen === s.screen) last.endMs = Math.max(last.endMs, s.endMs)
+    else out.push({ ...s })
+  }
+  return out
 }
