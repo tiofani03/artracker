@@ -126,3 +126,10 @@ export function describeBreach(b: PerfBreach, refreshHz: number = DEFAULT_REFRES
   }
   return { badge: 'Jank burst', text: `${Math.round(b.peak)} janky frames in ${secs}s` }
 }
+
+/** Top of the RAM track: the session's own peak plus headroom, so growth is visible even on a large-RAM device. */
+export function memTrackMax(samples: PerfSample[]): number {
+  let peak = 0
+  for (const s of samples) if (typeof s.mem_mb === 'number' && s.mem_mb > peak) peak = s.mem_mb
+  return Math.max(1, peak * 1.2)
+}

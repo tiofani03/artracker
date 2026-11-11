@@ -4,7 +4,7 @@ import { expect, test, type Page } from '@playwright/test'
 type PerfHarness = {
   ready: boolean
   chunkPayloads(): unknown[]
-  mountPlayer(opts?: { fillViewport?: boolean }): void
+  mountPlayer(opts?: { fillViewport?: boolean; shell?: boolean }): void
 }
 
 async function mount(page: Page, query: string) {
@@ -65,4 +65,17 @@ test('a session without profiling data has no perf tracks and shows the empty st
   await expect(page.locator('.or-track[data-track="cpu"]')).toHaveCount(0)
   await page.getByRole('tab', { name: /Performance/ }).click()
   await expect(page.getByText('No profiling data for this session.')).toBeVisible()
+})
+
+test('summary totals are labelled approximate when the series was downsampled', async ({ page }) => {
+  await mount(page, '&perfFixture=1&perfDownsampled=1')
+  await page.getByRole('tab', { name: /Performance/ }).click()
+  await expect(page.getByText('Jank frames (approx.)')).toBeVisible()
+  await expect(page.getByText('CPU peak / avg (approx.)')).toBeVisible()
+})
+
+test('exact summary labels when the series was not downsampled', async ({ page }) => {
+  await mount(page, '&perfFixture=1')
+  await page.getByRole('tab', { name: /Performance/ }).click()
+  await expect(page.getByText('Jank frames', { exact: true })).toBeVisible()
 })

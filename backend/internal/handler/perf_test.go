@@ -92,3 +92,29 @@ func TestGetSessionPerfRequiresAuth(t *testing.T) {
 		t.Fatalf("status = %d, want 401", resp.StatusCode)
 	}
 }
+
+func TestGetSessionPerfReportsEffectiveIntervalWhenDownsampled(t *testing.T) {
+	e := newTestEnv(t)
+	uid, authHdr := e.addUser(t, "perflong")
+	orgID := e.addOrg(t, "acme-perf-long")
+	e.addMember(t, orgID, uid, "owner")
+	pid := e.addProject(t, orgID, "perf-long")
+
+	const sess = "ses_perf_long1"
+	// 2400 one-second samples in one stored row (the table does not cap batch size; the SDK/ingest does).
+	e.insertPerfBatch(t, pid, sess, 1000, 2400*1000, func(int64) float64 { return 50 })
+
+	resp := e.do(t, "GET", fmt.Sprintf("/api/v1/projects/%d/sessions/%s/perf", pid, sess), nil, authHdr)
+	var body struct {
+		IntervalMs  int  `json:"interval_ms"`
+		Downsampled bool `json:"downsampled"`
+		Samples     []any
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if !body.Downsampled || len(body.Samples) != 1200 {
+		t.Fatalf("want 1200 downsampled samples, got %d (downsampled=%v)", len(body.Samples), body.Downsampled)
+	}
+	if body.IntervalMs != 2000 {
+		t.Fatalf("interval_ms must describe the spacing of the returned points: got %d want 2000", body.IntervalMs)
+	}
+}

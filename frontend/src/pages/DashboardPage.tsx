@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   analyticsApi,
   issueApi,
@@ -14,7 +14,7 @@ import {
 } from '../api'
 import DashboardShell from '../components/DashboardShell'
 import ReplayPlayer, { type DeviceMode } from '../components/ReplayPlayer'
-import { fillHeight } from '../replay/fit'
+import { useFillHeight } from '../replay/useFillHeight'
 import { browserStorage, defaultQueueOpen, readBool, writeBool } from '../replay/prefs'
 import GrowthAnalyticsView from '../components/analytics/GrowthAnalyticsView'
 import CampaignsView from '../components/campaigns/CampaignsView'
@@ -341,21 +341,8 @@ function DashboardInner({
     setQueueOpen(next)
     writeBool(browserStorage(), QUEUE_OPEN_KEY, next)
   }
-  const [replayHeight, setReplayHeight] = useState<number | null>(null)
+  const replayHeight = useFillHeight(replayContainerRef, section === 'replays')
   const [replayLoading, setReplayLoading] = useState<boolean>(true)
-
-  useLayoutEffect(() => {
-    if (section !== 'replays') return
-    const measure = () => {
-      const el = replayContainerRef.current
-      if (!el) return
-      const top = el.getBoundingClientRect().top + window.scrollY
-      setReplayHeight(fillHeight(window.innerHeight, top))
-    }
-    measure()
-    window.addEventListener('resize', measure)
-    return () => window.removeEventListener('resize', measure)
-  }, [section, replayLoading, replaySessions.length])
   const [replayError, setReplayError] = useState<string | null>(null)
 
   const [sessionDetail, setSessionDetail] = useState<{

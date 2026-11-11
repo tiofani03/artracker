@@ -109,3 +109,24 @@ func TestPresentPerfMetrics(t *testing.T) {
 		t.Fatalf("empty input must give non-nil empty slice, got %#v", got)
 	}
 }
+
+func TestEffectivePerfInterval(t *testing.T) {
+	cases := []struct {
+		name                        string
+		interval, n, maxPoints, want int
+	}{
+		{"under cap is unchanged", 1000, 500, 1200, 1000},
+		{"exactly at cap is unchanged", 1000, 1200, 1200, 1000},
+		{"2400 samples into 1200 buckets doubles the step", 1000, 2400, 1200, 2000},
+		{"rounds the bucket size up", 1000, 4000, 1200, 4000},
+		{"4000/1200 = 3.33 -> buckets of 4 samples", 500, 4000, 1200, 2000},
+		{"zero max leaves interval alone", 1000, 5000, 0, 1000},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := EffectivePerfInterval(c.interval, c.n, c.maxPoints); got != c.want {
+				t.Fatalf("got %d want %d", got, c.want)
+			}
+		})
+	}
+}

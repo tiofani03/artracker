@@ -35,7 +35,7 @@ import { filterMarkers, type MarkerFilter } from '../replay/markerFilter'
 import { ReplaySidePanel, type SidePanelTab } from './replay/ReplaySidePanel'
 import { PerformancePanel } from './replay/PerformancePanel'
 import { TimelineTracks } from './replay/TimelineTracks'
-import { describeBreach, detectBreaches, perfValueAt, toSeries } from '../replay/perf'
+import { describeBreach, detectBreaches, memTrackMax, perfValueAt, toSeries } from '../replay/perf'
 import { browserStorage, readBool, writeBool } from '../replay/prefs'
 import type { TrackDef } from '../replay/tracks'
 import { adjacentEventOffset, resolveHotkey, SEEK_STEP_MS } from '../replay/hotkeys'
@@ -616,13 +616,12 @@ export default function ReplayPlayer({
         })
       }
       if (perf.metrics.includes('mem_mb')) {
-        const peak = Math.max(...perf.samples.map((s) => s.mem_mb ?? 0))
         defs.push({
           id: 'mem',
           label: 'RAM',
           kind: 'series',
           points: toSeries(perf.samples, 'mem_mb', baseTimestampMs),
-          max: perf.device.ram_mb ?? Math.max(1, peak * 1.2),
+          max: memTrackMax(perf.samples),
           unit: 'MB',
           valueAt: (t) => {
             const v = at(t)?.mem_mb

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PerfSample } from '../api'
-import { describeBreach, detectBreaches, perfValueAt, summarizePerf, toSeries } from './perf'
+import { describeBreach, detectBreaches, memTrackMax, perfValueAt, summarizePerf, toSeries } from './perf'
 
 const S = (t: number, rest: Partial<PerfSample> = {}): PerfSample => ({ t, ...rest })
 const START = 1_000_000
@@ -125,5 +125,31 @@ describe('describeBreach', () => {
       badge: 'Jank burst',
       text: '7 janky frames in 1s',
     })
+  })
+})
+
+describe('downsampled series (interval_ms is the point spacing)', () => {
+  it('still detects a pinned CPU when points are 4 s apart and the effective interval is passed', () => {
+    const samples = Array.from({ length: 4000 }, (_, i) => S(START + (i + 1) * 4000, { cpu: i >= 100 && i < 400 ? 99 : 10 }))
+    const breaches = detectBreaches(samples, START, 4000)
+    expect(breaches.filter((b) => b.kind === 'high_cpu')).toHaveLength(1)
+    expect(breaches[0].peak).toBe(99)
+  })
+
+  it('still resolves the value at the playhead between 4 s points', () => {
+    const samples = [S(START + 4000, { cpu: 10 }), S(START + 8000, { cpu: 20 })]
+    expect(perfValueAt(samples, START + 6000, 4000)?.cpu).toBe(10)
+  })
+})
+
+describe('memTrackMax', () => {
+  it('scales the track to the session peak with 20% headroom, so growth is visible', () => {
+    expect(memTrackMax([S(1, { mem_mb: 100 }), S(2, { mem_mb: 200 })])).toBeCloseTo(240, 5)
+  })
+
+  it('never returns less than 1 and ignores samples without memory', () => {
+    expect(memTrackMax([S(1)])).toBe(1)
+    expect(memTrackMax([])).toBe(1)
+    expect(memTrackMax([S(1), S(2, { mem_mb: 50 })])).toBeCloseTo(60, 5)
   })
 })

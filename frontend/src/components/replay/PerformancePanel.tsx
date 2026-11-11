@@ -38,6 +38,8 @@ export function PerformancePanel({ perf, currentAbsTs, startMs, onSeek }: Perfor
   const summary = summarizePerf(perf.samples)
   const breaches = detectBreaches(perf.samples, startMs, perf.interval_ms, refresh)
   const ram = perf.device.ram_mb
+  // Downsampled series keep each bucket's worst value, so sums and averages over them are only approximate
+  const approx = perf.downsampled ? ' (approx.)' : ''
 
   return (
     <div className="or-perf">
@@ -69,11 +71,11 @@ export function PerformancePanel({ perf, currentAbsTs, startMs, onSeek }: Perfor
         <h3 className="or-perf__title">Session summary</h3>
         <div className="or-perf-grid">
           {summary.cpuPeak !== undefined && (
-            <Stat label="CPU peak / avg" value={`${Math.round(summary.cpuPeak)}% / ${Math.round(summary.cpuAvg ?? 0)}%`} />
+            <Stat label={`CPU peak / avg${approx}`} value={`${Math.round(summary.cpuPeak)}% / ${Math.round(summary.cpuAvg ?? 0)}%`} />
           )}
           {summary.memPeak !== undefined && <Stat label="Memory peak" value={`${Math.round(summary.memPeak)} MB`} />}
-          <Stat label="Jank frames" value={String(summary.jankTotal)} />
-          <Stat label="Frozen frames" value={String(summary.frozenTotal)} />
+          <Stat label={`Jank frames${approx}`} value={String(summary.jankTotal)} />
+          <Stat label={`Frozen frames${approx}`} value={String(summary.frozenTotal)} />
         </div>
       </section>
 

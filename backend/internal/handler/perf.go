@@ -17,6 +17,7 @@ const maxPerfBatchRows = 2000
 
 // SessionPerfResponse is the payload of GET /projects/:projectID/sessions/:sessionID/perf.
 type SessionPerfResponse struct {
+	// IntervalMs is the spacing between the returned points (the SDK interval, scaled up when downsampled).
 	IntervalMs  int                 `json:"interval_ms"`
 	Device      ingest.PerfDevice   `json:"device"`
 	Metrics     []string            `json:"metrics"`
@@ -83,6 +84,9 @@ func (h *Handler) GetSessionPerf(c *fiber.Ctx) error {
 	merged := ingest.MergePerfSamples(batches)
 	resp.Metrics = ingest.PresentPerfMetrics(merged)
 	resp.Samples, resp.Downsampled = ingest.DownsamplePerf(merged, ingest.MaxPerfResponseSamples)
+	if resp.Downsampled {
+		resp.IntervalMs = ingest.EffectivePerfInterval(resp.IntervalMs, len(merged), ingest.MaxPerfResponseSamples)
+	}
 	if resp.Samples == nil {
 		resp.Samples = []ingest.PerfSample{}
 	}

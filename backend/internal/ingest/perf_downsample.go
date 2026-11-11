@@ -112,3 +112,13 @@ func PresentPerfMetrics(s []PerfSample) []string {
 	}
 	return out
 }
+
+// EffectivePerfInterval is the spacing, in ms, between points of a series of n samples (originally intervalMs
+// apart) after DownsamplePerf(…, maxPoints): each point then stands for up to ceil(n/maxPoints) samples. Clients
+// must use it instead of the SDK's interval, or runs and "current value" lookups see gaps that are not there.
+func EffectivePerfInterval(intervalMs, n, maxPoints int) int {
+	if maxPoints <= 0 || n <= maxPoints {
+		return intervalMs
+	}
+	return intervalMs * ((n + maxPoints - 1) / maxPoints)
+}
