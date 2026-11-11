@@ -182,6 +182,14 @@ export function validateLabel(input: string): string | null {
   return null
 }
 
+/**
+ * A pasted token often carries surrounding spaces or a trailing newline. Only those are removed;
+ * validateBotToken stays strict, so callers validate and send the normalized value.
+ */
+export function normalizeToken(raw: string): string {
+  return raw.trim()
+}
+
 /** The token is a secret: messages are fixed strings and never include the input. */
 export function validateBotToken(input: string): string | null {
   if (BOT_TOKEN.test(input)) return null

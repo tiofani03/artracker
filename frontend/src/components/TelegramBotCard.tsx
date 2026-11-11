@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { alertApi, type AlertBot, type AlertDetailLevel } from '../api'
-import { botBadge, detailLevelLabel, isBotEndpointMissing, normalizeBot, validateBotToken } from './alerts/alertFormat'
+import {
+  botBadge,
+  detailLevelLabel,
+  isBotEndpointMissing,
+  normalizeBot,
+  normalizeToken,
+  validateBotToken,
+} from './alerts/alertFormat'
 
 const LEVELS: AlertDetailLevel[] = ['minimal', 'full']
 
@@ -56,11 +63,11 @@ function BotCardInner({ orgId, canManage }: Props) {
     }
   }, [orgId])
 
-  const tokenProblem = token === '' ? null : validateBotToken(token)
+  const tokenProblem = token === '' ? null : validateBotToken(normalizeToken(token))
 
   const connect = async () => {
-    if (busy || validateBotToken(token) !== null) return
-    const submitted = token
+    const submitted = normalizeToken(token)
+    if (busy || validateBotToken(submitted) !== null) return
     setToken('') // cleared before the request: never kept while it is in flight
     setBusy(true)
     setError('')
@@ -120,7 +127,12 @@ function BotCardInner({ orgId, canManage }: Props) {
         className="dash-input"
         aria-label="Telegram bot token"
         aria-describedby={tokenProblem ? 'tg-bot-token-error' : undefined}
-        autoComplete="off"
+        // keep password managers from offering to save or fill the bot token
+        autoComplete="new-password"
+        data-1p-ignore
+        data-lpignore="true"
+        data-bwignore
+        data-form-type="other"
         spellCheck={false}
         placeholder="123456789:AA..."
         value={token}

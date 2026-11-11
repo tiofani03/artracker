@@ -10,6 +10,7 @@ import {
   isBotEndpointMissing,
   normalizeBot,
   normalizeChannelsResponse,
+  normalizeToken,
   buildRulePatch,
   channelActivityLabel,
   countEnabledChannels,
@@ -305,6 +306,23 @@ describe('validateBotToken', () => {
       expect(msg).not.toBeNull()
       if (bad !== '') expect(msg).not.toContain(bad)
     }
+  })
+})
+
+describe('normalizeToken', () => {
+  const tok = '123456789:AAEhBP0av28kPoKy2VfQ3CwR4aFhEXAMPLE1'
+  it('removes surrounding spaces and a trailing newline', () => {
+    expect(normalizeToken(`  ${tok}  `)).toBe(tok)
+    expect(normalizeToken(`${tok}\n`)).toBe(tok)
+    expect(normalizeToken(`\t${tok}\r\n`)).toBe(tok)
+  })
+  it('leaves inner characters untouched', () => {
+    expect(normalizeToken(tok)).toBe(tok)
+    expect(normalizeToken(' 123 456:AA b ')).toBe('123 456:AA b')
+  })
+  it('keeps validateBotToken strict: only the normalized value validates', () => {
+    expect(validateBotToken(` ${tok}\n`)).not.toBeNull()
+    expect(validateBotToken(normalizeToken(` ${tok}\n`))).toBeNull()
   })
 })
 
