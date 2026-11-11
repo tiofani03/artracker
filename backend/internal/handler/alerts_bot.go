@@ -22,23 +22,21 @@ import (
 // body, a token, or Telegram's own error text.
 
 const (
-	errTenantOff      = "tenant bots are disabled in this deployment"
-	errBadToken       = "invalid bot token"
-	errBadLevel       = "invalid detail level"
-	errNoBot          = "no bot configured"
-	errConnectBot     = "connect a Telegram bot first"
-	errBadJSON        = "invalid JSON body"
-	errBadChat        = "invalid chat"
-	errBadLabel       = "invalid label"
-	errManualOff      = "manual channels are only available in tenant mode"
-	warnChatUnchecked = "could not verify the chat (is the bot a member?)"
+	errTenantOff  = "tenant bots are disabled in this deployment"
+	errBadToken   = "invalid bot token"
+	errBadLevel   = "invalid detail level"
+	errNoBot      = "no bot configured"
+	errConnectBot = "connect a Telegram bot first"
+	errBadJSON    = "invalid JSON body"
+	errBadChat    = "invalid chat"
+	errBadLabel   = "invalid label"
+	errManualOff  = "manual channels are only available in tenant mode"
 
 	// maxTokenBytes bounds a token before it reaches the service.
 	maxTokenBytes = 256
 	maxLabelRunes = 80
 	// botWriteBudget covers the getMe check (10 s) plus the database write.
 	botWriteBudget  = 15 * time.Second
-	getChatBudget   = 5 * time.Second
 	originLinked    = "linked"
 	originManual    = "manual"
 	duplicateRowErr = "23505"
@@ -216,7 +214,8 @@ func (h *Handler) projectOrg(ctx context.Context, projectID int64) (int64, error
 }
 
 // CreateAlertChannel adds a manual channel (tenant mode): a chat the
-// organisation's bot delivers to. getChat is best-effort and never blocks.
+// organisation's bot delivers to. Telegram is not asked anything about the
+// chat: the platform only calls sendMessage and getMe, so chat_type stays ”.
 func (h *Handler) CreateAlertChannel(c *fiber.Ctx) error {
 	if h.alertsMode() != alerts.ModeTenant {
 		return fiber.NewError(fiber.StatusBadRequest, errManualOff)
@@ -235,7 +234,7 @@ func (h *Handler) CreateAlertChannel(c *fiber.Ctx) error {
 	if in.Label == nil || !validLabel(*in.Label) {
 		return fiber.NewError(fiber.StatusBadRequest, errBadLabel)
 	}
-	ctx, cancel := context.WithTimeout(c.Context(), alertQueryBudget+getChatBudget)
+	ctx, cancel := context.WithTimeout(c.Context(), alertQueryBudget)
 	defer cancel()
 
 	orgID, err := h.projectOrg(ctx, projectID)
@@ -250,24 +249,14 @@ func (h *Handler) CreateAlertChannel(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusConflict, errConnectBot)
 	}
 
-	var chatType, warning string
-	lctx, lcancel := context.WithTimeout(ctx, getChatBudget)
-	info, err := h.alertsSvc.LookupChat(lctx, orgID, *in.Chat)
-	lcancel()
-	if err != nil {
-		warning = warnChatUnchecked
-	} else {
-		chatType = info.Type
-	}
-
 	var createdBy *int64
 	if uid := userID(c); uid > 0 {
 		createdBy = &uid
 	}
 	ch, err := scanChannel(h.db.QueryRow(ctx, `
 INSERT INTO alert_channels(project_id, kind, origin, destination, title, chat_type, created_by)
-VALUES ($1, 'telegram', 'manual', $2, $3, $4, $5)
-RETURNING `+channelCols, projectID, *in.Chat, *in.Label, chatType, createdBy))
+VALUES ($1, 'telegram', 'manual', $2, $3, '', $4)
+RETURNING `+channelCols, projectID, *in.Chat, *in.Label, createdBy))
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == duplicateRowErr {
 		return fiber.NewError(fiber.StatusConflict, "chat already added")
@@ -276,8 +265,5 @@ RETURNING `+channelCols, projectID, *in.Chat, *in.Label, chatType, createdBy))
 		return err
 	}
 	ch.applyMode(alerts.ModeTenant)
-	return c.Status(fiber.StatusCreated).JSON(struct {
-		channelJSON
-		Warning string `json:"warning,omitempty"`
-	}{ch, warning})
+	return c.Status(fiber.StatusCreated).JSON(ch)
 }

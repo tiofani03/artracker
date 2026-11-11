@@ -708,7 +708,7 @@ var openAPISpecBytes = []byte(`{
       },
       "post": {
         "summary": "Add a Manual Chat Channel (admin, tenant mode)",
-        "description": "Adds a chat delivered through the organisation's own bot. chat is a numeric chat id (^-?[1-9][0-9]{4,19}$) or a public @username (^@[A-Za-z][A-Za-z0-9_]{4,31}$); label is 1 to 80 Unicode code points and not only whitespace. getChat is tried once (5 s) to fill chat_type; when it fails the channel is still saved and warning is set.",
+        "description": "Adds a chat delivered through the organisation's own bot. chat is a numeric chat id (^-?[1-9][0-9]{4,19}$) or a public @username (^@[A-Za-z][A-Za-z0-9_]{4,31}$); label is 1 to 80 Unicode code points and not only whitespace. Telegram is not contacted: the channel is saved with chat_type empty (the platform only ever calls sendMessage and getMe).",
         "operationId": "createAlertChannel",
         "tags": ["Alerts"],
         "security": [{ "BearerAuth": [] }],
@@ -732,7 +732,7 @@ var openAPISpecBytes = []byte(`{
           }
         },
         "responses": {
-          "201": { "description": "The channel (origin manual) plus an optional warning: could not verify the chat (is the bot a member?)" },
+          "201": { "description": "The channel (origin manual, chat_type empty)" },
           "400": { "description": "invalid JSON body, invalid chat, invalid label, or manual channels are only available in tenant mode" },
           "409": { "description": "connect a Telegram bot first, or chat already added" }
         }

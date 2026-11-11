@@ -213,31 +213,6 @@ func TestGetBotReturnsIDAndUsername(t *testing.T) {
 	}
 }
 
-func TestGetChatReturnsTitleAndType(t *testing.T) {
-	st := newStrictTelegramServer(t)
-	tg := NewTelegram(testToken, st.URL, nil)
-	ci, err := tg.GetChat(context.Background(), "-100123")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ci.Title != "Ops" || ci.Type != "supergroup" {
-		t.Fatalf("chat = %+v", ci)
-	}
-	if c := st.Calls("getChat"); len(c) != 1 || c[0].Body["chat_id"] != "-100123" {
-		t.Fatalf("calls = %+v", c)
-	}
-
-	st.SetReply("getChat", http.StatusOK,
-		`{"ok":true,"result":{"id":7,"type":"private","first_name":"Jane","last_name":"Doe","username":"jd"}}`)
-	ci, err = tg.GetChat(context.Background(), "7")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ci.Title != "" || ci.Type != "private" {
-		t.Fatalf("private chat = %+v, want empty title", ci)
-	}
-}
-
 func TestUnauthorizedMapsToErrUnauthorized(t *testing.T) {
 	st := newStrictTelegramServer(t)
 	tg := NewTelegram(testToken, st.URL, nil)
@@ -253,13 +228,10 @@ func TestUnauthorizedMapsToErrUnauthorized(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			st.SetReply("sendMessage", c.status, c.body)
 			st.SetReply("getMe", c.status, c.body)
-			st.SetReply("getChat", c.status, c.body)
 			errs := []error{
 				tg.SendMessage(context.Background(), "1", "x"),
 			}
 			_, e := tg.GetBot(context.Background())
-			errs = append(errs, e)
-			_, e = tg.GetChat(context.Background(), "1")
 			errs = append(errs, e)
 			for _, err := range errs {
 				if !errors.Is(err, ErrUnauthorized) {

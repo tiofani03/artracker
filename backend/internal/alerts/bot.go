@@ -256,19 +256,3 @@ SELECT token_ciphertext, key_id, bot_username, status, detail_level FROM alert_b
 	}
 	return &orgBot{tg: tg, level: levelFromDB(level), username: username, sealed: blob}, nil
 }
-
-// LookupChat asks Telegram, through the organisation's bot, for a chat's
-// title and type. It reads metadata only, never messages.
-func (s *Service) LookupChat(ctx context.Context, orgID int64, chat string) (ChatInfo, error) {
-	if s.mode != ModeTenant {
-		return ChatInfo{}, ErrWrongMode
-	}
-	bot, err := s.workingBot(ctx, orgID)
-	if err != nil {
-		return ChatInfo{}, err
-	}
-	if bot == nil {
-		return ChatInfo{}, ErrBotNotFound
-	}
-	return bot.tg.GetChat(ctx, chat)
-}

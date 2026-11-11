@@ -165,27 +165,6 @@ func (t *Telegram) GetMe(ctx context.Context) (string, error) {
 	return b.Username, nil
 }
 
-// ChatInfo is the part of getChat the platform keeps. Title is empty for a
-// private chat: a person's name or username is never captured.
-type ChatInfo struct{ Title, Type string }
-
-func (t *Telegram) GetChat(ctx context.Context, chat string) (ChatInfo, error) {
-	q := url.Values{}
-	q.Set("chat_id", chat)
-	res, err := t.call(ctx, http.MethodGet, "getChat", q, nil)
-	if err != nil {
-		return ChatInfo{}, err
-	}
-	var c struct {
-		Title string `json:"title"`
-		Type  string `json:"type"`
-	}
-	if err := json.Unmarshal(res, &c); err != nil {
-		return ChatInfo{}, fmt.Errorf("telegram: decode getChat: %w", err)
-	}
-	return ChatInfo{Title: c.Title, Type: c.Type}, nil
-}
-
 func (t *Telegram) GetUpdates(ctx context.Context, offset int64, timeoutSec int) ([]Update, error) {
 	q := url.Values{}
 	q.Set("offset", strconv.FormatInt(offset, 10))

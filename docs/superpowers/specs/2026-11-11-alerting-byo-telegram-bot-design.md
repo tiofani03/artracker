@@ -40,6 +40,9 @@ the dashboard and must be changeable at runtime without a restart or redeploy.
 - No shared operator bot offered to tenants in SaaS mode (see §6.8 for what happens to it).
 - No inbound features of any kind: no `/start` linking, no replying to the bot, no inline-button
   callbacks, no acknowledging an alert from Telegram. All of these need inbound updates.
+- No reading chat details from Telegram: `getChat` is not called (it returns pinned messages, descriptions
+  and private-chat names). In tenant mode the only Telegram methods the platform calls are `sendMessage`
+  and `getMe`.
 - No other channels (Slack, Discord, email) in this work.
 - No tenant-managed encryption keys (bring-your-own-key) in this work.
 - This design is not legal advice and does not certify PDP compliance. Whether it satisfies a
@@ -77,8 +80,9 @@ the dashboard and must be changeable at runtime without a restart or redeploy.
   partial unique index on `(project_id, destination)` for `manual` rows. The `migrate_to_chat_id` handling
   (group upgraded to supergroup) must update whichever column the channel uses.
 - Channels need a human label entered by the admin (the platform cannot learn the chat title without
-  reading from Telegram). Optionally the platform may call `getChat` once at save time to show the
-  title and type; that returns metadata only, never messages. Treat `getChat` as optional.
+  reading from Telegram). The platform does not call `getChat`: it returns chat content (pinned message,
+  description, private-chat names), which contradicts decision 2. Manual channels are saved with an empty
+  `chat_type`.
 - The link-code table and flow (`alert_link_codes`, `/start`, `PollUpdates`, `HandleUpdate`, the
   "bot removed from chat" update handling) exist only for the shared-bot mode (§6.8).
 
@@ -114,9 +118,9 @@ the dashboard and must be changeable at runtime without a restart or redeploy.
   owners. `DELETE` removes the bot; the organisation's `manual` channels then count as paused because
   there is no working bot. Pausing is derived, not written (§6.4), so re-adding a bot resumes them with no
   re-enabling step.
-- Adding a channel may call `getChat` once, best-effort, to show the chat title and type. A failed `getChat`
-  (for example the bot is not in the chat yet) never blocks saving: the channel is saved and the response
-  carries a warning. The admin-typed label is always required and always shown.
+- Adding a channel asks Telegram nothing: the chat is not verified, `chat_type` stays empty and the response
+  carries no warning. "Test" is how an admin checks that the bot can post there. The admin-typed label is
+  always required and always shown.
 - Project-level channel endpoints keep their routes and roles from the MVP. Creating a channel now takes
   `{chat, label}` instead of using a link code. `POST .../channels/:id/test` sends a test message through
   the organisation's bot. The link-code endpoint returns 404/disabled outside shared-bot mode.
@@ -162,7 +166,8 @@ through Telegram.
 ### 6.6 Send-only, enforced
 
 - Remove the poller from the tenant path; no inbound HTTP endpoint for Telegram exists.
-- The only Telegram methods the platform may call are `sendMessage`, `getMe`, and optionally `getChat`.
+- The only Telegram methods the platform calls in tenant mode are `sendMessage` and `getMe`. It never calls
+  `getChat` or `getUpdates` for a tenant's bot.
   Tests run against a fake Telegram server that **fails the test if any other method is called**.
 - The "only one instance may poll Telegram" constraint disappears. The dispatcher and the evaluator still
   need a single worker (`ALERTS_WORKER`), unchanged.
@@ -226,6 +231,6 @@ instructions; test layout.
 5. The detail level applies to alert, recovery and test messages; `minimal` keeps spike counts (§6.5).
 6. Rate limiting and the 429 backoff are per bot, that is per organisation (§6.4).
 7. With no working bot, incidents stay `pending` for up to 24 hours, then become `skipped` (§6.4).
-8. `getChat` is best-effort and never blocks saving a channel (§6.3).
+8. `getChat` is not called at all; manual channels are saved with an empty `chat_type` (§6.1, §6.3, §6.6).
 9. Master key: `ALERTS_MASTER_KEY` (base64, 32 bytes) or `_FILE`; required in `tenant` mode; fatal at boot in production,
    an API error in development; rotation is schema only (§6.2).

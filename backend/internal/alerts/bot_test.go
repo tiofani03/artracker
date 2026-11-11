@@ -390,9 +390,6 @@ func TestSharedModeRejectsBotCalls(t *testing.T) {
 	if err := s.DeleteBot(ctx, 1); !errors.Is(err, ErrWrongMode) {
 		t.Fatalf("DeleteBot: %v", err)
 	}
-	if _, err := s.LookupChat(ctx, 1, "@news"); !errors.Is(err, ErrWrongMode) {
-		t.Fatalf("LookupChat: %v", err)
-	}
 	v, err := s.BotStatus(ctx, 1)
 	if err != nil || v != (BotView{}) {
 		t.Fatalf("BotStatus = %+v, %v", v, err)
@@ -640,9 +637,6 @@ SELECT $2, token_ciphertext, key_id, bot_id, bot_username FROM alert_bots WHERE 
 	if err != nil || bot != nil {
 		t.Fatalf("workingBot(B) = %v, %v", bot, err)
 	}
-	if _, err := s.LookupChat(ctx, orgB, "@news"); !errors.Is(err, ErrBotNotFound) {
-		t.Fatalf("LookupChat(B): %v", err)
-	}
 	if n := len(srv.Requests()); n != before {
 		t.Fatalf("requests after copy = %d, before = %d", n, before)
 	}
@@ -701,26 +695,5 @@ func TestWorkingBotNilWhenInvalidOrNoSealer(t *testing.T) {
 	}
 	if bot, err := s.workingBot(ctx, orgID); err != nil || bot != nil {
 		t.Fatalf("invalid: %v, %v", bot, err)
-	}
-}
-
-func TestLookupChat(t *testing.T) {
-	pool := testDB(t)
-	ctx := context.Background()
-	orgID, _ := seedProject(t, pool)
-	s, srv := tenantService(t, pool)
-	if _, err := s.LookupChat(ctx, orgID, "@news"); !errors.Is(err, ErrBotNotFound) {
-		t.Fatalf("no bot: %v", err)
-	}
-	if _, err := s.SetBot(ctx, orgID, 0, testBotToken, ""); err != nil {
-		t.Fatal(err)
-	}
-	info, err := s.LookupChat(ctx, orgID, "@news")
-	if err != nil || info != (ChatInfo{Title: "Ops", Type: "supergroup"}) {
-		t.Fatalf("info = %+v, %v", info, err)
-	}
-	calls := srv.Calls("getChat")
-	if len(calls) != 1 || calls[0].Token != testBotToken || calls[0].Body["chat_id"] != "@news" {
-		t.Fatalf("calls = %+v", calls)
 	}
 }

@@ -118,7 +118,8 @@ type strictReply struct {
 
 // strictTelegram poses as the Telegram Bot API at /bot<token>/<method>. It
 // serves only sendMessage, getMe and getChat; any other method fails the test,
-// which is how send-only delivery is enforced.
+// which is how send-only delivery is enforced. (getChat stays allowed here
+// only so older fixtures keep working; production code never calls it.)
 type strictTelegram struct {
 	URL string
 

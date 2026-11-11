@@ -31,6 +31,7 @@ type botAPIReply struct {
 
 // fakeBotAPI is a strict Bot API at /bot<token>/<method>: it serves
 // sendMessage, getMe and getChat and fails the test for any other method.
+// Production code calls only sendMessage and getMe; see methods().
 type fakeBotAPI struct {
 	t       *testing.T
 	URL     string
@@ -68,6 +69,17 @@ func (f *fakeBotAPI) callsOf(method string) []botAPICall {
 		if c.method == method {
 			out = append(out, c)
 		}
+	}
+	return out
+}
+
+// methods lists the Bot API methods called so far, in order.
+func (f *fakeBotAPI) methods() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, 0, len(f.calls))
+	for _, c := range f.calls {
+		out = append(out, c.method)
 	}
 	return out
 }
@@ -644,8 +656,11 @@ VALUES ($1, '\x00', 'v1', 'DeadBot', 'invalid', 'token rejected by Telegram')`, 
 			t.Fatal(err)
 		}
 		if ch.Origin != "manual" || ch.Destination != chat || !ch.Active || ch.Title != "Label "+chat ||
-			ch.ChatType != "supergroup" || ch.Warning != nil || ch.Kind != "telegram" || !ch.Enabled {
+			ch.ChatType != "" || ch.Warning != nil || ch.Kind != "telegram" || !ch.Enabled {
 			t.Errorf("POST %q channel = %+v (%s)", chat, ch, resp)
+		}
+		if strings.Contains(string(resp), `"warning"`) {
+			t.Errorf("POST %q response carries a warning: %s", chat, resp)
 		}
 		q := fmt.Sprintf(`SELECT count(*) FROM alert_channels WHERE id=%d AND project_id=%d AND origin='manual'
 			AND telegram_chat_id IS NULL AND created_by=%d AND destination='%s'`, ch.ID, b.pid, b.adminID, chat)
@@ -653,8 +668,10 @@ VALUES ($1, '\x00', 'v1', 'DeadBot', 'invalid', 'token rejected by Telegram')`, 
 			t.Errorf("row for %q not stored as expected", chat)
 		}
 	}
-	if calls := b.api.callsOf("getChat"); len(calls) != 3 || calls[2].body["chat_id"] != "@my_channel" || calls[2].token != hBotToken {
-		t.Errorf("getChat calls = %+v", calls)
+	// Creating a channel asks Telegram nothing: the platform only ever calls
+	// getMe (when a token is saved) and sendMessage.
+	if got := b.api.methods(); len(got) != 1 || got[0] != "getMe" {
+		t.Errorf("Bot API methods called = %v, want only the getMe from PUT", got)
 	}
 
 	for _, chat := range []string{"00123", "-0123456", "+123456", " 123456", "123456 ", "12", "@a", "abc", "", "@my channel",
@@ -681,22 +698,9 @@ VALUES ($1, '\x00', 'v1', 'DeadBot', 'invalid', 'token rejected by Telegram')`, 
 	code, resp = b.call(t, "POST", p, body("@my_channel", "Again"), b.admin)
 	wantError(t, "duplicate", code, resp, 409, "chat already added")
 
-	b.api.set("getChat", 400, `{"ok":false,"error_code":400,"description":"Bad Request: chat not found secretdetail"}`)
-	code, resp = b.call(t, "POST", p, body("-100777", "Unverified"), b.admin)
-	if code != 201 {
-		t.Fatalf("getChat failure = %d %s, want 201", code, resp)
+	if got := b.api.methods(); len(got) != 1 || got[0] != "getMe" {
+		t.Errorf("Bot API methods called after all creates = %v, want only getMe", got)
 	}
-	var ch channelResp
-	if err := json.Unmarshal(resp, &ch); err != nil {
-		t.Fatal(err)
-	}
-	if ch.Warning == nil || *ch.Warning != "could not verify the chat (is the bot a member?)" || ch.ChatType != "" || ch.Title != "Unverified" {
-		t.Errorf("getChat failure channel = %+v (%s)", ch, resp)
-	}
-	if strings.Contains(string(resp), "secretdetail") || strings.Contains(string(resp), "chat not found") {
-		t.Errorf("upstream text echoed: %s", resp)
-	}
-	b.api.reset("getChat")
 
 	// Shared mode has no manual channels.
 	b.h.WithAlerts(alerts.NewService(b.pool, nil, "http://app").WithBotUsername("ArtBot"))

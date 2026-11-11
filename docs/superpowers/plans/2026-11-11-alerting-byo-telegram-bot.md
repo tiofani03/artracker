@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Bot modes: `ALERTS_BOT_MODE` ∈ `tenant` (default) | `shared`; mutually exclusive; **no fallback** from a tenant without a bot to the shared bot.
-- `tenant` mode never calls `getUpdates`, never registers a webhook, has no inbound Telegram endpoint, runs no poller. The only Telegram methods the platform may call in `tenant` mode: `sendMessage`, `getMe`, `getChat` (best-effort, metadata only).
+- `tenant` mode never calls `getUpdates`, never registers a webhook, has no inbound Telegram endpoint, runs no poller. The only Telegram methods the platform calls in `tenant` mode: `sendMessage` and `getMe`. (The `getChat` lookup this plan originally described was removed after the final review: it returns chat content, not just metadata.)
 - Telegram API host is fixed in code (`https://api.telegram.org`); a tenant can never supply a URL. The operator-level `TELEGRAM_API_BASE` stays for tests only.
 - Token: AES-256-GCM envelope encryption, wrapped under a master key; additional authenticated data binds the organisation id; `key_id` stored with the ciphertext. Master key: `ALERTS_MASTER_KEY` (base64 of exactly 32 bytes) or `ALERTS_MASTER_KEY_FILE`; both set, unreadable, empty, bad base64 or wrong length is a startup panic; required in `tenant` mode in production (panic when missing); in development a missing key leaves the engine running and only the bot API answers `alerts master key is not configured`. Key rotation = `key_id` column + decrypt-by-`key_id` only; no tool.
 - The token is write-only: never in any API response, log line, error, panic message, metric or URL; decrypted tokens exist only in memory for one request or one dispatcher tick.
