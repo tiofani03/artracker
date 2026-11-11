@@ -29,24 +29,28 @@ func envMatch(ruleEnv string) string {
 	return "(" + ruleEnv + " = '' OR e.environment = " + ruleEnv + " OR e.environment = '')"
 }
 
-// fireSpikesSQL counts both windows per open issue in one aggregate over the
-// last W + 24h of events, and opens an incident for each issue over the
-// threshold. The partial unique index absorbs an issue that is already firing.
+// fireSpikesSQL takes as candidates the open issues seen within the window
+// (bounded through issues_project_status_idx), counts both windows per
+// candidate with one range scan of issue_events_issue_idx over the last
+// W + 24h, and opens an incident for each issue over the threshold. The
+// LATERAL keeps the counting per candidate, so the planner cannot fall back to
+// hashing the whole issue_events table. The partial unique index absorbs an
+// issue that is already firing.
 var fireSpikesSQL = `
 WITH ` + spikeRuleCTE + `,
 c AS (
-  SELECT i.id AS issue_id, i.title, r.mult, r.min_count, r.wmin, r.w, r.env, r.cooldown,
-         count(*) FILTER (WHERE e.created_at > $2::timestamptz - r.w) AS cur,
-         count(*) FILTER (WHERE e.created_at <= $2::timestamptz - r.w)::float8 * r.wmin / 1440 AS baseline
+  SELECT i.id AS issue_id, i.title, r.mult, r.min_count, r.wmin, r.w, r.env, r.cooldown, k.cur, k.baseline
   FROM r
-  JOIN issues i ON i.project_id = $1 AND i.status = 'open'
-  JOIN issue_events e ON e.issue_id = i.id
-   AND e.created_at > $2::timestamptz - r.w - interval '24 hours'
-   AND e.created_at <= $2::timestamptz
-   AND ` + envMatch("r.env") + `
-  WHERE EXISTS (SELECT 1 FROM issue_events x
-                WHERE x.issue_id = i.id AND x.created_at > $2::timestamptz - r.w AND x.created_at <= $2::timestamptz)
-  GROUP BY i.id, i.title, r.mult, r.min_count, r.wmin, r.w, r.env, r.cooldown
+  JOIN issues i ON i.project_id = $1 AND i.status = 'open' AND i.last_seen > $2::timestamptz - r.w
+  CROSS JOIN LATERAL (
+    SELECT count(*) FILTER (WHERE e.created_at > $2::timestamptz - r.w) AS cur,
+           count(*) FILTER (WHERE e.created_at <= $2::timestamptz - r.w)::float8 * r.wmin / 1440 AS baseline
+    FROM issue_events e
+    WHERE e.issue_id = i.id
+      AND e.created_at > $2::timestamptz - r.w - interval '24 hours'
+      AND e.created_at <= $2::timestamptz
+      AND ` + envMatch("r.env") + `
+  ) k
 )
 INSERT INTO alert_incidents(project_id, rule_kind, issue_id, title, environment, release_version, session_id,
                             detail, fired_at, next_attempt_at)
@@ -92,22 +96,28 @@ SET status = 'resolved', resolved_at = $2::timestamptz, recovery_notify_state = 
 FROM f
 WHERE a.id = f.id AND NOT (f.cur >= f.min_count AND f.cur >= f.mult * greatest(f.baseline, 1))`
 
+// silentClose resolves an incident without a recovery message and drops a fire
+// message that has not gone out yet.
+const silentClose = `status = 'resolved', resolved_at = $2::timestamptz,
+    notify_state = CASE WHEN notify_state = 'pending' THEN 'skipped' ELSE notify_state END`
+
 // closeOrphanSpikesSQL silently resolves firing spike incidents whose rule is
 // missing or disabled, so they do not stay firing forever.
 const closeOrphanSpikesSQL = `
 UPDATE alert_incidents a
-SET status = 'resolved', resolved_at = $2::timestamptz
+SET ` + silentClose + `
 WHERE a.project_id = $1 AND a.rule_kind = 'issue_spike' AND a.status = 'firing'
   AND NOT EXISTS (SELECT 1 FROM alert_rules r
                   WHERE r.project_id = $1 AND r.kind = 'issue_spike' AND r.enabled)`
 
-// closeIssueIncidentsSQL resolves new_issue / regression incidents once their
-// issue is no longer open. No recovery message: spec §3 sends those for spikes only.
+// closeIssueIncidentsSQL silently resolves firing incidents of every kind once
+// their issue is no longer open: whoever resolved or ignored it already knows
+// (spec §3), and spikes are defined only for open issues (spec §2).
 const closeIssueIncidentsSQL = `
 UPDATE alert_incidents a
-SET status = 'resolved', resolved_at = $2::timestamptz
+SET ` + silentClose + `
 FROM issues i
-WHERE a.project_id = $1 AND a.rule_kind IN ('new_issue', 'regression') AND a.status = 'firing'
+WHERE a.project_id = $1 AND a.status = 'firing'
   AND i.id = a.issue_id AND i.status <> 'open'`
 
 // Evaluate runs one evaluator tick at now: it closes incidents whose condition

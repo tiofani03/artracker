@@ -23,6 +23,18 @@ INSERT INTO issue_events(issue_id, created_at, environment, release_version, ses
 VALUES ($1, $2, $3, $4, $5)`, issueID, at, env, release, session); err != nil {
 		t.Fatalf("insert event: %v", err)
 	}
+	syncLastSeen(t, pool, issueID)
+}
+
+// syncLastSeen sets issues.last_seen to the issue's latest event, as ingest
+// would, replacing the wall-clock default seedIssue leaves.
+func syncLastSeen(t *testing.T, pool *pgxpool.Pool, issueID int64) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE issues SET last_seen = (SELECT max(created_at) FROM issue_events WHERE issue_id = $1) WHERE id = $1`,
+		issueID); err != nil {
+		t.Fatalf("sync last_seen: %v", err)
+	}
 }
 
 // addEvents writes n events for the issue, all at the given time.
@@ -33,6 +45,7 @@ INSERT INTO issue_events(issue_id, created_at, environment)
 SELECT $1, $2, $3 FROM generate_series(1, $4)`, issueID, at, env, n); err != nil {
 		t.Fatalf("add events: %v", err)
 	}
+	syncLastSeen(t, pool, issueID)
 }
 
 // addBaseline writes perHour events at the middle of each of the 24 hours of
@@ -506,6 +519,97 @@ WHERE id IN (SELECT issue_id FROM alert_incidents WHERE id = ANY($1))`, []int64{
 	}
 	sent := fn.Sent()
 	if len(sent) != 1 || !strings.HasPrefix(sent[0].HTML, "✅") || !strings.Contains(sent[0].HTML, "spiky one") {
+		t.Fatalf("sent = %+v", sent)
+	}
+}
+
+func TestSpikeCandidatesBoundedByLastSeen(t *testing.T) {
+	pool := testDB(t)
+	_, pid := seedProject(t, pool)
+	// last_seen inside the window: 25 events at now − 10m → fires.
+	seen := seedIssue(t, pool, pid, "open")
+	addEvents(t, pool, seen, 25, evalNow.Add(-10*time.Minute), "production")
+	// 25 events in the window, but last_seen forced to now − 61m, outside it.
+	// Ingest keeps last_seen ≥ every event, so this state only proves the
+	// candidate bound is applied: such an issue is never counted.
+	stale := seedIssue(t, pool, pid, "open")
+	addEvents(t, pool, stale, 25, evalNow.Add(-10*time.Minute), "production")
+	if _, err := pool.Exec(context.Background(), `UPDATE issues SET last_seen = $2 WHERE id = $1`,
+		stale, evalNow.Add(-61*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	evaluate(t, NewService(pool, nil, ""), evalNow)
+
+	if incs := spikeIncidents(t, pool, seen); len(incs) != 1 {
+		t.Fatalf("in-window incidents = %+v", incs)
+	}
+	if incs := spikeIncidents(t, pool, stale); len(incs) != 0 {
+		t.Fatalf("stale incidents = %+v", incs)
+	}
+}
+
+// TestSpikeOnIgnoredIssueClosesSilently: a firing spike whose issue is set
+// ignored closes without a recovery message, even while still spiking.
+func TestSpikeOnIgnoredIssueClosesSilently(t *testing.T) {
+	pool := testDB(t)
+	_, pid := seedProject(t, pool)
+	seedChannel(t, pool, pid, -1)
+	ctx := context.Background()
+	iss := seedIssue(t, pool, pid, "open")
+	// fired 2h ago (fire message sent); 100 events in the last window, so the counts still say spiking.
+	inc := seedFiringSpike(t, pool, pid, iss, evalNow.Add(-2*time.Hour))
+	addEvents(t, pool, iss, 100, evalNow.Add(-10*time.Minute), "production")
+	if _, err := pool.Exec(ctx, `UPDATE issues SET status = 'ignored' WHERE id = $1`, iss); err != nil {
+		t.Fatal(err)
+	}
+	fn := &fakeNotifier{}
+	s := NewService(pool, fn, "http://app")
+
+	evaluate(t, s, evalNow)
+
+	if st, rec := incidentStatus(t, pool, inc); st != "resolved" || rec != "none" {
+		t.Fatalf("state = %s %s", st, rec)
+	}
+	if err := s.DispatchPending(ctx, evalNow); err != nil {
+		t.Fatal(err)
+	}
+	if sent := fn.Sent(); len(sent) != 0 {
+		t.Fatalf("sent = %+v", sent)
+	}
+}
+
+// TestSilentCloseSkipsPendingFire: an incident closed silently before its fire
+// message went out never sends that message.
+func TestSilentCloseSkipsPendingFire(t *testing.T) {
+	pool := testDB(t)
+	_, pid := seedProject(t, pool)
+	seedChannel(t, pool, pid, -1)
+	ctx := context.Background()
+	// (b) firing new_issue with its fire still pending; the issue is then resolved.
+	newIssue := seedIncident(t, pool, pid, KindNewIssue, "new one")
+	if _, err := pool.Exec(ctx,
+		`UPDATE issues SET status = 'resolved' WHERE id = (SELECT issue_id FROM alert_incidents WHERE id = $1)`, newIssue); err != nil {
+		t.Fatal(err)
+	}
+	// (c) firing spike with its fire still pending; the spike rule is then disabled.
+	spike := seedIncident(t, pool, pid, KindIssueSpike, "spiky one")
+	setSpikeRule(t, pool, pid, `enabled = false`)
+	fn := &fakeNotifier{}
+	s := NewService(pool, fn, "http://app")
+
+	evaluate(t, s, evalNow)
+
+	for _, id := range []int64{newIssue, spike} {
+		st := incidentState(t, pool, id)
+		if status, _ := incidentStatus(t, pool, id); status != "resolved" || st.Notify != "skipped" || st.Recovery != "none" {
+			t.Fatalf("incident %d: status %s, %+v", id, status, st)
+		}
+	}
+	if err := s.DispatchPending(ctx, evalNow); err != nil {
+		t.Fatal(err)
+	}
+	if sent := fn.Sent(); len(sent) != 0 {
 		t.Fatalf("sent = %+v", sent)
 	}
 }
