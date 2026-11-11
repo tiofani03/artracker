@@ -89,3 +89,10 @@ func (f *fakeNotifier) SendMessage(_ context.Context, chatID int64, html string)
 	f.sent = append(f.sent, sentMsg{ChatID: chatID, HTML: html})
 	return nil
 }
+
+// Sent returns a copy of the messages recorded so far.
+func (f *fakeNotifier) Sent() []sentMsg {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]sentMsg(nil), f.sent...)
+}
