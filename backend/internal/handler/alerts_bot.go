@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/gofiber/fiber/v2"
@@ -52,10 +53,15 @@ var (
 
 func validChat(s string) bool { return chatIDRe.MatchString(s) || chatUsernameRe.MatchString(s) }
 
-// validLabel: 1 to 80 Unicode code points, not only whitespace.
+// validLabel: 1 to 80 Unicode code points, not only whitespace, and a single
+// line with no control character (NUL, newline, tab, DEL, C1, ...). Postgres
+// rejects NUL in text, so without this check a NUL would be a 500.
 func validLabel(s string) bool {
 	n := utf8.RuneCountInString(s)
-	return n >= 1 && n <= maxLabelRunes && strings.TrimSpace(s) != ""
+	if n < 1 || n > maxLabelRunes || strings.TrimSpace(s) == "" {
+		return false
+	}
+	return !strings.ContainsFunc(s, unicode.IsControl)
 }
 
 // botJSON is the organisation's bot as the API shows it: never the token.

@@ -284,6 +284,15 @@ describe('validateLabel', () => {
     expect(validateLabel('   ')).not.toBeNull()
     expect(validateLabel(' ops ')).toBeNull()
   })
+  it('rejects control characters (labels are a single line)', () => {
+    for (const bad of ['a\u0000b', 'a\nb', 'a\tb', '\u0085', 'ops\r', 'x\u007f']) {
+      expect(validateLabel(bad)).toBe('The label cannot contain line breaks, tabs or control characters.')
+    }
+  })
+  it('accepts normal text and emoji', () => {
+    expect(validateLabel('Ops – prod alerts')).toBeNull()
+    expect(validateLabel('Équipe 🚨 on-call')).toBeNull()
+  })
 })
 
 describe('validateBotToken', () => {

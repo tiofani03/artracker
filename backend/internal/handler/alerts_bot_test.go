@@ -680,12 +680,19 @@ VALUES ($1, '\x00', 'v1', 'DeadBot', 'invalid', 'token rejected by Telegram')`, 
 		wantError(t, fmt.Sprintf("chat %q", chat), code, resp, 400, "invalid chat")
 	}
 
+	for i, label := range []string{"Ops – prod alerts", "Équipe 🚨 on-call"} {
+		code, resp := b.call(t, "POST", p, body(fmt.Sprintf("-10055%d0", i), label), b.admin)
+		if code != 201 {
+			t.Errorf("label %q = %d %s, want 201", label, code, resp)
+		}
+	}
 	emoji80 := strings.Repeat("😀", 80)
 	code, resp = b.call(t, "POST", p, body("-100555", emoji80), b.admin)
 	if code != 201 {
 		t.Errorf("80-emoji label = %d %s", code, resp)
 	}
-	for _, label := range []string{strings.Repeat("😀", 81), strings.Repeat("a", 81), "", "   ", "\t\n "} {
+	for _, label := range []string{strings.Repeat("😀", 81), strings.Repeat("a", 81), "", "   ", "\t\n ",
+		"a\u0000b", "a\nb", "a\tb", "\u0085", "Ops\r", "x\u007f"} {
 		code, resp := b.call(t, "POST", p, body("-100556", label), b.admin)
 		wantError(t, fmt.Sprintf("label %q", label), code, resp, 400, "invalid label")
 	}

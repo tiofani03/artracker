@@ -171,12 +171,14 @@ export function validateChat(input: string): string | null {
 }
 
 /**
- * 1 to 80 characters. The label is not trimmed: surrounding spaces are accepted as typed,
- * but an all-whitespace label counts as empty.
+ * 1 to 80 characters on one line. The label is not trimmed: surrounding spaces are accepted as
+ * typed, but an all-whitespace label counts as empty. Like the backend, any control character
+ * (NUL, newline, tab, DEL, C1) is rejected.
  */
 export function validateLabel(input: string): string | null {
   if (input.trim() === '') return 'Enter a label.'
   if ([...input].length > 80) return 'Label must be at most 80 characters.'
+  if (/\p{Cc}/u.test(input)) return 'The label cannot contain line breaks, tabs or control characters.'
   return null
 }
 

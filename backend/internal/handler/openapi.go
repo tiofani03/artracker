@@ -708,7 +708,7 @@ var openAPISpecBytes = []byte(`{
       },
       "post": {
         "summary": "Add a Manual Chat Channel (admin, tenant mode)",
-        "description": "Adds a chat delivered through the organisation's own bot. chat is a numeric chat id (^-?[1-9][0-9]{4,19}$) or a public @username (^@[A-Za-z][A-Za-z0-9_]{4,31}$); label is 1 to 80 Unicode code points and not only whitespace. Telegram is not contacted: the channel is saved with chat_type empty (the platform only ever calls sendMessage and getMe).",
+        "description": "Adds a chat delivered through the organisation's own bot. chat is a numeric chat id (^-?[1-9][0-9]{4,19}$) or a public @username (^@[A-Za-z][A-Za-z0-9_]{4,31}$); label is 1 to 80 Unicode code points, not only whitespace, on one line with no control characters. Telegram is not contacted: the channel is saved with chat_type empty (the platform only ever calls sendMessage and getMe).",
         "operationId": "createAlertChannel",
         "tags": ["Alerts"],
         "security": [{ "BearerAuth": [] }],
