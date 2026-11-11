@@ -84,6 +84,7 @@ func (e *APIError) Error() string {
 type Update struct {
 	UpdateID     int64              `json:"update_id"`
 	Message      *Message           `json:"message"`
+	ChannelPost  *Message           `json:"channel_post"`
 	MyChatMember *ChatMemberUpdated `json:"my_chat_member"`
 }
 
@@ -179,6 +180,57 @@ func (t *Telegram) GetUpdates(ctx context.Context, offset int64, timeoutSec int)
 		return nil, fmt.Errorf("telegram: decode getUpdates: %w", err)
 	}
 	return ups, nil
+}
+
+// DiscoveredChat is a Telegram chat observed from recent bot updates.
+type DiscoveredChat struct {
+	ID       int64  `json:"id"`
+	ChatID   string `json:"chat_id"`
+	Title    string `json:"title"`
+	Type     string `json:"type"`
+	Username string `json:"username,omitempty"`
+}
+
+// DiscoverChats queries recent updates to find chats the bot has interacted with.
+func (t *Telegram) DiscoverChats(ctx context.Context) ([]DiscoveredChat, error) {
+	ups, err := t.GetUpdates(ctx, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[int64]bool)
+	var chats []DiscoveredChat
+	for _, u := range ups {
+		var c *Chat
+		if u.Message != nil {
+			c = &u.Message.Chat
+		} else if u.ChannelPost != nil {
+			c = &u.ChannelPost.Chat
+		} else if u.MyChatMember != nil {
+			c = &u.MyChatMember.Chat
+		}
+		if c == nil || c.ID == 0 || seen[c.ID] {
+			continue
+		}
+		seen[c.ID] = true
+		title := c.Title
+		if title == "" {
+			if c.FirstName != "" {
+				title = c.FirstName
+			} else if c.Username != "" {
+				title = "@" + c.Username
+			} else {
+				title = fmt.Sprintf("Chat %d", c.ID)
+			}
+		}
+		chats = append(chats, DiscoveredChat{
+			ID:       c.ID,
+			ChatID:   strconv.FormatInt(c.ID, 10),
+			Title:    title,
+			Type:     c.Type,
+			Username: c.Username,
+		})
+	}
+	return chats, nil
 }
 
 func (t *Telegram) call(ctx context.Context, httpMethod, method string, q url.Values, body []byte) (json.RawMessage, error) {

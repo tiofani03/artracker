@@ -19,8 +19,8 @@ export function stripWorkspaceParams(search: string): string {
   return rest ? `?${rest}` : ''
 }
 
-export type SettingsTab = 'keys' | 'team' | 'replay'
-const SETTINGS_TABS: readonly SettingsTab[] = ['keys', 'team', 'replay']
+export type SettingsTab = 'keys' | 'team' | 'bot' | 'replay'
+const SETTINGS_TABS: readonly SettingsTab[] = ['keys', 'team', 'bot', 'replay']
 
 /** The Settings tab a link asks for (?tab=team); the API keys tab when absent or unknown. */
 export function initialSettingsTab(search: string): SettingsTab {

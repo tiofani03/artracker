@@ -251,11 +251,26 @@ export type AlertLinkCode = {
   expires_at: string
 }
 
+export type DiscoveredChat = {
+  id: number
+  chat_id: string
+  title: string
+  type: string
+  username?: string
+}
+
+export type DiscoveredChatsResponse = {
+  bot_username: string
+  chats: DiscoveredChat[]
+}
+
 export const alertApi = {
   rules: (projectId: number) => request<{ items: AlertRule[] }>(`/projects/${projectId}/alerts/rules`),
   patchRule: (projectId: number, kind: AlertRuleKind, body: AlertRulePatch) =>
     request<AlertRule>(`/projects/${projectId}/alerts/rules/${kind}`, { method: 'PATCH', body: JSON.stringify(body) }),
   channels: (projectId: number) => request<AlertChannelsResponse>(`/projects/${projectId}/alerts/channels`),
+  discoverChats: (projectId: number) =>
+    request<DiscoveredChatsResponse>(`/projects/${projectId}/alerts/channels/discover`),
   createLinkCode: (projectId: number) => post<AlertLinkCode>(`/projects/${projectId}/alerts/channels/link-code`),
   setChannelEnabled: (projectId: number, channelId: number, enabled: boolean) =>
     request<AlertChannel>(`/projects/${projectId}/alerts/channels/${channelId}`, {

@@ -89,6 +89,7 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Get("/projects/:projectID/alerts/rules", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListAlertRules)
 	api.Patch("/projects/:projectID/alerts/rules/:kind", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.UpdateAlertRule)
 	api.Get("/projects/:projectID/alerts/channels", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListAlertChannels)
+	api.Get("/projects/:projectID/alerts/channels/discover", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.DiscoverAlertChats)
 	api.Post("/projects/:projectID/alerts/channels", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.CreateAlertChannel)
 	api.Post("/projects/:projectID/alerts/channels/link-code", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.CreateAlertLinkCode)
 	api.Patch("/projects/:projectID/alerts/channels/:channelID", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.UpdateAlertChannel)

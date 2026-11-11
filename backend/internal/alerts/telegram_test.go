@@ -272,3 +272,32 @@ type errRecorder struct {
 
 func (r *errRecorder) Errorf(string, ...any) { r.mu.Lock(); r.n++; r.mu.Unlock() }
 func (r *errRecorder) count() int            { r.mu.Lock(); defer r.mu.Unlock(); return r.n }
+
+func TestDiscoverChats(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"ok": true,
+			"result": [
+				{"update_id": 1, "message": {"chat": {"id": -10012345, "title": "Dev Team", "type": "supergroup"}}},
+				{"update_id": 2, "message": {"chat": {"id": -10012345, "title": "Dev Team", "type": "supergroup"}}},
+				{"update_id": 3, "my_chat_member": {"chat": {"id": 999888, "first_name": "Tio", "type": "private"}}}
+			]
+		}`))
+	}))
+	defer srv.Close()
+
+	chats, err := NewTelegram(testToken, srv.URL, nil).DiscoverChats(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chats) != 2 {
+		t.Fatalf("expected 2 unique chats, got %d", len(chats))
+	}
+	if chats[0].ID != -10012345 || chats[0].Title != "Dev Team" || chats[0].Type != "supergroup" {
+		t.Errorf("unexpected chat 0: %+v", chats[0])
+	}
+	if chats[1].ID != 999888 || chats[1].Title != "Tio" || chats[1].Type != "private" {
+		t.Errorf("unexpected chat 1: %+v", chats[1])
+	}
+}

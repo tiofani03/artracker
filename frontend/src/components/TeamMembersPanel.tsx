@@ -151,9 +151,9 @@ export default function TeamMembersPanel({
       <section className="dash-card dash-card--compact">
         <div className="dash-card__head">
           <div>
-            <h2 className="dash-card__title">Team Members</h2>
+            <h2 className="dash-card__title">Team Collaborators</h2>
             <p className="dash-card__desc">
-              Collaborators who have access to projects and telemetry in <strong>{org.name}</strong>.
+              Users with access to projects and telemetry in <strong>{org.name}</strong>.
             </p>
           </div>
           {canManage && (
@@ -165,17 +165,17 @@ export default function TeamMembersPanel({
                 setShowInviteModal(true)
               }}
             >
-              + Invite Member
+              + Invite Teammate
             </button>
           )}
         </div>
 
         {loading ? (
-          <p className="dash-empty" style={{ padding: '2rem 1rem' }}>
-            Loading members…
+          <p className="dash-empty" style={{ padding: 'var(--space-xl) var(--space-md)' }}>
+            Loading collaborators…
           </p>
         ) : members.length === 0 ? (
-          <p className="dash-empty" style={{ padding: '2rem 1rem' }}>
+          <p className="dash-empty" style={{ padding: 'var(--space-xl) var(--space-md)' }}>
             No members in this organization yet.
           </p>
         ) : (
@@ -183,46 +183,34 @@ export default function TeamMembersPanel({
             <table className="dash-table">
               <thead>
                 <tr>
-                  <th>Member</th>
+                  <th>Collaborator</th>
                   <th>Role</th>
                   <th>Joined</th>
-                  {canManage && <th style={{ textAlign: 'right' }}>Actions</th>}
+                  {canManage && <th className="team-action-cell">Actions</th>}
                 </tr>
               </thead>
               <tbody>
                 {members.map((m) => {
                   return (
                     <tr key={m.user_id}>
-                      <td data-label="Member">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
+                      <td data-label="Collaborator">
+                        <div className="team-user-cell">
                           {m.avatar_url ? (
                             <img
                               src={m.avatar_url}
                               alt=""
-                              style={{ width: 28, height: 28, borderRadius: '50%' }}
+                              className="team-avatar"
                             />
                           ) : (
-                            <span
-                              style={{
-                                width: 28,
-                                height: 28,
-                                borderRadius: '50%',
-                                background: 'var(--color-paper-3)',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontSize: '0.75rem',
-                                fontWeight: 600,
-                              }}
-                            >
+                            <span className="team-avatar team-avatar--fallback">
                               {(m.name || m.email)[0].toUpperCase()}
                             </span>
                           )}
-                          <div>
-                            <strong style={{ display: 'block', color: 'var(--color-ink)' }}>
+                          <div className="team-member-info">
+                            <strong className="team-member-name">
                               {m.name || m.email}
                             </strong>
-                            <span className="dash-cell-sub" style={{ fontSize: '0.75rem' }}>
+                            <span className="team-member-email">
                               {m.email}
                             </span>
                           </div>
@@ -230,7 +218,7 @@ export default function TeamMembersPanel({
                       </td>
                       <td data-label="Role">
                         {isOwner && m.role !== 'owner' ? (
-                          <div style={{ minWidth: 104, maxWidth: 120 }}>
+                          <div className="team-role-wrap">
                             <CustomSelect<'admin' | 'member' | 'viewer'>
                               size="sm"
                               options={[
@@ -261,12 +249,11 @@ export default function TeamMembersPanel({
                         <span className="dash-code">{formatAgo(m.joined_at)}</span>
                       </td>
                       {canManage && (
-                        <td data-label="Actions" style={{ textAlign: 'right' }}>
+                        <td data-label="Actions" className="team-action-cell">
                           {m.role !== 'owner' && (
                             <button
                               type="button"
                               className="dash-btn"
-                              style={{ color: 'var(--color-error)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
                               onClick={() => setMemberToRemove(m)}
                             >
                               Remove
@@ -293,6 +280,7 @@ export default function TeamMembersPanel({
                 Invite links awaiting acceptance via Google SSO.
               </p>
             </div>
+            <span className="console-nav__badge">{invitations.length} Pending</span>
           </div>
 
           <div className="dash-table-wrap">
@@ -303,7 +291,7 @@ export default function TeamMembersPanel({
                   <th>Role</th>
                   <th>Invited By</th>
                   <th>Expires</th>
-                  <th style={{ textAlign: 'right' }}>Action</th>
+                  <th className="team-action-cell">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -321,7 +309,7 @@ export default function TeamMembersPanel({
                     <td data-label="Expires">
                       <span className="dash-code">{formatExpiry(inv.expires_at)}</span>
                     </td>
-                    <td data-label="Action" style={{ textAlign: 'right' }}>
+                    <td data-label="Action" className="team-action-cell">
                       <button
                         type="button"
                         className="dash-btn"
@@ -347,116 +335,109 @@ export default function TeamMembersPanel({
           setCreatedInviteUrl(null)
         }}
       >
-          {createdInviteUrl ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div
-                style={{
-                  padding: '0.875rem',
-                  background: 'var(--color-accent-wash)',
-                  borderRadius: 'var(--radius-input)',
-                  border: '1px solid var(--color-accent)',
-                }}
-              >
-                <strong style={{ display: 'block', color: 'var(--color-ink)', marginBottom: '0.25rem' }}>
-                  ✓ Invitation link generated!
-                </strong>
-                <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--color-ink-2)' }}>
-                  Share this link with your teammate. When they sign in with Google, they will automatically join <strong>{org.name}</strong> as a <strong>{inviteRole}</strong>.
-                </p>
-              </div>
+        {createdInviteUrl ? (
+          <div className="dash-form">
+            <div className="team-invite-card">
+              <strong className="team-invite-card__title">
+                ✓ Invitation link generated!
+              </strong>
+              <p className="team-invite-card__desc">
+                Share this link with your teammate. When they sign in with Google SSO, they will automatically join <strong>{org.name}</strong> as a <strong>{inviteRole}</strong>.
+              </p>
+            </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.375rem' }}>
-                  Invite Link (Valid for 7 days)
-                </label>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <input
-                    type="text"
-                    readOnly
-                    value={createdInviteUrl}
-                    className="dash-input"
-                    style={{ flex: 1, fontFamily: 'monospace', fontSize: '0.8125rem' }}
-                    onClick={(e) => (e.target as HTMLInputElement).select()}
-                  />
-                  <button
-                    type="button"
-                    className="dash-btn dash-btn--primary"
-                    onClick={() => void handleCopyLink(createdInviteUrl)}
-                  >
-                    {copiedLink ? 'Copied!' : 'Copy Link'}
-                  </button>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+            <div className="alert-form-field">
+              <label htmlFor="invite-generated-link" className="alert-form-field__label">
+                Invite Link (Valid for 7 days)
+              </label>
+              <div className="team-invite-input-row">
+                <input
+                  id="invite-generated-link"
+                  type="text"
+                  readOnly
+                  value={createdInviteUrl}
+                  className="dash-input"
+                  style={{ flex: 1 }}
+                  onClick={(e) => (e.target as HTMLInputElement).select()}
+                />
                 <button
                   type="button"
-                  className="dash-btn"
-                  onClick={() => {
-                    setShowInviteModal(false)
-                    setCreatedInviteUrl(null)
-                  }}
+                  className="dash-btn dash-btn--primary"
+                  onClick={() => void handleCopyLink(createdInviteUrl)}
                 >
-                  Done
+                  {copiedLink ? 'Copied!' : 'Copy Link'}
                 </button>
               </div>
             </div>
-          ) : (
-            <form onSubmit={handleCreateInvite} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div>
-                <label htmlFor="invite-email" style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.375rem' }}>
-                  Teammate Email Address
-                </label>
-                <input
-                  id="invite-email"
-                  type="email"
-                  required
-                  placeholder="name@company.com"
-                  className="dash-input"
-                  style={{ width: '100%' }}
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                />
-              </div>
 
-              <div>
-                <label htmlFor="invite-role" style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.375rem' }}>
-                  Assign Role
-                </label>
-                <CustomSelect<'admin' | 'member' | 'viewer'>
-                  id="invite-role"
-                  size="md"
-                  options={[
-                    { value: 'member', label: 'Member', meta: 'Can manage issues, funnels, and recordings' },
-                    { value: 'admin', label: 'Admin', meta: 'Full project & SDK key management' },
-                    { value: 'viewer', label: 'Viewer', meta: 'Read-only access to charts & telemetry' },
-                  ]}
-                  value={inviteRole}
-                  onChange={(val) => setInviteRole(val)}
-                  ariaLabel="Assign role"
-                />
-              </div>
+            <div className="dash-actions">
+              <button
+                type="button"
+                className="dash-btn"
+                onClick={() => {
+                  setShowInviteModal(false)
+                  setCreatedInviteUrl(null)
+                }}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleCreateInvite} className="dash-form">
+            <div className="alert-form-field">
+              <label htmlFor="invite-email" className="alert-form-field__label">
+                Teammate Email Address
+              </label>
+              <input
+                id="invite-email"
+                type="email"
+                required
+                placeholder="name@company.com"
+                className="dash-input"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+              />
+            </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
-                <button
-                  type="button"
-                  className="dash-btn"
-                  onClick={() => setShowInviteModal(false)}
-                  disabled={inviting}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="dash-btn dash-btn--primary"
-                  disabled={inviting || !inviteEmail.trim()}
-                >
-                  {inviting ? 'Generating…' : 'Generate Invite Link'}
-                </button>
-              </div>
-            </form>
-          )}
-        </Modal>
+            <div className="alert-form-field">
+              <label htmlFor="invite-role" className="alert-form-field__label">
+                Assign Role
+              </label>
+              <CustomSelect<'admin' | 'member' | 'viewer'>
+                id="invite-role"
+                size="md"
+                options={[
+                  { value: 'member', label: 'Member', meta: 'Can view issues, telemetry, and replays' },
+                  { value: 'admin', label: 'Admin', meta: 'Manage projects, API keys, and invites' },
+                  { value: 'viewer', label: 'Viewer', meta: 'Read-only access to charts & telemetry' },
+                ]}
+                value={inviteRole}
+                onChange={(val) => setInviteRole(val)}
+                ariaLabel="Assign role"
+              />
+            </div>
+
+            <div className="dash-actions">
+              <button
+                type="button"
+                className="dash-btn"
+                onClick={() => setShowInviteModal(false)}
+                disabled={inviting}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="dash-btn dash-btn--primary"
+                disabled={inviting || !inviteEmail.trim()}
+              >
+                {inviting ? 'Generating…' : 'Generate Invite Link'}
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
 
       {/* Modal Remove Member Confirmation */}
       <Modal
@@ -465,11 +446,11 @@ export default function TeamMembersPanel({
         onClose={() => setMemberToRemove(null)}
       >
         {memberToRemove && (
-          <>
-            <p style={{ margin: '0 0 1.25rem 0', fontSize: '0.875rem' }}>
+          <div className="dash-form">
+            <p className="dash-warning" role="alert">
               Are you sure you want to remove <strong>{memberToRemove.name || memberToRemove.email}</strong> from <strong>{org.name}</strong>? They will immediately lose access to all projects in this organization.
             </p>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+            <div className="dash-actions">
               <button
                 type="button"
                 className="dash-btn"
@@ -480,15 +461,14 @@ export default function TeamMembersPanel({
               </button>
               <button
                 type="button"
-                className="dash-btn"
-                style={{ background: 'var(--color-error)', color: '#fff', borderColor: 'transparent' }}
+                className="dash-btn dash-btn--danger"
                 onClick={() => void handleRemoveMember()}
                 disabled={removing}
               >
                 {removing ? 'Removing…' : 'Remove Member'}
               </button>
             </div>
-          </>
+          </div>
         )}
       </Modal>
     </div>
