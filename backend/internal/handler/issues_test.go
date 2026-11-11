@@ -392,3 +392,41 @@ func TestIssueEventEnvironmentStored(t *testing.T) {
 		t.Fatalf("environment = %q", got)
 	}
 }
+
+func TestIssueServiceWiresAlerterOnlyWhenConfigured(t *testing.T) {
+	env := newIssueEnv(t)
+	ctx := context.Background()
+	if _, err := env.pool.Exec(ctx, alerts.SeedRulesSQL, env.projectID); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Env: "development", JWTSecret: testSecret}
+	h := New(env.pool, cfg, auth.NewIssuer(testSecret, time.Hour), map[string]OAuthProvider{})
+
+	plain := h.IssueService()
+	if plain.alerts != nil {
+		t.Fatalf("alerter = %#v, want nil interface without WithAlerts", plain.alerts)
+	}
+	if err := plain.ProcessRows(ctx, []ingest.TelemetryRow{signalRow(env.projectID)}); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := env.pool.QueryRow(ctx, `SELECT count(*) FROM alert_incidents WHERE project_id=$1`, env.projectID).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("incidents without alerter = %d (err %v)", n, err)
+	}
+
+	if got := h.WithAlerts(alerts.NewService(env.pool, nil, "http://app")); got != h {
+		t.Fatal("WithAlerts must return the receiver")
+	}
+	wired := h.IssueService()
+	if wired.alerts == nil {
+		t.Fatal("alerter not wired after WithAlerts")
+	}
+	row := errorRow(env.projectID, "RangeError: other", "at bar (app.min.js:2:2)")
+	row.Environment = "production"
+	if err := wired.ProcessRows(ctx, []ingest.TelemetryRow{row}); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.pool.QueryRow(ctx, `SELECT count(*) FROM alert_incidents WHERE project_id=$1 AND status='firing'`, env.projectID).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("firing incidents = %d (err %v), want 1", n, err)
+	}
+}

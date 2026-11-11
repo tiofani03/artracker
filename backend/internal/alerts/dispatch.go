@@ -277,7 +277,7 @@ func (s *Service) deliver(ctx context.Context, now time.Time, projectID int64, c
 		case err == nil:
 			d.sent = true
 			kept = append(kept, ch)
-			if _, err := s.db.Exec(ctx, `UPDATE alert_channels SET last_sent_at=$2, last_error='' WHERE id=$1`, ch.id, now); err != nil {
+			if err := s.markChannelSent(ctx, ch.id, now); err != nil {
 				return d, err
 			}
 		case errors.As(err, &ra):
@@ -286,7 +286,7 @@ func (s *Service) deliver(ctx context.Context, now time.Time, projectID int64, c
 			return d, nil
 		case errors.Is(err, ErrChatForbidden):
 			slog.Warn("alerts: channel disabled", "project_id", projectID, "channel_id", ch.id, "error_class", errClass(err))
-			if _, err := s.db.Exec(ctx, `UPDATE alert_channels SET enabled=false, disabled_reason=$2 WHERE id=$1`, ch.id, forbiddenReason); err != nil {
+			if err := s.disableChannelForbidden(ctx, ch.id); err != nil {
 				return d, err
 			}
 		default:
@@ -295,13 +295,30 @@ func (s *Service) deliver(ctx context.Context, now time.Time, projectID int64, c
 			}
 			slog.Warn("alerts: telegram send failed", "project_id", projectID, "channel_id", ch.id, "error_class", errClass(err))
 			kept = append(kept, ch)
-			if _, err := s.db.Exec(ctx, `UPDATE alert_channels SET last_error=$2 WHERE id=$1`, ch.id, truncateRunes(err.Error(), maxLastErrorLen)); err != nil {
+			if err := s.markChannelFailed(ctx, ch.id, err); err != nil {
 				return d, err
 			}
 		}
 	}
 	*chans = kept
 	return d, nil
+}
+
+// Channel bookkeeping shared by dispatch and SendTest.
+
+func (s *Service) markChannelSent(ctx context.Context, channelID int64, now time.Time) error {
+	_, err := s.db.Exec(ctx, `UPDATE alert_channels SET last_sent_at=$2, last_error='' WHERE id=$1`, channelID, now)
+	return err
+}
+
+func (s *Service) markChannelFailed(ctx context.Context, channelID int64, sendErr error) error {
+	_, err := s.db.Exec(ctx, `UPDATE alert_channels SET last_error=$2 WHERE id=$1`, channelID, truncateRunes(sendErr.Error(), maxLastErrorLen))
+	return err
+}
+
+func (s *Service) disableChannelForbidden(ctx context.Context, channelID int64) error {
+	_, err := s.db.Exec(ctx, `UPDATE alert_channels SET enabled=false, disabled_reason=$2 WHERE id=$1`, channelID, forbiddenReason)
+	return err
 }
 
 // migrateChannel points a channel at its supergroup's new chat id. When the

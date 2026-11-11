@@ -80,6 +80,16 @@ Anyone can create an organization and becomes its `owner`. Non-members get `404`
 
 Handler and migration tests need Postgres: `TEST_DATABASE_URL=postgres://artracker:artracker@localhost:5433/artracker?sslmode=disable make test` (skipped when unset; CI provides it).
 
+## Alerts (Telegram)
+
+Artracker can notify a Telegram chat when a project's errors need attention.
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) and set `TELEGRAM_BOT_TOKEN` (one bot per deployment).
+2. Run exactly **one** API instance as the alerts worker. It polls Telegram and evaluates alert rules. Set `ALERTS_WORKER=false` on every extra replica (the default is `true`).
+3. In the dashboard open **Alerts** for a project and use the connect link to add the bot to a group or a private chat, then send a test message.
+
+Alert kinds: **new issue** (a never-seen error group), **regression** (a resolved issue occurs again) and **issue spike** (an issue's event rate jumps well above its recent baseline). Without a token incidents are still recorded in the dashboard, but no Telegram message is sent.
+
 ## Images & deploy
 
 Same flow as portalsafekamu: images are built in CI and published to Docker

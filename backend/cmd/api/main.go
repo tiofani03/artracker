@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 
+	"github.com/tiofani03/artracker/backend/internal/alerts"
 	"github.com/tiofani03/artracker/backend/internal/analytics"
 	"github.com/tiofani03/artracker/backend/internal/auth"
 	"github.com/tiofani03/artracker/backend/internal/config"
@@ -155,6 +158,39 @@ func main() {
 		WithIngest(ingestSvc).
 		WithAnalytics(analyticsSvc).
 		WithReplayStore(replayStore)
+
+	alertsCtx, stopAlerts := context.WithCancel(context.Background())
+	defer stopAlerts()
+	var alertsWG sync.WaitGroup
+	if pool != nil {
+		// Typed-nil guard: n and src stay nil interfaces unless Telegram works.
+		var n alerts.Notifier
+		var src alerts.UpdateSource
+		var botName string
+		if cfg.TelegramBotToken != "" {
+			tg := alerts.NewTelegram(cfg.TelegramBotToken, cfg.TelegramAPIBase, nil)
+			meCtx, meCancel := context.WithTimeout(ctx, 10*time.Second)
+			name, err := tg.GetMe(meCtx)
+			meCancel()
+			if err != nil {
+				log.Warn("telegram getMe failed; alerts will not be sent to Telegram", "error_class", fmt.Sprintf("%T", err))
+			} else {
+				n, src, botName = tg, tg, name
+				log.Info("telegram alerts configured", "bot", name)
+			}
+		}
+		svc := alerts.NewService(pool, n, cfg.PublicURL).WithBotUsername(botName)
+		h.WithAlerts(svc)
+		if cfg.AlertsWorker {
+			alertsWG.Add(1)
+			go func() {
+				defer alertsWG.Done()
+				svc.Run(alertsCtx, src)
+			}()
+		} else {
+			log.Info("ALERTS_WORKER=false: this instance does not poll Telegram or evaluate alerts")
+		}
+	}
 	ingestSvc.WithIssueProcessor(h.IssueService())
 	app.Get("/healthz", h.Health)
 	app.Get("/auth/callback/:provider", h.OAuthCallback)
@@ -182,5 +218,7 @@ func main() {
 	if err := analyticsSvc.Shutdown(shutdownCtx); err != nil {
 		log.Error("analytics drain failed", "err", err)
 	}
+	stopAlerts()
+	alertsWG.Wait()
 	log.Info("bye")
 }

@@ -53,6 +53,12 @@ type Config struct {
 	ReplayProxyUpload   bool
 	// ReplayLocalDir stores replay chunks on disk when R2 is not configured (development only).
 	ReplayLocalDir string
+
+	// Alerts. TelegramBotToken is a secret: never log it. AlertsWorker gates
+	// Telegram polling and alert evaluation; run it on exactly one instance.
+	TelegramBotToken string
+	TelegramAPIBase  string
+	AlertsWorker     bool
 }
 
 // Placeholders shipped in .env.example / used as the dev default; never valid in production.
@@ -102,6 +108,10 @@ func Load() Config {
 		ReplayMaxChunkBytes: int64(envInt("REPLAY_MAX_CHUNK_BYTES", 5242880)),
 		ReplayProxyUpload:   parseBool(env("REPLAY_PROXY_UPLOAD", "true")),
 		ReplayLocalDir:      env("REPLAY_LOCAL_DIR", ""),
+
+		TelegramBotToken: env("TELEGRAM_BOT_TOKEN", ""),
+		TelegramAPIBase:  env("TELEGRAM_API_BASE", "https://api.telegram.org"),
+		AlertsWorker:     parseBool(env("ALERTS_WORKER", "true")),
 	}
 
 	if cfg.R2Endpoint == "" && cfg.R2AccountID != "" {

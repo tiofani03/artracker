@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/tiofani03/artracker/backend/internal/alerts"
 	"github.com/tiofani03/artracker/backend/internal/analytics"
 	"github.com/tiofani03/artracker/backend/internal/auth"
 	"github.com/tiofani03/artracker/backend/internal/config"
@@ -24,6 +25,7 @@ type Handler struct {
 	ingestSvc    *ingest.Service
 	analyticsSvc *analytics.Service
 	replayStore  storage.ReplayStore
+	alertsSvc    *alerts.Service
 	replaySwitch replaySwitchCache
 
 	// in-memory artwork store, used only when the database is disabled (SKIP_DB)
@@ -61,6 +63,12 @@ func New(pool *pgxpool.Pool, cfg config.Config, issuer *auth.Issuer, providers m
 // WithIngest replaces the ingest service (useful for custom sinks or test mocks).
 func (h *Handler) WithIngest(svc *ingest.Service) *Handler {
 	h.ingestSvc = svc
+	return h
+}
+
+// WithAlerts sets the alerts service that issue ingestion reports to.
+func (h *Handler) WithAlerts(s *alerts.Service) *Handler {
+	h.alertsSvc = s
 	return h
 }
 

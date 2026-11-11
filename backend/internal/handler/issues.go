@@ -462,7 +462,11 @@ func (h *Handler) IssueService() *IssueService {
 	if h.db == nil {
 		return &IssueService{}
 	}
-	return &IssueService{db: h.db}
+	svc := &IssueService{db: h.db}
+	if h.alertsSvc != nil { // never store a typed-nil pointer in the interface
+		svc.WithAlerter(h.alertsSvc)
+	}
+	return svc
 }
 
 // ProcessRows upserts issues and records occurrences for error/fatal logs.
