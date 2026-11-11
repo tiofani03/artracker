@@ -350,7 +350,7 @@ var openAPISpecBytes = []byte(`{
           { "name": "sessionID", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
-          "200": { "description": "{ interval_ms, device{ram_mb,cores,refresh_hz}, metrics[], samples[{t,cpu,mem_mb,fps,jank,frozen,threads,battery,thermal}], downsampled }" },
+          "200": { "description": "{ interval_ms, device{ram_mb,storage_mb,os_version,cores,refresh_hz}, metrics[], samples[{t,cpu,mem_mb,fps,jank,frozen,threads,battery,thermal,ram_free_mb,storage_free_mb,net}], downsampled }" },
           "400": { "description": "Invalid session id" }
         }
       }

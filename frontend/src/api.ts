@@ -574,6 +574,8 @@ export type ReplaySessionDetailResponse = {
   timeline_events: TelemetryEvent[]
 }
 
+export type PerfNet = 'wifi' | 'cellular' | 'ethernet' | 'none'
+
 export type PerfThermal = 'nominal' | 'fair' | 'serious' | 'critical'
 
 /** One profiling reading; absent metrics were not measured (never 0). `t` is epoch ms. */
@@ -587,11 +589,15 @@ export type PerfSample = {
   threads?: number
   battery?: number
   thermal?: PerfThermal
+  /** Free device RAM / free disk space in MB. */
+  ram_free_mb?: number
+  storage_free_mb?: number
+  net?: PerfNet
 }
 
 export type SessionPerfResponse = {
   interval_ms: number
-  device: { ram_mb?: number; cores?: number; refresh_hz?: number }
+  device: { ram_mb?: number; storage_mb?: number; os_version?: string; cores?: number; refresh_hz?: number }
   metrics: string[]
   samples: PerfSample[]
   downsampled: boolean

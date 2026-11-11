@@ -20,6 +20,7 @@ const (
 	perfMaxIntervalMs = 10_000
 	perfMaxMemMB      = 1_048_576
 	perfMaxFPS        = 240
+	perfMaxStorageMB  = 100_000_000
 )
 
 // ErrInvalidPerf is returned for any perf item that does not satisfy the wire contract.
@@ -36,6 +37,11 @@ type PerfSample struct {
 	Threads *int     `json:"threads,omitempty"`
 	Battery *float64 `json:"battery,omitempty"`
 	Thermal string   `json:"thermal,omitempty"`
+	// RAMFreeMB is the device's free RAM and StorageFreeMB its free disk space, both in MB.
+	RAMFreeMB     *float64 `json:"ram_free_mb,omitempty"`
+	StorageFreeMB *float64 `json:"storage_free_mb,omitempty"`
+	// Net is the active connection: wifi, cellular, ethernet or none.
+	Net string `json:"net,omitempty"`
 }
 
 // PerfDevice describes the device the samples came from.
@@ -43,6 +49,9 @@ type PerfDevice struct {
 	RAMMB     int     `json:"ram_mb,omitempty"`
 	Cores     int     `json:"cores,omitempty"`
 	RefreshHz float64 `json:"refresh_hz,omitempty"`
+	// OSVersion is the OS release string (e.g. "17.4", "14"); StorageMB the total disk size in MB.
+	OSVersion string `json:"os_version,omitempty"`
+	StorageMB int    `json:"storage_mb,omitempty"`
 }
 
 // PerfBatchRow is a validated perf item ready to be stored in session_perf_batches.
@@ -67,6 +76,10 @@ type perfAttributes struct {
 }
 
 var validThermal = map[string]bool{"nominal": true, "fair": true, "serious": true, "critical": true}
+
+var validNet = map[string]bool{"wifi": true, "cellular": true, "ethernet": true, "none": true}
+
+const perfMaxOSVersionLen = 32
 
 // ParsePerfItem validates a perf item and normalizes it: samples sorted by T, invalid samples dropped,
 // values clamped, unknown keys discarded (the typed structs only re-marshal known fields).
@@ -99,6 +112,11 @@ func ParsePerfItem(projectID int64, receivedAt time.Time, item RawItem) (PerfBat
 		s.MemMB = clampFloat(s.MemMB, 0, perfMaxMemMB)
 		s.FPS = clampFloat(s.FPS, 0, perfMaxFPS)
 		s.Battery = clampFloat(s.Battery, 0, 1)
+		s.RAMFreeMB = clampFloat(s.RAMFreeMB, 0, perfMaxMemMB)
+		s.StorageFreeMB = clampFloat(s.StorageFreeMB, 0, perfMaxStorageMB)
+		if !validNet[s.Net] {
+			s.Net = ""
+		}
 		s.Jank = clampInt(s.Jank)
 		s.Frozen = clampInt(s.Frozen)
 		s.Threads = clampInt(s.Threads)
@@ -111,6 +129,14 @@ func ParsePerfItem(projectID int64, receivedAt time.Time, item RawItem) (PerfBat
 		return PerfBatchRow{}, fmt.Errorf("%w: no sample has a positive t", ErrInvalidPerf)
 	}
 	sort.SliceStable(samples, func(i, j int) bool { return samples[i].T < samples[j].T })
+
+	attrs.Device.OSVersion = truncateStr(strings.TrimSpace(attrs.Device.OSVersion), perfMaxOSVersionLen)
+	if attrs.Device.RAMMB < 0 {
+		attrs.Device.RAMMB = 0
+	}
+	if attrs.Device.StorageMB < 0 {
+		attrs.Device.StorageMB = 0
+	}
 
 	platform := attrs.Platform
 	if platform != "android" && platform != "ios" {
