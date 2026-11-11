@@ -90,6 +90,8 @@ Artracker can notify a Telegram chat when a project's errors need attention.
 
 Alert kinds: **new issue** (a never-seen error group), **regression** (a resolved issue occurs again) and **issue spike** (an issue's event rate jumps well above its recent baseline). Without a token incidents are still recorded in the dashboard, but no Telegram message is sent.
 
+Rules default to the environment `production` and match the environment string your SDK reports exactly (case-sensitive): an app reporting `prod` or `Production` gets no alerts from a `production` rule. Clear a rule's environment field to alert on every environment, or set it to your SDK's value. An issue is "new" the first time it is seen in any environment; one first seen in staging will not raise a new-issue alert when it later appears in production.
+
 ## Images & deploy
 
 Same flow as portalsafekamu: images are built in CI and published to Docker
