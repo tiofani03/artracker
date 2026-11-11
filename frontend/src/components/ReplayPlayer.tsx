@@ -63,6 +63,23 @@ export type DeviceMode = 'auto' | 'web' | 'ios' | 'android'
 /** A phone chassis may be enlarged up to this factor to fill a tall stage. */
 const PHONE_MAX_SCALE = 1.6
 
+/** Upper bound for a screenshot stage's height; taller chassis are scaled down by the stage fit. */
+const SCREEN_MAX_HEIGHT = 900
+
+/** Aspect of the last screenshot stage shown, and the fallback (a modern tall phone) for a first-ever load. */
+let lastScreenRatio: { w: number; h: number } = { w: 1080, h: 2340 }
+
+/** Parses a "1080x2400" style device screen string; null when it is not that shape. */
+function parseDeviceScreen(raw: unknown): { w: number; h: number } | null {
+  if (typeof raw !== 'string') return null
+  const m = /^\s*(\d{2,5})\s*[x×*]\s*(\d{2,5})\s*$/i.exec(raw)
+  if (!m) return null
+  const a = Number(m[1])
+  const b = Number(m[2])
+  // device_info may list landscape (w>h) for a phone; the chassis is portrait, so order by the longer side
+  return { w: Math.min(a, b), h: Math.max(a, b) }
+}
+
 /** rrweb-player is a Svelte component; its typings omit the Svelte instance API. */
 type SvelteHandle = { $set?: (props: Record<string, unknown>) => void; $destroy?: () => void }
 
@@ -354,6 +371,20 @@ export default function ReplayPlayer({
       : effectivePlatform === 'android'
         ? 502
         : Math.max(340, Math.min(520, Math.round(stageWidth * 0.5625)))
+
+  // Screenshot stage size, shared by the loading placeholder and the renderer so the chassis never resizes
+  // between phases. Frame ratio when known, else the device-reported or last seen ratio.
+  const isScreenSession = screenSession !== null || model.kind === 'screen'
+  const firstScreenFrame = model.kind === 'screen' ? (model.session.index.frames[0] ?? null) : null
+  if (firstScreenFrame) lastScreenRatio = { w: firstScreenFrame.w, h: firstScreenFrame.h }
+  const screenStagePx = fitScreenStage(
+    firstScreenFrame ?? parseDeviceScreen(session.device_info?.screen) ?? lastScreenRatio,
+    { width: playerWidth, maxHeight: SCREEN_MAX_HEIGHT, minHeight: 120 },
+  )
+
+  // a screenshot session whose first chunk is still being indexed has nothing to show yet
+  const screenPending = screenSession !== null && screenScanning && model.kind === 'none'
+  const isLoadingReplay = loadingDetail || chunkLoading || screenPending
 
   const durationMs = useMemo(() => {
     if (model.kind !== 'none') return Math.max(1000, model.endMs - model.startMs)
@@ -682,7 +713,7 @@ export default function ReplayPlayer({
   }, [menuOpen])
 
   // Scale the device chassis to fit the stage: down when it is short, up (phones only) when it is tall
-  useEffect(() => {
+  useLayoutEffect(() => {
     const platform = effectivePlatform
     const stageEl = stageWrapRef.current
     const fitEl = fitRef.current
@@ -704,7 +735,7 @@ export default function ReplayPlayer({
     ro.observe(stageEl)
     ro.observe(fitEl)
     return () => ro.disconnect()
-  }, [effectivePlatform])
+  }, [effectivePlatform, model.kind, isScreenSession, isLoadingReplay, screenStagePx.height])
 
   // Mount the rrweb player once per web event set; resizes go through $set below (Review Focus #4)
   useEffect(() => {
@@ -883,18 +914,7 @@ export default function ReplayPlayer({
   const notice = fallbackNotice(model)
 
   const renderViewportContent = () => {
-    // a screenshot session whose first chunk is still being indexed has nothing to show yet
-    const screenPending = screenSession !== null && screenScanning && model.kind === 'none'
-    if (loadingDetail || chunkLoading || screenPending) {
-      return (
-        <div className="replay-player__viewport replay-player__state" aria-label="Loading session replay">
-          <div className="replay-loading-spinner" role="status">
-            <div className="replay-spinner-ring" />
-            <div className="replay-spinner-glow" />
-          </div>
-        </div>
-      )
-    }
+    if (isLoadingReplay) return null
 
     // 1. Web DOM Replay (rrweb)
     if (model.kind === 'web') {
@@ -903,10 +923,7 @@ export default function ReplayPlayer({
 
     // 2a. Screenshot replay (artracker-screen-v1): the device's own pixels
     if (model.kind === 'screen') {
-      const stage = fitScreenStage(model.session.index.frames[0] ?? null, {
-        width: playerWidth,
-        maxHeight: playerHeight,
-      })
+      const stage = screenStagePx
       return (
         <ScreenReplayRenderer
           session={model.session}
@@ -1147,10 +1164,18 @@ export default function ReplayPlayer({
 
         {/* OpenReplay Studio Stage Canvas */}
         <div className="or-stage" ref={stageWrapRef}>
+          {isLoadingReplay && (
+            <div className="or-stage__loading" aria-label="Loading session replay">
+              <div className="replay-loading-spinner" role="status">
+                <div className="replay-spinner-ring" />
+                <div className="replay-spinner-glow" />
+              </div>
+            </div>
+          )}
           <div
             className={`or-stage__fit or-stage__fit--${effectivePlatform === 'web' ? 'web' : 'mobile'}`}
             ref={fitRef}
-            style={{ transform: `scale(${fit})` }}
+            style={{ transform: `scale(${fit})`, ...(isLoadingReplay ? { display: 'none' } : null) }}
           >
           {effectivePlatform === 'web' && (
             <div className="or-web-frame">
@@ -1173,7 +1198,7 @@ export default function ReplayPlayer({
           )}
 
           {effectivePlatform === 'ios' && (
-            <div className="or-phone-frame or-phone-frame--ios">
+            <div className={`or-phone-frame or-phone-frame--ios${isScreenSession ? ' or-phone-frame--auto' : ''}`}>
               <div className="or-phone-statusbar">
                 <span title="Recorded device time">{clock}</span>
                 <div className="or-phone-status-icons">
@@ -1198,7 +1223,7 @@ export default function ReplayPlayer({
           )}
 
           {effectivePlatform === 'android' && (
-            <div className="or-phone-frame or-phone-frame--android">
+            <div className={`or-phone-frame or-phone-frame--android${isScreenSession ? ' or-phone-frame--auto' : ''}`}>
               <div className="or-phone-camera-dot" />
               <div className="or-phone-statusbar">
                 <span title="Recorded device time">{clock}</span>
