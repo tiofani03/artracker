@@ -306,7 +306,10 @@ export function normalizeBot(raw: Partial<AlertBot> | null | undefined): AlertBo
   }
 }
 
-/** True for the error an older backend gives for the missing bot endpoint. */
+/**
+ * True for the error an older backend gives for the missing bot endpoint: a bare 404, or
+ * Fiber's unmatched-route message ("Cannot GET /api/v1/...").
+ */
 export function isBotEndpointMissing(err: unknown): boolean {
-  return err instanceof Error && /^404\b/.test(err.message)
+  return err instanceof Error && /^(404\b|Cannot GET )/.test(err.message)
 }

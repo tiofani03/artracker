@@ -116,15 +116,19 @@ func levelFromDB(s string) DetailLevel {
 	return DetailMinimal
 }
 
+// UnconfiguredBot is the view of an organisation without a bot of its own,
+// and of every organisation in shared mode: not configured, minimal detail.
+func UnconfiguredBot() BotView { return BotView{DetailLevel: DetailMinimal} }
+
 // BotStatus reports the organisation's bot. Any member may call it; nothing is
-// decrypted. In shared mode it is the zero view.
+// decrypted. In shared mode it is the unconfigured view.
 func (s *Service) BotStatus(ctx context.Context, orgID int64) (BotView, error) {
 	if s.mode != ModeTenant {
-		return BotView{}, nil
+		return UnconfiguredBot(), nil
 	}
 	v, err := scanBotView(s.db.QueryRow(ctx, `SELECT `+botViewCols+` FROM alert_bots WHERE org_id = $1`, orgID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return BotView{DetailLevel: DetailMinimal}, nil
+		return UnconfiguredBot(), nil
 	}
 	return v, err
 }

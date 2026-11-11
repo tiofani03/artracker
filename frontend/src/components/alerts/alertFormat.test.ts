@@ -465,6 +465,13 @@ describe('legacy backend tolerance', () => {
     expect(isBotEndpointMissing(new Error('404 Not Found'))).toBe(true)
     expect(isBotEndpointMissing(new Error('500 Internal'))).toBe(false)
   })
+  it("also matches Fiber's unmatched-route message from an older backend", () => {
+    expect(isBotEndpointMissing(new Error('Cannot GET /api/v1/orgs/1/alerts/telegram-bot'))).toBe(true)
+    expect(isBotEndpointMissing(new Error('404 Not Found'))).toBe(true)
+    expect(isBotEndpointMissing(new Error('invalid bot token'))).toBe(false)
+    expect(isBotEndpointMissing(new Error('tenant bots are disabled in this deployment'))).toBe(false)
+    expect(isBotEndpointMissing('Cannot GET /x')).toBe(false)
+  })
 })
 
 describe('CHAT_ID_HELP', () => {

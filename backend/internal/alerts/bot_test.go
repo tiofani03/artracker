@@ -391,7 +391,7 @@ func TestSharedModeRejectsBotCalls(t *testing.T) {
 		t.Fatalf("DeleteBot: %v", err)
 	}
 	v, err := s.BotStatus(ctx, 1)
-	if err != nil || v != (BotView{}) {
+	if err != nil || v != (BotView{DetailLevel: DetailMinimal}) {
 		t.Fatalf("BotStatus = %+v, %v", v, err)
 	}
 	if n := len(srv.Requests()); n != 0 {

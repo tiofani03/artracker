@@ -80,11 +80,11 @@ func (h *Handler) alertsMode() alerts.BotMode {
 }
 
 // orgBotJSON reports the organisation's bot in the current mode. In shared
-// mode it is the zero view.
+// mode it is the unconfigured view (minimal detail).
 func (h *Handler) orgBotJSON(ctx context.Context, orgID int64) (botJSON, error) {
 	mode := h.alertsMode()
 	if mode != alerts.ModeTenant {
-		return botJSON{Mode: mode}, nil
+		return botJSON{BotView: alerts.UnconfiguredBot(), Mode: mode}, nil
 	}
 	v, err := h.alertsSvc.BotStatus(ctx, orgID)
 	if err != nil {

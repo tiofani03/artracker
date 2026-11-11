@@ -219,7 +219,7 @@ func (h *Handler) ListAlertChannels(c *fiber.Ctx) error {
 	if h.alertsSvc != nil {
 		tg = fiber.Map{"configured": h.alertsSvc.TelegramConfigured(), "bot_username": h.alertsSvc.BotUsername()}
 	}
-	bot := botJSON{Mode: mode}
+	bot := botJSON{BotView: alerts.UnconfiguredBot(), Mode: mode}
 	if mode == alerts.ModeTenant {
 		orgID, err := h.projectOrg(ctx, projectID)
 		if err != nil {

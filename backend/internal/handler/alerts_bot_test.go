@@ -525,13 +525,13 @@ func TestPutBotErrors(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("shared GET = %d %s", code, body)
 	}
-	if v := decodeBot(t, body); v.Configured || v.Mode != "shared" {
+	if v := decodeBot(t, body); v.Configured || v.Mode != "shared" || v.DetailLevel != "minimal" {
 		t.Fatalf("shared GET = %+v", v)
 	}
 
 	b.h.WithAlerts(nil)
 	code, body = b.call(t, "GET", p, "", b.viewer)
-	if code != 200 || decodeBot(t, body).Mode != "shared" {
+	if v := decodeBot(t, body); code != 200 || v.Mode != "shared" || v.DetailLevel != "minimal" {
 		t.Fatalf("GET without service = %d %s", code, body)
 	}
 	code, body = b.call(t, "PUT", p, put, b.admin)
@@ -777,7 +777,8 @@ func TestChannelListShowsOriginAndActive(t *testing.T) {
 
 	b.h.WithAlerts(alerts.NewService(b.pool, &fakeNotifier{}, "http://app").WithBotUsername("ArtBot"))
 	out = get()
-	if out.Mode != "shared" || out.Bot.Mode != "shared" || out.Bot.Configured || !out.Telegram.Configured || out.Telegram.BotUsername != "ArtBot" {
+	if out.Mode != "shared" || out.Bot.Mode != "shared" || out.Bot.Configured || out.Bot.DetailLevel != "minimal" ||
+		!out.Telegram.Configured || out.Telegram.BotUsername != "ArtBot" {
 		t.Errorf("shared list mode=%q bot=%+v telegram=%+v", out.Mode, out.Bot, out.Telegram)
 	}
 	if l := byID(out, linked); l.Origin != "linked" || !l.Active {
