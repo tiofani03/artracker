@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -63,5 +64,29 @@ func TestMigrationColumns(t *testing.T) {
 	}
 	if _, err := e.pool.Exec(ctx, ins, pid, issueID, "firing"); err != nil {
 		t.Fatalf("firing after resolved should succeed: %v", err)
+	}
+}
+
+func TestInsertProjectRollsBackWhenSeedFails(t *testing.T) {
+	e := newTestEnv(t)
+	org := e.addOrg(t, "acme-atomic")
+	boom := errors.New("seed boom")
+
+	_, err := e.h.insertProject(context.Background(), org, "Atomic", "atomic-app", "web",
+		func(context.Context, pgx.Tx, int64) error { return boom })
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want wrapped seed error", err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM projects WHERE slug='atomic-app'`); n != 0 {
+		t.Fatalf("project rows after failed seed = %d, want 0", n)
+	}
+
+	// The slug stays free, so a retry succeeds and gets its rules.
+	p, err := e.h.insertProject(context.Background(), org, "Atomic", "atomic-app", "web", seedAlertRules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, fmt.Sprintf(`SELECT count(*) FROM alert_rules WHERE project_id=%d`, p.ID)); n != 3 {
+		t.Fatalf("rules = %d, want 3", n)
 	}
 }
