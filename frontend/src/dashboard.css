@@ -462,7 +462,7 @@
 
 .console-content {
   width: 100%;
-  max-width: 1320px;
+  /* every dashboard page fills the area to the right of the sidebar */
   padding: var(--space-lg);
   display: flex;
   flex-direction: column;
@@ -7739,11 +7739,6 @@ select {
 .or-track-scale {
   padding: 0 3px;
   background: var(--color-paper-2);
-}
-
-/* The replay workspace is video-first: it may use the full content width on large screens */
-.console-content:has(> .dash-replay-container) {
-  max-width: none;
 }
 
 /* Filter matched nothing: one message in the big panel, with the way back */
