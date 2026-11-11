@@ -10,6 +10,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/tiofani03/artracker/backend/internal/alerts"
 	"github.com/tiofani03/artracker/backend/internal/auth"
 )
 
@@ -87,6 +88,10 @@ func (h *Handler) CreateProject(c *fiber.Ctx) error {
 	}
 	if err != nil {
 		return err
+	}
+	// A project without rules would never alert, so a seeding failure fails the request.
+	if _, err := h.db.Exec(ctx, alerts.SeedRulesSQL, p.ID); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to seed alert rules")
 	}
 	return c.Status(fiber.StatusCreated).JSON(p)
 }
