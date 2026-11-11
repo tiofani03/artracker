@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -154,7 +155,7 @@ WHERE c.id = $1 AND c.project_id = $2`, channelID, projectID).Scan(&chatID, &org
 		return err
 	}
 	mc := MessageContext{ProjectName: name, OrgID: orgID, ProjectID: projectID, PublicURL: s.publicURL}
-	sendErr := s.n.SendMessage(ctx, chatID, FormatTest(mc))
+	sendErr := s.n.SendMessage(ctx, strconv.FormatInt(chatID, 10), FormatTest(mc))
 	switch {
 	case sendErr == nil:
 		return s.markChannelSent(ctx, channelID, time.Now())

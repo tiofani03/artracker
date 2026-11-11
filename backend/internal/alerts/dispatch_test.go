@@ -73,7 +73,7 @@ func TestDispatchSendsAndMarksSent(t *testing.T) {
 	dispatch(t, s, dispatchNow)
 
 	sent := fn.Sent()
-	if len(sent) != 1 || sent[0].ChatID != -42 || !strings.HasPrefix(sent[0].HTML, "🆕 New issue · Checkout Web") {
+	if len(sent) != 1 || sent[0].chat != "-42" || !strings.HasPrefix(sent[0].HTML, "🆕 New issue · Checkout Web") {
 		t.Fatalf("sent = %+v", sent)
 	}
 	if st := incidentState(t, pool, inc); st.Notify != "sent" {
@@ -109,7 +109,7 @@ func TestDispatchDigestsBursts(t *testing.T) {
 	dispatch(t, s, dispatchNow)
 
 	sent := fn.Sent()
-	if len(sent) != 2 || sent[0].ChatID != -1 || sent[1].ChatID != -2 {
+	if len(sent) != 2 || sent[0].chat != "-1" || sent[1].chat != "-2" {
 		t.Fatalf("want one message per channel, got %+v", sent)
 	}
 	for _, m := range sent {
@@ -167,7 +167,7 @@ func TestDispatchForbiddenDisablesOnlyThatChannel(t *testing.T) {
 		t.Fatalf("A enabled=%v reason=%q, B enabled=%v", enabledA, reasonA, enabledB)
 	}
 	sent := fn.Sent()
-	if len(sent) != 1 || sent[0].ChatID != -2 {
+	if len(sent) != 1 || sent[0].chat != "-2" {
 		t.Fatalf("sent = %+v", sent)
 	}
 	if st := incidentState(t, pool, inc); st.Notify != "sent" {
@@ -285,7 +285,7 @@ func TestDispatchMigratedChatUpdatesID(t *testing.T) {
 		t.Fatalf("chat id = %d", chatID)
 	}
 	sent := fn.Sent()
-	if len(sent) != 1 || sent[0].ChatID != -100999 {
+	if len(sent) != 1 || sent[0].chat != "-100999" {
 		t.Fatalf("sent = %+v", sent)
 	}
 	if st := incidentState(t, pool, inc); st.Notify != "sent" {
@@ -311,7 +311,7 @@ func TestDispatchMigratedToExistingChannel(t *testing.T) {
 		t.Fatal("the stale channel is still active")
 	}
 	sent := fn.Sent()
-	if len(sent) != 1 || sent[0].ChatID != -100999 {
+	if len(sent) != 1 || sent[0].chat != "-100999" {
 		t.Fatalf("want exactly one message to the existing chat, got %+v", sent)
 	}
 	if st := incidentState(t, pool, inc); st.Notify != "sent" {

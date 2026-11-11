@@ -15,7 +15,7 @@ import (
 
 // Notifier delivers an HTML-formatted message to a chat.
 type Notifier interface {
-	SendMessage(ctx context.Context, chatID int64, html string) error
+	SendMessage(ctx context.Context, chat string, html string) error
 }
 
 // Telegram is a minimal Bot API client. The token never appears in errors.
@@ -67,6 +67,8 @@ var (
 	ErrChatForbidden = errors.New("telegram: bot is forbidden in this chat")
 	// ErrConflict is a 409: another poller is consuming updates.
 	ErrConflict = errors.New("telegram: conflict, another getUpdates consumer is active")
+	// ErrUnauthorized is a 401: the bot token was rejected or revoked.
+	ErrUnauthorized = errors.New("telegram: bot token rejected")
 )
 
 // APIError is any other Bot API failure.
@@ -116,7 +118,13 @@ type envelope struct {
 	} `json:"parameters"`
 }
 
-func (t *Telegram) SendMessage(ctx context.Context, chatID int64, html string) error {
+// SendMessage sends html to chat. A numeric chat id goes on the wire as a JSON
+// number (as it always has); anything else, such as "@news", as a JSON string.
+func (t *Telegram) SendMessage(ctx context.Context, chat, html string) error {
+	var chatID any = chat
+	if n, err := strconv.ParseInt(chat, 10, 64); err == nil {
+		chatID = n
+	}
 	body, _ := json.Marshal(map[string]any{
 		"chat_id":                  chatID,
 		"text":                     html,
@@ -127,18 +135,54 @@ func (t *Telegram) SendMessage(ctx context.Context, chatID int64, html string) e
 	return err
 }
 
-func (t *Telegram) GetMe(ctx context.Context) (string, error) {
+// BotInfo is the identity getMe reports for a token.
+type BotInfo struct {
+	ID       int64
+	Username string
+}
+
+func (t *Telegram) GetBot(ctx context.Context) (BotInfo, error) {
 	res, err := t.call(ctx, http.MethodGet, "getMe", nil, nil)
 	if err != nil {
-		return "", err
+		return BotInfo{}, err
 	}
 	var me struct {
+		ID       int64  `json:"id"`
 		Username string `json:"username"`
 	}
 	if err := json.Unmarshal(res, &me); err != nil {
-		return "", fmt.Errorf("telegram: decode getMe: %w", err)
+		return BotInfo{}, fmt.Errorf("telegram: decode getMe: %w", err)
 	}
-	return me.Username, nil
+	return BotInfo{ID: me.ID, Username: me.Username}, nil
+}
+
+func (t *Telegram) GetMe(ctx context.Context) (string, error) {
+	b, err := t.GetBot(ctx)
+	if err != nil {
+		return "", err
+	}
+	return b.Username, nil
+}
+
+// ChatInfo is the part of getChat the platform keeps. Title is empty for a
+// private chat: a person's name or username is never captured.
+type ChatInfo struct{ Title, Type string }
+
+func (t *Telegram) GetChat(ctx context.Context, chat string) (ChatInfo, error) {
+	q := url.Values{}
+	q.Set("chat_id", chat)
+	res, err := t.call(ctx, http.MethodGet, "getChat", q, nil)
+	if err != nil {
+		return ChatInfo{}, err
+	}
+	var c struct {
+		Title string `json:"title"`
+		Type  string `json:"type"`
+	}
+	if err := json.Unmarshal(res, &c); err != nil {
+		return ChatInfo{}, fmt.Errorf("telegram: decode getChat: %w", err)
+	}
+	return ChatInfo{Title: c.Title, Type: c.Type}, nil
 }
 
 func (t *Telegram) GetUpdates(ctx context.Context, offset int64, timeoutSec int) ([]Update, error) {
@@ -194,6 +238,8 @@ func (t *Telegram) call(ctx context.Context, httpMethod, method string, q url.Va
 		return nil, &RetryAfterError{Seconds: retryAfterSeconds(env.Parameters.RetryAfter, resp.Header.Get("Retry-After"))}
 	case code == http.StatusBadRequest && env.Parameters.MigrateToChatID != 0:
 		return nil, &MigratedError{NewChatID: env.Parameters.MigrateToChatID}
+	case code == http.StatusUnauthorized:
+		return nil, ErrUnauthorized
 	case code == http.StatusForbidden:
 		return nil, ErrChatForbidden
 	case code == http.StatusConflict:

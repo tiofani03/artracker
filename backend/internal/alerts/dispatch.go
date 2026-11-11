@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -35,7 +36,12 @@ type pendingIncident struct {
 	RecoveryState string
 }
 
-type channel struct{ id, chatID int64 }
+// channel is one delivery target; dest is the Telegram chat as sent on the wire
+// (a decimal chat id for linked chats).
+type channel struct {
+	id   int64
+	dest string
+}
 
 // delivery is the outcome of sending one message to a project's channels.
 type delivery struct {
@@ -231,9 +237,11 @@ func (s *Service) enabledChannels(ctx context.Context, projectID int64) ([]chann
 	var out []channel
 	for rows.Next() {
 		var c channel
-		if err := rows.Scan(&c.id, &c.chatID); err != nil {
+		var chatID int64
+		if err := rows.Scan(&c.id, &chatID); err != nil {
 			return nil, err
 		}
+		c.dest = strconv.FormatInt(chatID, 10)
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -256,7 +264,7 @@ func (s *Service) deliver(ctx context.Context, now time.Time, projectID int64, c
 	var d delivery
 	kept := make([]channel, 0, len(*chans))
 	for i, ch := range *chans {
-		err := s.n.SendMessage(ctx, ch.chatID, html)
+		err := s.n.SendMessage(ctx, ch.dest, html)
 		var mig *MigratedError
 		if errors.As(err, &mig) {
 			merged, merr := s.migrateChannel(ctx, ch.id, mig.NewChatID)
@@ -269,8 +277,8 @@ func (s *Service) deliver(ctx context.Context, now time.Time, projectID int64, c
 				slog.Info("alerts: migrated chat merged into existing channel", "project_id", projectID, "channel_id", ch.id)
 				continue
 			}
-			ch.chatID = mig.NewChatID
-			err = s.n.SendMessage(ctx, ch.chatID, html)
+			ch.dest = strconv.FormatInt(mig.NewChatID, 10)
+			err = s.n.SendMessage(ctx, ch.dest, html)
 		}
 		var ra *RetryAfterError
 		switch {

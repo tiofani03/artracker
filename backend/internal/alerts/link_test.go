@@ -98,7 +98,7 @@ func TestHandleUpdateBindsGroup(t *testing.T) {
 		t.Error("code not marked used")
 	}
 	sent := fn.Sent()
-	if len(sent) != 1 || sent[0].ChatID != -100 || !strings.Contains(sent[0].HTML, "Checkout Web") || !strings.Contains(sent[0].HTML, "Connected") {
+	if len(sent) != 1 || sent[0].chat != "-100" || !strings.Contains(sent[0].HTML, "Checkout Web") || !strings.Contains(sent[0].HTML, "Connected") {
 		t.Errorf("sent = %+v", sent)
 	}
 }
@@ -113,7 +113,7 @@ func TestHandleUpdateCodeSingleUse(t *testing.T) {
 		t.Fatalf("channels = %d", n)
 	}
 	sent := fn.Sent()
-	if len(sent) != 2 || sent[1].ChatID != -200 || !strings.Contains(sent[1].HTML, "expired") {
+	if len(sent) != 2 || sent[1].chat != "-200" || !strings.Contains(sent[1].HTML, "expired") {
 		t.Errorf("sent = %+v", sent)
 	}
 }
