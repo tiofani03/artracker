@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import type { AlertChannel, AlertIncident, AlertRule } from '../../api'
+import type { AlertBot, AlertChannel, AlertIncident, AlertRule } from '../../api'
 import {
+  botBannerText,
+  canShowTest,
+  countActiveChannels,
+  showLinkFlow,
+  botBadge,
+  channelsBanner,
+  isBotEndpointMissing,
+  normalizeBot,
+  normalizeChannelsResponse,
   buildRulePatch,
+  channelActivityLabel,
   countEnabledChannels,
+  detailLevelLabel,
   detectLinked,
   draftFromRule,
   formatBaseline,
@@ -12,6 +23,9 @@ import {
   ruleDescription,
   ruleTitle,
   timeAgo,
+  validateBotToken,
+  validateChat,
+  validateLabel,
   validateRulePatch,
 } from './alertFormat'
 
@@ -195,6 +209,9 @@ function channel(id: number, enabled = true): AlertChannel {
     last_sent_at: null,
     last_error: '',
     created_at: '2026-11-11T00:00:00Z',
+    origin: 'linked',
+    destination: '-1001',
+    active: true,
   }
 }
 
@@ -224,5 +241,199 @@ describe('countEnabledChannels', () => {
     expect(countEnabledChannels([])).toBe(0)
     expect(countEnabledChannels([channel(1), channel(2, false), channel(3)])).toBe(2)
     expect(countEnabledChannels([channel(1, false)])).toBe(0)
+  })
+})
+
+function bot(over: Partial<AlertBot> = {}): AlertBot {
+  return {
+    mode: 'tenant',
+    configured: true,
+    bot_username: 'acme_bot',
+    status: 'active',
+    status_reason: '',
+    detail_level: 'minimal',
+    updated_at: null,
+    ...over,
+  }
+}
+
+describe('validateChat', () => {
+  it('accepts numeric ids and usernames', () => {
+    expect(validateChat('-1001234567890')).toBeNull()
+    expect(validateChat('123456')).toBeNull()
+    expect(validateChat('@my_channel')).toBeNull()
+  })
+  it('rejects everything else, including surrounding whitespace', () => {
+    for (const bad of ['', 'abc', '@a', '12', ' 123456 ', '00123', '-0123456', '+123456', '123456\n', '0']) expect(validateChat(bad)).not.toBeNull()
+  })
+})
+
+describe('validateLabel', () => {
+  // Choice: the label is not trimmed (a label with surrounding spaces is accepted as typed),
+  // but an all-whitespace label counts as empty.
+  it('enforces 1 to 80 characters', () => {
+    expect(validateLabel('')).not.toBeNull()
+    expect(validateLabel('a'.repeat(80))).toBeNull()
+    expect(validateLabel('a'.repeat(81))).not.toBeNull()
+  })
+  it('counts code points, not UTF-16 units', () => {
+    expect(validateLabel('😀'.repeat(80))).toBeNull()
+    expect(validateLabel('😀'.repeat(81))).not.toBeNull()
+  })
+  it('rejects an all-whitespace label and accepts surrounding spaces', () => {
+    expect(validateLabel('   ')).not.toBeNull()
+    expect(validateLabel(' ops ')).toBeNull()
+  })
+})
+
+describe('validateBotToken', () => {
+  it('accepts a token-shaped value', () => {
+    expect(validateBotToken('123456789:AAEhBP0av28kPoKy2VfQ3CwR4aFhEXAMPLE1')).toBeNull()
+  })
+  it('rejects malformed values without echoing them', () => {
+    for (const bad of ['', 'abc', '123:short']) {
+      const msg = validateBotToken(bad)
+      expect(msg).not.toBeNull()
+      if (bad !== '') expect(msg).not.toContain(bad)
+    }
+  })
+})
+
+describe('botBannerText', () => {
+  it('asks an admin to connect a bot', () => {
+    expect(botBannerText(bot({ configured: false, status: '' }), true)).toBe(
+      'Connect a Telegram bot in Settings to receive alerts.',
+    )
+  })
+  it('tells a member to ask an admin', () => {
+    expect(botBannerText(bot({ configured: false, status: '' }), false)).toBe(
+      'An organisation admin needs to connect a Telegram bot.',
+    )
+  })
+  it('explains an invalid bot with its reason', () => {
+    expect(botBannerText(bot({ status: 'invalid', status_reason: 'token revoked' }), true)).toContain('token revoked')
+  })
+  it('is always null in shared mode', () => {
+    expect(botBannerText(bot({ mode: 'shared', configured: false, status: '' }), true)).toBeNull()
+    expect(botBannerText(bot({ mode: 'shared', configured: false, status: '' }), false)).toBeNull()
+    expect(botBannerText(bot({ mode: 'shared', status: 'invalid', status_reason: 'x' }), true)).toBeNull()
+  })
+  it('is null for an active bot', () => {
+    expect(botBannerText(bot(), true)).toBeNull()
+  })
+})
+
+describe('channelActivityLabel', () => {
+  it('labels inactive channels by mode', () => {
+    expect(channelActivityLabel({ ...channel(1), origin: 'linked', active: false }, 'tenant')).toBe(
+      'belongs to the shared bot',
+    )
+    expect(channelActivityLabel({ ...channel(1), origin: 'manual', active: false }, 'shared')).toBe(
+      'inactive in shared mode',
+    )
+  })
+  it('is null when active', () => {
+    expect(channelActivityLabel({ ...channel(1), origin: 'linked', active: true }, 'shared')).toBeNull()
+    expect(channelActivityLabel({ ...channel(1), origin: 'manual', active: true }, 'tenant')).toBeNull()
+  })
+})
+
+describe('detailLevelLabel', () => {
+  it('describes each level', () => {
+    expect(detailLevelLabel('minimal')).toBe('Minimal (no error text)')
+    expect(detailLevelLabel('full')).toBe('Full (includes error text)')
+  })
+})
+
+describe('canShowTest', () => {
+  it('only offers Test for an active channel', () => {
+    expect(canShowTest({ ...channel(1), active: true })).toBe(true)
+    expect(canShowTest({ ...channel(1), active: false })).toBe(false)
+  })
+})
+
+describe('countActiveChannels', () => {
+  it('counts channels that are both active and enabled', () => {
+    const items = [
+      { ...channel(1), active: true, enabled: true },
+      { ...channel(2), active: false, enabled: true },
+      { ...channel(3), active: true, enabled: false },
+    ]
+    expect(countActiveChannels(items)).toBe(1)
+  })
+})
+
+describe('showLinkFlow', () => {
+  it('is only for shared mode', () => {
+    expect(showLinkFlow('shared')).toBe(true)
+    expect(showLinkFlow('tenant')).toBe(false)
+  })
+})
+
+describe('botBadge', () => {
+  it('maps status to a badge class and text', () => {
+    expect(botBadge(bot())).toEqual({ className: 'badge--active', text: 'Active' })
+    expect(botBadge(bot({ status: 'invalid', status_reason: 'token revoked' }))).toEqual({
+      className: 'badge--revoked',
+      text: 'Invalid: token revoked',
+    })
+    expect(botBadge(bot({ status: 'invalid', status_reason: '' }))).toEqual({
+      className: 'badge--revoked',
+      text: 'Invalid',
+    })
+  })
+})
+
+describe('legacy backend tolerance', () => {
+  const legacy = {
+    telegram: { configured: true, bot_username: 'old_bot' },
+    items: [{ ...channel(1), enabled: true }],
+  }
+  const stripped = (() => {
+    const c: Record<string, unknown> = { ...channel(1), enabled: true }
+    delete c.origin
+    delete c.destination
+    delete c.active
+    return c as unknown as AlertChannel
+  })()
+  const raw = { ...legacy, items: [stripped] }
+
+  it('fills defaults for a payload without mode, bot, origin, active and destination', () => {
+    const n = normalizeChannelsResponse(raw)
+    expect(n.mode).toBe('shared')
+    expect(n.bot).toBeUndefined()
+    expect(channelsBanner(n, true)).toBeNull()
+    expect(n.items[0].active).toBe(true)
+    expect(n.items[0].origin).toBe('linked')
+    expect(n.items[0].destination).toBe('')
+    expect(showLinkFlow(n.mode)).toBe(true)
+    expect(countActiveChannels(n.items)).toBe(1)
+  })
+  it('returns a full payload unchanged', () => {
+    const full = {
+      mode: 'tenant' as const,
+      bot: bot({ mode: 'tenant' }),
+      telegram: { configured: false, bot_username: '' },
+      items: [{ ...channel(2), origin: 'manual' as const, destination: '@x_chan', active: false }],
+    }
+    expect(normalizeChannelsResponse(full)).toEqual(full)
+  })
+  it('counts legacy items without active by enabled', () => {
+    expect(countActiveChannels([stripped, { ...stripped, id: 2, enabled: false }])).toBe(1)
+    expect(canShowTest(stripped)).toBe(true)
+    expect(channelActivityLabel(stripped, 'shared')).toBeNull()
+  })
+  it('uses the banner only when a bot is present', () => {
+    const n = normalizeChannelsResponse({ ...raw, mode: 'tenant', bot: bot({ mode: 'tenant', configured: false, status: '' }) })
+    expect(channelsBanner(n, true)).toBe('Connect a Telegram bot in Settings to receive alerts.')
+  })
+  it('normalizeBot rejects bodies without a mode and keeps valid ones', () => {
+    expect(normalizeBot({})).toBeNull()
+    expect(normalizeBot(null)).toBeNull()
+    expect(normalizeBot(bot())).toEqual(bot())
+  })
+  it('detects the missing bot endpoint', () => {
+    expect(isBotEndpointMissing(new Error('404 Not Found'))).toBe(true)
+    expect(isBotEndpointMissing(new Error('500 Internal'))).toBe(false)
   })
 })
