@@ -408,6 +408,7 @@ var openAPISpecBytes = []byte(`{
           { "name": "has_rage_click", "in": "query", "required": false, "schema": { "type": "boolean" } },
           { "name": "has_dead_click", "in": "query", "required": false, "schema": { "type": "boolean" } },
           { "name": "user_id", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "user_prefix", "in": "query", "required": false, "description": "Case-insensitive prefix of the user id (max 128 chars); % and _ are literal. user_id stays an exact match.", "schema": { "type": "string", "maxLength": 128 } },
           { "name": "environment", "in": "query", "required": false, "schema": { "type": "string" } },
           { "name": "from", "in": "query", "required": false, "schema": { "type": "string", "format": "date-time" } },
           { "name": "to", "in": "query", "required": false, "schema": { "type": "string", "format": "date-time" } }

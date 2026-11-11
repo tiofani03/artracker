@@ -447,6 +447,8 @@ export type ReplaySessionListParams = {
   has_rage_click?: boolean
   has_dead_click?: boolean
   user_id?: string
+  /** Case-insensitive prefix of the user id (the server treats % and _ literally). */
+  user_prefix?: string
   environment?: string
   from?: string
   to?: string
@@ -497,6 +499,7 @@ export const replayApi = {
     if (params.has_rage_click !== undefined) qs.set('has_rage_click', String(params.has_rage_click))
     if (params.has_dead_click !== undefined) qs.set('has_dead_click', String(params.has_dead_click))
     if (params.user_id) qs.set('user_id', params.user_id)
+    if (params.user_prefix) qs.set('user_prefix', params.user_prefix)
     if (params.environment) qs.set('environment', params.environment)
     if (params.from) qs.set('from', params.from)
     if (params.to) qs.set('to', params.to)

@@ -7823,3 +7823,56 @@ select {
 @media (prefers-reduced-motion: reduce) {
   .dash-filter { transition: none; }
 }
+
+/* User search above the replay filters */
+.dash-user-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: var(--space-xs) 0 0;
+}
+
+.dash-user-search__icon {
+  position: absolute;
+  left: 10px;
+  color: var(--color-muted);
+  pointer-events: none;
+}
+
+.dash-user-search__input {
+  width: 100%;
+  padding: 7px 28px 7px 30px;
+  background: var(--color-paper);
+  border: var(--rule-hair) solid var(--color-rule-2);
+  border-radius: var(--radius-input);
+  color: var(--color-ink);
+  font: inherit;
+  font-size: var(--text-xs);
+}
+
+.dash-user-search__input::placeholder { color: var(--color-muted); }
+
+.dash-user-search__input:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+/* the clear button below replaces the browser's own */
+.dash-user-search__input::-webkit-search-cancel-button { display: none; }
+
+.dash-user-search__clear {
+  position: absolute;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-input);
+  color: var(--color-muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dash-user-search__clear:hover { background: var(--color-paper-3); color: var(--color-ink); }

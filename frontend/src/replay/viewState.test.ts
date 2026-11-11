@@ -43,3 +43,23 @@ describe('replayEmptyMessage', () => {
     expect(replayEmptyMessage('all', false)).toBe('No sessions yet')
   })
 })
+
+describe('replayEmptyMessage with a user search', () => {
+  it('names the user search when there is no other filter', () => {
+    expect(replayEmptyMessage('all', false, 'user_4')).toBe('No sessions for user “user_4”')
+  })
+
+  it('names both when a filter and a search are active', () => {
+    expect(replayEmptyMessage('error', false, 'user_4')).toBe('No sessions match “Errors” for user “user_4”')
+  })
+
+  it('still says loading first', () => {
+    expect(replayEmptyMessage('error', true, 'user_4')).toBe('Loading sessions…')
+  })
+})
+
+describe('replayViewState with a user search', () => {
+  it('keeps the workspace so the search box stays on screen', () => {
+    expect(replayViewState({ loading: false, sessionCount: 0, filter: 'all', userQuery: 'user_4' })).toBe('workspace')
+  })
+})

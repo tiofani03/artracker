@@ -471,6 +471,10 @@ func (h *Handler) ListProjectSessions(c *fiber.Ctx) error {
 	hasRageParam := strings.TrimSpace(c.Query("has_rage_click"))
 	hasDeadParam := strings.TrimSpace(c.Query("has_dead_click"))
 	userIDParam := strings.TrimSpace(c.Query("user_id"))
+	userPrefixParam := strings.TrimSpace(c.Query("user_prefix"))
+	if len(userPrefixParam) > 128 { // session/user ids are capped at 128 chars on ingest
+		userPrefixParam = userPrefixParam[:128]
+	}
 	envParam := strings.TrimSpace(c.Query("environment"))
 	fromParam := strings.TrimSpace(c.Query("from"))
 	toParam := strings.TrimSpace(c.Query("to"))
@@ -523,6 +527,14 @@ func (h *Handler) ListProjectSessions(c *fiber.Ctx) error {
 	if userIDParam != "" {
 		query += fmt.Sprintf(" AND user_id = $%d", argIdx)
 		args = append(args, userIDParam)
+		argIdx++
+	}
+
+	// Case-insensitive "starts with". starts_with() takes the prefix literally, so '%' and '_' typed by the
+	// user are not LIKE wildcards.
+	if userPrefixParam != "" {
+		query += fmt.Sprintf(" AND starts_with(lower(user_id), lower($%d))", argIdx)
+		args = append(args, userPrefixParam)
 		argIdx++
 	}
 
