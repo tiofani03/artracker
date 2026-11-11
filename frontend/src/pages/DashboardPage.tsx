@@ -64,12 +64,12 @@ type ReplayFilter = 'all' | 'error' | 'rage' | 'dead'
 const REPLAY_PAGE_SIZE = 10
 const QUEUE_OPEN_KEY = 'artracker.replay.queueOpen'
 
-/** Replay filters. The dot colours match the status dots on the session rows below them. */
-const REPLAY_FILTERS: { id: ReplayFilter; label: string; title: string; tone?: 'error' | 'warn' }[] = [
+/** Replay filters. `title` is the hover explanation. */
+const REPLAY_FILTERS: { id: ReplayFilter; label: string; title: string }[] = [
   { id: 'all', label: 'All', title: 'All sessions' },
-  { id: 'error', label: 'Errors', title: 'Sessions with errors', tone: 'error' },
-  { id: 'rage', label: 'Rage', title: 'Sessions with rage clicks', tone: 'warn' },
-  { id: 'dead', label: 'Dead', title: 'Sessions with dead clicks', tone: 'warn' },
+  { id: 'error', label: 'Errors', title: 'Sessions with errors' },
+  { id: 'rage', label: 'Rage', title: 'Rage clicks: 3 or more rapid clicks on the same spot' },
+  { id: 'dead', label: 'Dead', title: 'Dead clicks: a click that triggered no response' },
 ]
 
 function formatDurationMs(ms: number): string {
@@ -1266,7 +1266,6 @@ function DashboardInner({
                               setReplayOffset(0)
                             }}
                           >
-                            {f.tone && <span className={`dash-filter__dot dash-filter__dot--${f.tone}`} aria-hidden="true" />}
                             {f.label}
                           </button>
                         ))}
