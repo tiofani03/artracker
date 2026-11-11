@@ -147,7 +147,7 @@ func (s *Service) SendTest(ctx context.Context, projectID, channelID int64) erro
 	err := s.db.QueryRow(ctx, `
 SELECT c.telegram_chat_id, p.org_id, p.name
 FROM alert_channels c JOIN projects p ON p.id = c.project_id
-WHERE c.id = $1 AND c.project_id = $2`, channelID, projectID).Scan(&chatID, &orgID, &name)
+WHERE c.id = $1 AND c.project_id = $2 AND c.telegram_chat_id IS NOT NULL`, channelID, projectID).Scan(&chatID, &orgID, &name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrChannelNotFound
 	}

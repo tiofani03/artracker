@@ -229,7 +229,7 @@ func (s *Service) dispatchProject(ctx context.Context, now time.Time, incs []pen
 
 func (s *Service) enabledChannels(ctx context.Context, projectID int64) ([]channel, error) {
 	rows, err := s.db.Query(ctx,
-		`SELECT id, telegram_chat_id FROM alert_channels WHERE project_id=$1 AND enabled ORDER BY id`, projectID)
+		`SELECT id, telegram_chat_id FROM alert_channels WHERE project_id=$1 AND enabled AND telegram_chat_id IS NOT NULL ORDER BY id`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -412,6 +412,8 @@ func errClass(err error) string {
 		return "chat_migrated"
 	case errors.Is(err, ErrChatForbidden):
 		return "forbidden"
+	case errors.Is(err, ErrSealOpen):
+		return "seal_open"
 	case errors.As(err, &api):
 		return fmt.Sprintf("api_error_%d", api.Code)
 	case errors.As(err, &pgErr):

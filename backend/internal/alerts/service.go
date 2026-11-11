@@ -11,16 +11,23 @@ import (
 // Service owns incident creation and delivery wiring. n may be nil, meaning
 // Telegram is off: incidents are still recorded and shown in the dashboard.
 type Service struct {
-	db          *pgxpool.Pool
-	n           Notifier
-	publicURL   string
+	db        *pgxpool.Pool
+	n         Notifier
+	publicURL string
 	// botUsername is set at boot or later by the getMe retry loop, while the
 	// workers and HTTP handlers read it, hence the atomic.
 	botUsername atomic.Pointer[string]
+
+	// Bot mode wiring, set once at boot through the With* setters (bot.go).
+	mode    BotMode
+	sealer  Sealer
+	apiBase string
 }
 
+// NewService builds a service in ModeShared with the public Bot API host.
 func NewService(db *pgxpool.Pool, n Notifier, publicURL string) *Service {
-	return &Service{db: db, n: n, publicURL: strings.TrimRight(publicURL, "/")}
+	return &Service{db: db, n: n, publicURL: strings.TrimRight(publicURL, "/"),
+		mode: ModeShared, apiBase: DefaultTelegramAPIBase}
 }
 
 // SetBotUsername records the bot's username; safe for concurrent use.
