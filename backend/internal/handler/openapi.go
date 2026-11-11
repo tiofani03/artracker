@@ -338,6 +338,23 @@ var openAPISpecBytes = []byte(`{
         }
       }
     },
+    "/projects/{projectID}/sessions/{sessionID}/perf": {
+      "get": {
+        "summary": "Session Profiling Samples",
+        "description": "Merged CPU / memory / FPS / jank samples SDKs reported for the session (type 'perf' ingest items), sorted by time and deduplicated. Above 1200 samples the series is downsampled keeping the worst value per bucket, so spikes survive. A session without profiling data returns empty arrays.",
+        "operationId": "getSessionPerf",
+        "tags": ["Session Replay"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "sessionID", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "{ interval_ms, device{ram_mb,cores,refresh_hz}, metrics[], samples[{t,cpu,mem_mb,fps,jank,frozen,threads,battery,thermal}], downsampled }" },
+          "400": { "description": "Invalid session id" }
+        }
+      }
+    },
     "/replay/chunk-ack": {
       "post": {
         "summary": "Acknowledge Replay Chunk Upload",
