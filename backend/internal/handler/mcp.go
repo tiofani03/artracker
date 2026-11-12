@@ -99,8 +99,7 @@ func newMCPServer(h *Handler, mc mcpContext) *mcp.Server {
 func registerMCPTools(s *mcp.Server, h *Handler, mc mcpContext) {
 	registerIssueTools(s, h, mc)
 	registerTimelineTool(s, h, mc)
-	// Tasks 5-7 register list_issues, get_issue, get_issue_events,
-	// get_session_timeline, update_issue and the fix_issue prompt here.
+	registerFixTools(s, h, mc)
 }
 
 // logMCPCall records one tool call or prompt fetch. Tool names: the tool's own

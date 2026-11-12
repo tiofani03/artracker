@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -156,8 +157,22 @@ func TestMCPInitializeNamesProject(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		tools, err := cs.ListTools(ctx, nil)
 		cancel()
-		if err != nil || tools == nil || tools.Tools == nil {
+		if err != nil || tools == nil {
 			t.Fatalf("%s: tools/list = %+v, %v", slug, tools, err)
+		}
+		var names []string
+		for _, tl := range tools.Tools {
+			names = append(names, tl.Name)
+		}
+		sort.Strings(names)
+		if got, want := strings.Join(names, ","), "get_issue,get_issue_events,get_session_timeline,list_issues,update_issue"; got != want {
+			t.Fatalf("%s: tools = %s, want %s", slug, got, want)
+		}
+		ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+		prompts, err := cs.ListPrompts(ctx, nil)
+		cancel()
+		if err != nil || prompts == nil || len(prompts.Prompts) != 1 || prompts.Prompts[0].Name != "fix_issue" {
+			t.Fatalf("%s: prompts/list = %+v, %v, want exactly fix_issue", slug, prompts, err)
 		}
 	}
 }

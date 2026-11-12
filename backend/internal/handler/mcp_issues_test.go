@@ -257,3 +257,139 @@ func TestMCPIssueToolsAreProjectScoped(t *testing.T) {
 		t.Fatalf("list_issues leaked:\n%s", out)
 	}
 }
+
+func (e *testEnv) mcpCalls(t *testing.T, pid int64, tool string) (n int, issueID *int64, ok bool) {
+	t.Helper()
+	rows, err := e.pool.Query(context.Background(),
+		`SELECT issue_id, ok FROM mcp_tool_calls WHERE project_id = $1 AND tool = $2 ORDER BY id`, pid, tool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		n++
+		if err := rows.Scan(&issueID, &ok); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return n, issueID, ok
+}
+
+func TestMCPUpdateIssue(t *testing.T) {
+	e, project, other, cs := mcpSession(t)
+	ctx := context.Background()
+	id := e.mcpAddIssue(t, project, "NPE", "crash", "open", 5)
+	foreign := e.mcpAddIssue(t, other, "Foreign", "crash", "open", 5)
+	var inc int64
+	if err := e.pool.QueryRow(ctx, `INSERT INTO alert_incidents(project_id, rule_kind, issue_id, title)
+		VALUES ($1,'new_issue',$2,'NPE') RETURNING id`, project, id).Scan(&inc); err != nil {
+		t.Fatal(err)
+	}
+
+	out, isErr := callTool(t, cs, "update_issue", map[string]any{"issue_id": id, "status": "resolved"})
+	if isErr || !strings.Contains(out, "resolved") {
+		t.Fatalf("update_issue = %q err=%v", out, isErr)
+	}
+	var status, incStatus string
+	_ = e.pool.QueryRow(ctx, `SELECT status FROM issues WHERE id=$1`, id).Scan(&status)
+	_ = e.pool.QueryRow(ctx, `SELECT status FROM alert_incidents WHERE id=$1`, inc).Scan(&incStatus)
+	if status != "resolved" || incStatus != "resolved" {
+		t.Fatalf("issue = %s, incident = %s, want both resolved", status, incStatus)
+	}
+	if n, iid, ok := e.mcpCalls(t, project, "update_issue:resolved"); n != 1 || iid == nil || *iid != id || !ok {
+		t.Fatalf("log = %d %v %v, want 1 row issue %d ok", n, iid, ok, id)
+	}
+
+	if out, isErr := callTool(t, cs, "update_issue", map[string]any{"issue_id": id, "status": "bogus"}); !isErr {
+		t.Fatalf("invalid status = %q, want tool error", out)
+	}
+
+	out, isErr = callTool(t, cs, "update_issue", map[string]any{"issue_id": foreign, "status": "resolved"})
+	if !isErr || out != "issue not found" {
+		t.Fatalf("foreign = %q err=%v, want tool error 'issue not found'", out, isErr)
+	}
+	var fs string
+	_ = e.pool.QueryRow(ctx, `SELECT status FROM issues WHERE id=$1`, foreign).Scan(&fs)
+	if fs != "open" {
+		t.Fatalf("foreign issue status = %s, want untouched", fs)
+	}
+	if n, iid, ok := e.mcpCalls(t, project, "update_issue:resolved"); n != 2 || iid != nil || ok {
+		t.Fatalf("foreign log = %d %v %v, want 2nd row with nil issue and not ok", n, iid, ok)
+	}
+
+	// No arguments must be a tool error, not a server panic.
+	if _, isErr := callTool(t, cs, "update_issue", nil); !isErr {
+		t.Fatal("update_issue with no args should be a tool error")
+	}
+}
+
+func getPrompt(t *testing.T, cs *mcp.ClientSession, args map[string]string) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	res, err := cs.GetPrompt(ctx, &mcp.GetPromptParams{Name: "fix_issue", Arguments: args})
+	if err != nil {
+		t.Fatalf("prompts/get: %v", err)
+	}
+	var b strings.Builder
+	for _, m := range res.Messages {
+		if tc, ok := m.Content.(*mcp.TextContent); ok {
+			b.WriteString(tc.Text)
+		}
+	}
+	return b.String()
+}
+
+func TestMCPFixIssuePrompt(t *testing.T) {
+	e, project, other, cs := mcpSession(t)
+	ctx := context.Background()
+
+	if out := getPrompt(t, cs, nil); !strings.Contains(strings.ToLower(out), "no open crashes") {
+		t.Fatalf("no open issues: %q", out)
+	}
+
+	few := e.mcpAddIssue(t, project, "FewUsers", "crash", "open", 50)
+	many := e.mcpAddIssue(t, project, "ManyUsers", "crash", "open", 3)
+	e.mcpAddEvent(t, few, android("u1", "s1", "14", "1.0", 5))
+	e.mcpAddEvent(t, many, android("u1", "s2", "14", "1.0", 5))
+	e.mcpAddEvent(t, many, android("u2", "s3", "14", "1.0", 5))
+	foreign := e.mcpAddIssue(t, other, "ForeignSecretTitle", "crash", "open", 5)
+
+	out := getPrompt(t, cs, nil)
+	for _, want := range []string{fmt.Sprintf("get_issue with issue_id %d", many), "ManyUsers", "get_session_timeline", "until_event_id",
+		"ask the developer before calling update_issue"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "FewUsers") {
+		t.Fatalf("prompt picked the wrong issue:\n%s", out)
+	}
+	t.Logf("prompt (auto):\n%s", out)
+
+	out = getPrompt(t, cs, map[string]string{"issue_id": fmt.Sprint(few)})
+	if !strings.Contains(out, fmt.Sprintf("get_issue with issue_id %d", few)) || !strings.Contains(out, "FewUsers") {
+		t.Fatalf("explicit id: %s", out)
+	}
+	if n, iid, ok := e.mcpCalls(t, project, "prompt:fix_issue"); n != 3 || iid == nil || *iid != few || !ok {
+		t.Fatalf("log = %d %v %v", n, iid, ok)
+	}
+
+	// Foreign and unknown ids reveal nothing and are not logged as an issue id.
+	for _, id := range []string{fmt.Sprint(foreign), "999999"} {
+		out = getPrompt(t, cs, map[string]string{"issue_id": id})
+		if strings.Contains(out, "ForeignSecretTitle") || strings.Contains(out, "get_session_timeline") ||
+			!strings.Contains(out, "not found") {
+			t.Fatalf("issue_id %s: %s", id, out)
+		}
+	}
+	// Non-numeric ids fall back to the top open issue instead of failing.
+	if out = getPrompt(t, cs, map[string]string{"issue_id": "abc"}); !strings.Contains(out, "ManyUsers") {
+		t.Fatalf("non-numeric: %s", out)
+	}
+	var leaked int
+	_ = e.pool.QueryRow(ctx, `SELECT count(*) FROM mcp_tool_calls WHERE issue_id = $1`, foreign).Scan(&leaked)
+	if leaked != 0 {
+		t.Fatal("foreign issue id was logged")
+	}
+}
