@@ -1,3 +1,4 @@
+// Go twin: backend/internal/issues/stackframes.go (keep rules in sync).
 /** One line of a stack trace, split for display. */
 export type StackFrame = {
   raw: string
