@@ -1282,8 +1282,54 @@ The issue page shows "Raw trace" when no matching artifact exists for the event'
 | :--- | :--- | :--- |
 | Public client | \`art_live_\` | SDK ingest, replay and \`GET /sdk/validate\` |
 | Secret admin | \`art_sec_\` | The only key type \`GET /sdk/validate-admin\` accepts (a public key gets 403); SDK endpoints accept either type. Server-side uploads are not available with it yet. |
+| MCP | \`art_mcp_\` | Only \`POST /mcp\` (AI assistants, see MCP (AI assistants)); SDK endpoints reject it. |
 
-Create, revoke and rotate keys under \`/projects/:projectId/keys\` (admin).`,
+Create, revoke and rotate keys under \`/projects/:projectId/keys\`: admin for public and secret keys, member for MCP keys.`,
+  },
+  {
+    id: 'mcp',
+    title: 'MCP (AI assistants)',
+    category: 'MANAGEMENT API',
+    isGuide: true,
+    description:
+      'Let Claude Code read a project\'s crashes and close them once fixed, through a Model Context Protocol server on POST /mcp.',
+    callouts: [
+      {
+        type: 'info',
+        title: 'MCP-only, read-mostly key',
+        content:
+          'An art_mcp_ key works only on POST /mcp and only for its own project. update_issue is the one tool that writes. Revoking the key stops it at once.',
+      },
+    ],
+    guideContent: `### Connect Claude Code
+
+A member or above opens Settings, API Keys, "Connect to Claude Code" and creates a key. It is shown once. Then run the command the panel prints:
+
+\`\`\`bash
+claude mcp add --transport http artracker-<slug> <API_URL>/mcp --header "Authorization: Bearer <key>"
+\`\`\`
+
+Finally ask "What are my top crashes?", or run the prompt \`/mcp__artracker-<slug>__fix_issue\`.
+
+The endpoint speaks JSON-RPC 2.0 over Streamable HTTP in stateless mode. The key goes in \`Authorization: Bearer\` (or \`X-Artracker-Key\`). A missing, invalid, revoked or non-MCP key gets 401, and GET or DELETE get 405.
+
+### Tools
+
+| Tool | Returns |
+| :--- | :--- |
+| \`list_issues\` | Ranked issues: \`status\`, \`sort\` (users, events, trending, newest), \`release\`, \`limit\` |
+| \`get_issue\` | One issue with OS, device and app version breakdowns, plus the latest (or chosen) event's stack trace and breadcrumbs |
+| \`get_issue_events\` | Individual occurrences, filterable by \`os\`, \`device\` and \`app_version\` |
+| \`get_session_timeline\` | What the user did in a session, optionally up to a crash (\`until_event_id\`) |
+| \`update_issue\` | Sets \`status\` to open, resolved or ignored. The only write. |
+
+### Prompt
+
+\`fix_issue\` (optional \`issue_id\`, default: the open issue with the most affected users) walks the assistant through reading the issue, finding the code, explaining the root cause and proposing a fix. It asks for your confirmation before it calls \`update_issue\`.
+
+### Telegram alerts
+
+When a project has an active MCP key, Telegram alerts include a "Fix with Claude" line with the prompt command for that issue.`,
   },
   {
     id: 'healthz',

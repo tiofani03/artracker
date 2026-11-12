@@ -96,7 +96,8 @@ Sessions: a 15-minute access token (JWT, kept in memory by the SPA) and a 30-day
 | View org, projects, members, issues, sessions, analytics, alerts, key list (prefix only) | yes | yes | yes | yes |
 | Triage issues (open / close / mute, assign) | yes | yes | yes | yes |
 | Save and delete funnels | yes | yes | yes | no |
-| Create project, create / revoke / rotate API keys | yes | yes | no | no |
+| Create project, create / revoke / rotate public and secret API keys | yes | yes | no | no |
+| Create / revoke / rotate MCP keys (Settings → API Keys → Connect to Claude Code) | yes | yes | yes | no |
 | Invite and remove members, manage alert rules, channels and Telegram bot | yes | yes | no | no |
 | Change replay settings, upload source maps / ProGuard mappings / dSYMs | yes | yes | no | no |
 | Change a member's role | yes | no | no | no |
@@ -107,6 +108,7 @@ Anyone can create an organization and becomes its `owner`. Non-members get `404`
 
 - `art_live_...` public client key (for SDKs), `art_sec_...` secret key (server-to-server). `/api/v1/sdk/validate-admin`
   is the only endpoint that requires a secret key; the SDK endpoints accept either key type.
+- `art_mcp_...` MCP key for AI assistants (see [MCP](#mcp-ai-assistants)). It is accepted only by `POST /api/v1/mcp`, and the SDK endpoints reject it.
 - The full key is shown once at creation; only a SHA-256 hash is stored.
 - Validate a key: `curl -H 'X-Artracker-Key: <key>' /api/v1/sdk/validate` (200 with project id, else 401).
   `/api/v1/sdk/validate-admin` accepts secret keys only (public key gets 403).
@@ -128,6 +130,35 @@ TEST_DATABASE_URL='postgres://artracker:artracker@localhost:5433/artracker_test?
 ```
 
 **These tests delete all users, organisations and projects in whatever database the DSN names.**
+
+## MCP (AI assistants)
+
+Artracker runs a Model Context Protocol server so an AI assistant such as Claude Code can read a project's crashes and close them once fixed. It is a stateless Streamable HTTP endpoint, `POST /api/v1/mcp` (GET and DELETE answer `405`), authenticated with a project-scoped `art_mcp_...` key.
+
+Setup:
+
+1. A Member or above opens **Settings → API Keys → Connect to Claude Code** and creates a key. It is shown once.
+2. Run the command the panel prints, which has this shape:
+
+   ```bash
+   claude mcp add --transport http artracker-<slug> <API_URL>/mcp --header "Authorization: Bearer <key>"
+   ```
+
+3. Ask Claude Code "What are my top crashes?", or run the prompt `/mcp__artracker-<slug>__fix_issue`.
+
+Tools (all scoped to the key's project):
+
+| Tool | What it returns |
+| --- | --- |
+| `list_issues` | Ranked issues (status, sort by users / events / trending / newest, release filter) |
+| `get_issue` | One issue: breakdowns by OS, device and app version, the latest event's deobfuscated stack trace and breadcrumbs |
+| `get_issue_events` | Individual occurrences, with optional OS, device and app version filters |
+| `get_session_timeline` | What the user did in a session before the crash |
+| `update_issue` | Sets an issue to open, resolved or ignored (the only write) |
+
+The prompt `fix_issue` walks the assistant through reading the issue, finding the code, explaining the cause and proposing a fix. It asks you before it marks the issue resolved.
+
+The key is MCP-only: it cannot ingest data or call any other endpoint, and revoking it stops it at once. Every tool call is logged in the `mcp_tool_calls` table (tool, key, issue, success). When a project has an active MCP key, Telegram alerts carry a "Fix with Claude" line with the prompt command for that issue.
 
 ## Alerts (Telegram)
 
