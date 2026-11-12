@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import ApiKeysPanel from '../components/ApiKeysPanel'
+import McpConnectPanel from '../components/McpConnectPanel'
 import DashboardShell from '../components/DashboardShell'
 import ReplaySettingsPanel from '../components/ReplaySettingsPanel'
 import TelegramBotCard from '../components/TelegramBotCard'
@@ -8,6 +9,7 @@ import '../dashboard.css'
 import { initialSettingsTab, type SettingsTab } from '../utils/deepLink'
 
 export default function SettingsPage() {
+  const [keysVersion, setKeysVersion] = useState(0)
   const [activeTab, setActiveTab] = useState<SettingsTab>(() =>
     typeof window === 'undefined' ? 'keys' : initialSettingsTab(window.location.search),
   )
@@ -144,14 +146,17 @@ export default function SettingsPage() {
                     </section>
                   ) : (
                     project && (
-                      <>
+                      <div className="dash-panel-stack">
                         {!canManage && (
                           <p className="dash-note" style={{ marginBottom: 'var(--space-xs)' }}>
-                            Your role ({activeOrg.role}) is read-only for projects and keys.
+                            Your role ({activeOrg.role}) is read-only for projects and SDK keys.
                           </p>
                         )}
-                        <ApiKeysPanel key={project.id} project={project} canManage={canManage} />
-                      </>
+                        {!isDemo && activeOrg.role !== 'viewer' && (
+                          <McpConnectPanel key={`mcp-${project.id}`} project={project} onCreated={() => setKeysVersion((v) => v + 1)} />
+                        )}
+                        <ApiKeysPanel key={`${project.id}-${keysVersion}`} project={project} canManage={canManage} canManageMcp={!isDemo && activeOrg.role !== 'viewer'} />
+                      </div>
                     )
                   )}
                 </>
