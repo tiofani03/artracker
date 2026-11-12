@@ -63,7 +63,7 @@ var openAPISpecBytes = []byte(`{
                   "type": "object",
                   "properties": {
                     "status": { "type": "string", "example": "accepted" },
-                    "queued_items": { "type": "integer", "example": 2 }
+                    "queued": { "type": "integer", "example": 2 }
                   }
                 }
               }
@@ -152,14 +152,43 @@ var openAPISpecBytes = []byte(`{
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "valid": { "type": "boolean", "example": true },
-                    "project_id": { "type": "integer", "example": 10 }
+                    "project_id": { "type": "integer", "example": 10 },
+                    "key_type": { "type": "string", "enum": ["public_client", "secret_admin"] }
                   }
                 }
               }
             }
           },
           "401": { "description": "Key is invalid or revoked" }
+        }
+      }
+    },
+    "/sdk/validate-admin": {
+      "get": {
+        "summary": "Validate Secret Admin Key",
+        "description": "Like /sdk/validate but accepts secret keys (art_sec_) only.",
+        "operationId": "validateAdminKey",
+        "tags": ["Ingestion"],
+        "parameters": [
+          { "name": "X-Artracker-Key", "in": "header", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret key is valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "project_id": { "type": "integer", "example": 10 },
+                    "key_type": { "type": "string", "example": "secret_admin" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Key is invalid or revoked" },
+          "403": { "description": "Key is valid but is not a secret key" }
         }
       }
     },
@@ -220,8 +249,8 @@ var openAPISpecBytes = []byte(`{
     },
     "/replay/chunk-url": {
       "post": {
-        "summary": "Request Presigned Upload URL for Replay Chunk",
-        "description": "Generates a 5-minute presigned PUT URL directly to Cloudflare R2 / S3 storage with locked Content-Length & gzip Content-Type.",
+        "summary": "Request Upload URL for Replay Chunk",
+        "description": "Returns a 5-minute upload URL for one gzip replay chunk. By default (server setting REPLAY_PROXY_UPLOAD=true) it is a signed URL on this API (PUT /api/v1/replay/upload-chunk) that streams to storage; send direct=true to get a presigned Cloudflare R2 / S3 PUT URL instead. Storage that cannot presign (for example the local-disk store) always uses the proxy.",
         "operationId": "getReplayChunkURL",
         "tags": ["Session Replay"],
         "security": [{ "ApiKeyAuth": [] }],
@@ -608,6 +637,133 @@ var openAPISpecBytes = []byte(`{
         }
       }
     },
+    "/projects/{projectID}/issues": {
+      "get": {
+        "summary": "List Issues",
+        "description": "Grouped crashes and errors for a project. Any project role can read.",
+        "operationId": "listIssues",
+        "tags": ["Issues"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "status", "in": "query", "required": false, "description": "open (default), resolved, ignored or all", "schema": { "type": "string", "enum": ["open", "resolved", "ignored", "all"] } },
+          { "name": "q", "in": "query", "required": false, "description": "Case-insensitive search in the issue title and type", "schema": { "type": "string" } },
+          { "name": "sort", "in": "query", "required": false, "description": "frequency (default), newest (last seen first) or oldest (first seen first)", "schema": { "type": "string", "enum": ["frequency", "newest", "oldest"] } },
+          { "name": "limit", "in": "query", "required": false, "description": "At most 200; larger values fall back to 100", "schema": { "type": "integer", "default": 100, "maximum": 200 } }
+        ],
+        "responses": {
+          "200": { "description": "Object with an items array of issues (id, title, type, status, count, first_seen, last_seen, assigned_to, latest_message)" },
+          "401": { "description": "Unauthorized" }
+        }
+      }
+    },
+    "/projects/{projectID}/issues/{issueID}": {
+      "get": {
+        "summary": "Get Issue",
+        "description": "The issue with up to 200 latest events (newest first, stack traces deobfuscated with the release's source map, ProGuard mapping or dSYM) and a summary computed over all stored events: total_events, affected_users, os_versions / devices / app_versions buckets (top 10), users (top 50, with each user's latest device, OS and app version) and daily (crashes per UTC day, last 14 days).",
+        "operationId": "getIssue",
+        "tags": ["Issues"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [ { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }, { "name": "issueID", "in": "path", "required": true, "schema": { "type": "integer" } } ],
+        "responses": {
+          "200": { "description": "Issue detail with summary and events" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "Issue not found in this project" }
+        }
+      },
+      "patch": {
+        "summary": "Update Issue Status",
+        "description": "Resolving or muting an issue also closes its firing new-issue and regression alert incidents.",
+        "operationId": "updateIssueStatus",
+        "tags": ["Issues"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [ { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }, { "name": "issueID", "in": "path", "required": true, "schema": { "type": "integer" } } ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["status"],
+                "properties": { "status": { "type": "string", "enum": ["open", "resolved", "ignored"] } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "The updated issue" },
+          "400": { "description": "status must be open, resolved or ignored" },
+          "404": { "description": "Issue not found in this project" }
+        }
+      }
+    },
+    "/projects/{projectID}/issues/{issueID}/assign": {
+      "post": {
+        "summary": "Assign Issue",
+        "description": "Assigns the issue to the signed-in user, or to the user in the optional user_id body field. A JSON body is required: send {} to assign to yourself.",
+        "operationId": "assignIssue",
+        "tags": ["Issues"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [ { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }, { "name": "issueID", "in": "path", "required": true, "schema": { "type": "integer" } } ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "user_id": { "type": "integer", "description": "Assign this user instead of the caller" } } }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "The updated issue" },
+          "404": { "description": "Issue not found in this project" }
+        }
+      }
+    },
+    "/projects/{projectID}/nav-counts": {
+      "get": {
+        "summary": "Sidebar Badge Counts",
+        "operationId": "getNavCounts",
+        "tags": ["Issues"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [ { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } } ],
+        "responses": {
+          "200": {
+            "description": "Counts shown as sidebar badges",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "open_issues": { "type": "integer" },
+                    "firing_alerts": { "type": "integer" },
+                    "frustrated_replays_24h": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{projectID}/releases/{version}/sourcemaps": {
+      "post": {
+        "summary": "Upload Web Source Map",
+        "description": "Uploads a source map JSON (request body) for one minified file of a release so web stack traces are deobfuscated. Needs an admin login token; secret keys are not accepted.",
+        "operationId": "uploadSourceMap",
+        "tags": ["Crash Diagnostics"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "version", "in": "path", "required": true, "description": "Must equal the app_version the SDK reports", "schema": { "type": "string" } },
+          { "name": "file", "in": "query", "required": false, "description": "Name of the minified file the map belongs to", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "201": { "description": "Source map stored" },
+          "400": { "description": "Invalid source map or missing version" },
+          "401": { "description": "Unauthorized" }
+        }
+      }
+    },
     "/projects/{projectID}/releases/{version}/dsyms": {
       "post": {
         "summary": "Upload iOS dSYM Binary or Zip Archive",
@@ -649,7 +805,7 @@ var openAPISpecBytes = []byte(`{
     "/projects/{projectID}/releases/{version}/artifacts": {
       "get": {
         "summary": "List Release Debug Artifacts",
-        "description": "Lists all dSYMs, ProGuard mappings, and Source Maps uploaded for a specific project release version.",
+        "description": "Lists the dSYMs and ProGuard mappings uploaded for a project release version. Web source maps are not listed here.",
         "operationId": "listReleaseArtifacts",
         "tags": ["Crash Diagnostics"],
         "security": [{ "BearerAuth": [] }],
@@ -708,7 +864,7 @@ var openAPISpecBytes = []byte(`{
       },
       "post": {
         "summary": "Add a Manual Chat Channel (admin, tenant mode)",
-        "description": "Adds a chat delivered through the organisation's own bot. chat is a numeric chat id (^-?[1-9][0-9]{4,19}$) or a public @username (^@[A-Za-z][A-Za-z0-9_]{4,31}$); label is 1 to 80 Unicode code points, not only whitespace, on one line with no control characters. Telegram is not contacted: the channel is saved with chat_type empty (the platform only ever calls sendMessage and getMe).",
+        "description": "Adds a chat delivered through the organisation's own bot. chat is a numeric chat id (^-?[1-9][0-9]{4,19}$) or a public @username (^@[A-Za-z][A-Za-z0-9_]{4,31}$); label is 1 to 80 Unicode code points, not only whitespace, on one line with no control characters. Telegram is not contacted: the channel is saved with chat_type empty (when sending alerts the platform only calls sendMessage and getMe; it reads the bot's updates only for chat discovery).",
         "operationId": "createAlertChannel",
         "tags": ["Alerts"],
         "security": [{ "BearerAuth": [] }],
@@ -735,6 +891,32 @@ var openAPISpecBytes = []byte(`{
           "201": { "description": "The channel (origin manual, chat_type empty)" },
           "400": { "description": "invalid JSON body, invalid chat, invalid label, or manual channels are only available in tenant mode" },
           "409": { "description": "connect a Telegram bot first, or chat already added" }
+        }
+      }
+    },
+    "/projects/{projectID}/alerts/channels/discover": {
+      "get": {
+        "summary": "Discover Telegram Chats",
+        "description": "Chats that recently wrote to the organization's bot, so an admin can pick the chat id to alert. Admin only.",
+        "operationId": "discoverAlertChats",
+        "tags": ["Alerts"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [ { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } } ],
+        "responses": {
+          "200": {
+            "description": "Bot username and the chats it has seen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "bot_username": { "type": "string" },
+                    "chats": { "type": "array", "items": { "type": "object" } }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -1006,6 +1188,7 @@ var openAPISpecBytes = []byte(`{
           "user_id": { "type": "string", "example": "usr_42" },
           "environment": { "type": "string", "example": "production" },
           "start_time": { "type": "string", "format": "date-time" },
+          "direct": { "type": "boolean", "description": "true: ask for a presigned storage URL; false: force the signed API proxy URL. Default follows the server setting REPLAY_PROXY_UPLOAD (proxy)." },
           "format": {
             "type": "string",
             "description": "Chunk format about to be uploaded. Send artracker-screen-v1 for screenshot-mode mobile replay; omit for rrweb / wireframe chunks.",
