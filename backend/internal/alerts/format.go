@@ -24,6 +24,9 @@ type MessageContext struct {
 	// Detail is how much of the issue the message carries. The zero value
 	// formats as DetailFull.
 	Detail DetailLevel
+	// MCPServer is the project's MCP server name (artracker-<slug>); empty
+	// means the project has no active MCP key and the message has no Fix line.
+	MCPServer string
 }
 
 func (mc MessageContext) minimal() bool { return mc.Detail == DetailMinimal }
@@ -143,6 +146,9 @@ func FormatFire(inc Incident, mc MessageContext) string {
 	b.WriteString(link(mc.issueURL(inc.IssueID), "Open issue"))
 	if !mc.minimal() && mc.HasReplay && inc.SessionID != "" {
 		b.WriteString(" · " + link(mc.replayURL(inc.SessionID), "Watch replay"))
+	}
+	if mc.MCPServer != "" && !mc.minimal() {
+		fmt.Fprintf(&b, "\nFix with Claude: <code>/mcp__%s__fix_issue %d</code>", esc(mc.MCPServer), inc.IssueID)
 	}
 	return b.String()
 }

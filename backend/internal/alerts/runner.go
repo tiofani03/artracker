@@ -160,7 +160,7 @@ WHERE c.id = $1 AND c.project_id = $2`, channelID, projectID).Scan(&origin, &des
 	if err != nil {
 		return err
 	}
-	mc := MessageContext{ProjectName: name, OrgID: orgID, ProjectID: projectID, PublicURL: s.publicURL}
+	mc := MessageContext{ProjectName: name, OrgID: orgID, ProjectID: projectID, PublicURL: s.publicURL, MCPServer: s.mcpServerName(ctx, projectID)}
 
 	var n Notifier
 	var dest string

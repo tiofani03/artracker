@@ -497,3 +497,60 @@ func TestDispatchSendsWithoutBotUsername(t *testing.T) {
 		t.Fatalf("notify_state = %s, want sent (not skipped)", st.Notify)
 	}
 }
+
+func seedMCPKey(t *testing.T, pool *pgxpool.Pool, projectID int64, active bool) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO api_keys(project_id, key_type, key_hash, prefix, is_active) VALUES ($1,'mcp',$2,'artm_',$3)`,
+		projectID, "hash-"+time.Now().Format(time.RFC3339Nano), active); err != nil {
+		t.Fatalf("seed mcp key: %v", err)
+	}
+}
+
+func TestDispatchFixWithClaudeLine(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		seed, active bool
+		wantLine     bool
+	}{
+		{"active key", true, true, true},
+		{"revoked key", true, false, false},
+		{"no key", false, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := testDB(t)
+			_, pid := seedProject(t, pool)
+			seedChannel(t, pool, pid, -42)
+			seedIncident(t, pool, pid, KindNewIssue, "TypeError: boom")
+			if tc.seed {
+				seedMCPKey(t, pool, pid, tc.active)
+			}
+			fn := &fakeNotifier{}
+			s := NewService(pool, fn, "http://app")
+			dispatch(t, s, dispatchNow)
+			sent := fn.Sent()
+			if len(sent) != 1 {
+				t.Fatalf("sent = %+v", sent)
+			}
+			has := strings.Contains(sent[0].HTML, "Fix with Claude: <code>/mcp__artracker-checkout-web__fix_issue ")
+			if has != tc.wantLine {
+				t.Fatalf("line present=%v want %v:\n%s", has, tc.wantLine, sent[0].HTML)
+			}
+		})
+	}
+}
+
+func TestMCPServerNameDBErrorIsEmpty(t *testing.T) {
+	pool := testDB(t)
+	_, pid := seedProject(t, pool)
+	seedMCPKey(t, pool, pid, true)
+	s := NewService(pool, &fakeNotifier{}, "http://app")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := s.mcpServerName(ctx, pid); got != "" {
+		t.Fatalf("got %q on DB error", got)
+	}
+	if got := s.mcpServerName(context.Background(), pid); got != "artracker-checkout-web" {
+		t.Fatalf("got %q", got)
+	}
+}
