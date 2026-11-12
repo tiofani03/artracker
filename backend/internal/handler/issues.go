@@ -198,12 +198,23 @@ func (h *Handler) GetIssue(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
 	defer cancel()
 
-	it, err := scanIssue(h.db.QueryRow(ctx, issueSelect+` WHERE i.id = $1 AND i.project_id = $2`, issueID, projectID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return errIssueNotFound
-	}
+	detail, err := h.loadIssueDetail(ctx, projectID, issueID, 200)
 	if err != nil {
 		return err
+	}
+	return c.JSON(detail)
+}
+
+// loadIssueDetail returns an issue scoped to projectID with its newest
+// eventLimit occurrences (stack traces symbolicated) and aggregated summary.
+// It returns errIssueNotFound when the issue is not in that project.
+func (h *Handler) loadIssueDetail(ctx context.Context, projectID, issueID int64, eventLimit int) (IssueDetail, error) {
+	it, err := scanIssue(h.db.QueryRow(ctx, issueSelect+` WHERE i.id = $1 AND i.project_id = $2`, issueID, projectID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return IssueDetail{}, errIssueNotFound
+	}
+	if err != nil {
+		return IssueDetail{}, err
 	}
 
 	rows, err := h.db.Query(ctx, `
@@ -211,9 +222,9 @@ func (h *Handler) GetIssue(c *fiber.Ctx) error {
 		FROM issue_events
 		WHERE issue_id = $1
 		ORDER BY created_at DESC, id DESC
-		LIMIT 200`, issueID)
+		LIMIT $2`, issueID, eventLimit)
 	if err != nil {
-		return err
+		return IssueDetail{}, err
 	}
 	defer rows.Close()
 
@@ -230,7 +241,7 @@ func (h *Handler) GetIssue(c *fiber.Ctx) error {
 			&ev.ID, &ev.SessionID, &ev.UserID, &ev.Message, &ev.StackTrace,
 			&breadcrumbs, &deviceInfo, &ev.ReleaseVersion, &ev.CreatedAt,
 		); err != nil {
-			return err
+			return IssueDetail{}, err
 		}
 		if len(breadcrumbs) == 0 {
 			breadcrumbs = []byte("[]")
@@ -276,15 +287,15 @@ func (h *Handler) GetIssue(c *fiber.Ctx) error {
 		events = append(events, ev)
 	}
 	if err := rows.Err(); err != nil {
-		return err
+		return IssueDetail{}, err
 	}
 
 	summary, err := h.loadIssueSummary(ctx, issueID)
 	if err != nil {
-		return err
+		return IssueDetail{}, err
 	}
 
-	return c.JSON(IssueDetail{Issue: it, Summary: summary, Events: events})
+	return IssueDetail{Issue: it, Summary: summary, Events: events}, nil
 }
 
 // issueEventContext normalises the free-form device_info of every occurrence
@@ -473,17 +484,29 @@ func (h *Handler) UpdateIssueStatus(c *fiber.Ctx) error {
 	if err := c.BodyParser(&in); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid json body")
 	}
-	status := strings.ToLower(strings.TrimSpace(in.Status))
-	if !validIssueStatus(status) {
-		return fiber.NewError(fiber.StatusBadRequest, "status must be open, resolved or ignored")
-	}
 
 	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
 	defer cancel()
 
-	tx, err := h.db.Begin(ctx)
+	it, err := h.setIssueStatus(ctx, projectID, issueID, in.Status)
 	if err != nil {
 		return err
+	}
+	return c.JSON(it)
+}
+
+// setIssueStatus validates and applies a status change to an issue in
+// projectID, closing its firing incidents when resolved or ignored, in one
+// transaction. It returns errIssueNotFound when the issue is not in that project.
+func (h *Handler) setIssueStatus(ctx context.Context, projectID, issueID int64, status string) (Issue, error) {
+	status = strings.ToLower(strings.TrimSpace(status))
+	if !validIssueStatus(status) {
+		return Issue{}, fiber.NewError(fiber.StatusBadRequest, "status must be open, resolved or ignored")
+	}
+
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		return Issue{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -497,20 +520,20 @@ func (h *Handler) UpdateIssueStatus(c *fiber.Ctx) error {
 		          COALESCE((SELECT e.message FROM issue_events e WHERE e.issue_id = issues.id ORDER BY e.created_at DESC, e.id DESC LIMIT 1), '')`,
 		status, issueID, projectID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errIssueNotFound
+		return Issue{}, errIssueNotFound
 	}
 	if err != nil {
-		return err
+		return Issue{}, err
 	}
 	if status == "resolved" || status == "ignored" {
 		if err := closeIssueIncidents(ctx, tx, projectID, issueID); err != nil {
-			return err
+			return Issue{}, err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return err
+		return Issue{}, err
 	}
-	return c.JSON(it)
+	return it, nil
 }
 
 // closeIssueIncidents silently closes the issue's firing new_issue and

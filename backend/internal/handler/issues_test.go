@@ -749,3 +749,48 @@ func TestIssueDetailSummaryDailyTrend(t *testing.T) {
 		t.Fatalf("daily sum = %d, want 2", sum)
 	}
 }
+
+func TestLoadIssueDetailScopedToProject(t *testing.T) {
+	env := newIssueEnv(t)
+	ctx := context.Background()
+	dev := map[string]any{"os": "Android", "os_version": "14", "model": "Pixel 8"}
+	issueID := insertIssueWithEvents(t, env, []struct {
+		user, release string
+		device        map[string]any
+	}{{"u_1", "2.5.1", dev}, {"u_2", "2.5.1", dev}, {"u_3", "2.5.1", dev}})
+
+	var orgID, otherProject int64
+	if err := env.pool.QueryRow(ctx, `SELECT org_id FROM projects WHERE id = $1`, env.projectID).Scan(&orgID); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.pool.QueryRow(ctx,
+		`INSERT INTO projects(org_id, name, slug, platform) VALUES ($1,'Other','other-issues','web') RETURNING id`, orgID).Scan(&otherProject); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := env.h.loadIssueDetail(ctx, otherProject, issueID, 20); err != errIssueNotFound {
+		t.Fatalf("other project err = %v, want errIssueNotFound", err)
+	}
+	if _, err := env.h.setIssueStatus(ctx, otherProject, issueID, "resolved"); err != errIssueNotFound {
+		t.Fatalf("setIssueStatus other project err = %v, want errIssueNotFound", err)
+	}
+
+	d, err := env.h.loadIssueDetail(ctx, env.projectID, issueID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Events) != 2 {
+		t.Errorf("events = %d, want limit 2", len(d.Events))
+	}
+	if d.Summary.TotalEvents != 3 {
+		t.Errorf("summary total = %d, want 3", d.Summary.TotalEvents)
+	}
+
+	it, err := env.h.setIssueStatus(ctx, env.projectID, issueID, "resolved")
+	if err != nil || it.Status != "resolved" {
+		t.Fatalf("setIssueStatus = %+v, %v", it, err)
+	}
+	if _, err := env.h.setIssueStatus(ctx, env.projectID, issueID, "bogus"); err == nil {
+		t.Fatal("expected error for invalid status")
+	}
+}
