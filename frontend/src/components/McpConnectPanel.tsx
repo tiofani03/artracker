@@ -85,8 +85,19 @@ export default function McpConnectPanel({ project, onCreated }: Props) {
             ))}
           </div>
           <p className="dash-card__desc">
-            {client === 'claude' ? 'Run this in your terminal:' : <>Add this to <code className="dash-code">.cursor/mcp.json</code>:</>}
+            {client === 'claude' ? (
+              'Run this in your terminal:'
+            ) : (
+              <>
+                Add this to your global <code className="dash-code">~/.cursor/mcp.json</code>:
+              </>
+            )}
           </p>
+          {client === 'cursor' && (
+            <p className="dash-warning" role="note">
+              Do not commit this file: it contains a secret key that can read all crash data of this project.
+            </p>
+          )}
           <div className="dash-secret mcp-connect__snippet">
             <pre>
               <code>{snippet}</code>
