@@ -826,13 +826,13 @@ All paths are under \`/projects/:projectId/releases/:version\`, where \`:version
 | \`POST\` | \`/sourcemaps\` | Source map JSON | \`file\`: name of the minified file the map belongs to |
 | \`POST\` | \`/proguard\` | ProGuard / R8 \`mapping.txt\` | \`file\`, \`build\` (build number) |
 | \`POST\` | \`/dsyms\` | dSYM binary or a zip of it | \`file\`, \`build\` |
-| \`GET\` | \`/artifacts\` | none | List what is stored for the release |
+| \`GET\` | \`/artifacts\` | none | List the dSYMs and ProGuard mappings stored for the release (web source maps are not listed) |
 
 Uploads answer \`201\` with \`{ "status": "stored", ... }\`. Uploading again for the same release adds another artifact; the newest one is used.
 
 ### Trace not deobfuscated?
 
-The issue page shows "Raw trace" when no artifact exists for the event's release. Check \`GET .../artifacts\` for the exact \`app_version\` string the crashing app reported.`,
+The issue page shows "Raw trace" when no matching artifact exists for the event's release. Check that \`:version\` is exactly the \`app_version\` string the crashing app reported; for mobile builds \`GET .../artifacts\` shows what is stored.`,
   },
   {
     id: 'replay-config',
