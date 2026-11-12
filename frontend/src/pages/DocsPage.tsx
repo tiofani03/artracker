@@ -234,7 +234,7 @@ ARTracker isolates ingress validation from database persistence:
         type: 'warning',
         title: 'Rotated Keys',
         content:
-          'Rotating an API key in Settings revokes the old key immediately and issues a new one. Because key lookups are cached for up to 60 seconds (`INGEST_KEY_CACHE_TTL_SEC`), the old key can keep working for up to a minute on a busy API instance.',
+          'Rotating an API key in Settings revokes the old key immediately and issues a new one. The API instance that handled the request forgets the old key at once; other API replicas can keep accepting it for up to 60 seconds (`INGEST_KEY_CACHE_TTL_SEC`) because key lookups are cached.',
       },
     ],
     guideContent: `### Client SDK Authentication
@@ -772,7 +772,7 @@ Anything missing shows as \`Unknown\`. Other keys are kept and appear on the Dev
 }
 \`\`\`
 
-Each item may carry an optional \`id\` (string) that the server keeps with the stored record.`,
+An item may carry an optional \`id\`. The server keeps it as the record id only when it is a valid UUID; any other value is replaced with a generated one.`,
   },
   {
     id: 'issues-api',
@@ -785,10 +785,10 @@ Each item may carry an optional \`id\` (string) that the server keeps with the s
 
 | Method | Path | Purpose |
 | :--- | :--- | :--- |
-| \`GET\` | \`/projects/:projectId/issues\` | List issues. Query: \`status\` (open, resolved, ignored, all; default open), \`q\` (search), \`sort\` (default frequency), \`limit\` (default 100). |
+| \`GET\` | \`/projects/:projectId/issues\` | List issues. Query: \`status\` (open, resolved, ignored, all; default open), \`q\` (matches title or type), \`sort\` (frequency by default; \`newest\` = last seen, \`oldest\` = first seen), \`limit\` (default 100, at most 200; larger values fall back to 100). |
 | \`GET\` | \`/projects/:projectId/issues/:issueId\` | One issue with its latest events (up to 200, newest first, stack traces deobfuscated) and a \`summary\`. |
 | \`PATCH\` | \`/projects/:projectId/issues/:issueId\` | Body \`{ "status": "open" }\`, \`"resolved"\` or \`"ignored"\`. Resolving or muting also closes the issue's firing alert incidents. |
-| \`POST\` | \`/projects/:projectId/issues/:issueId/assign\` | Assign the issue to the signed-in user. |
+| \`POST\` | \`/projects/:projectId/issues/:issueId/assign\` | Assign the issue to the signed-in user, or to the user in the optional body field \`user_id\`. A JSON body is required: send \`{}\` to assign to yourself. |
 
 ### The summary object
 
@@ -814,7 +814,7 @@ Each item may carry an optional \`id\` (string) that the server keeps with the s
         type: 'warning',
         title: 'Login token required',
         content:
-          'These endpoints need an admin\'s dashboard login (Bearer) token. Secret keys (art_sec_) are not accepted yet, so a CI job cannot upload with a key today.',
+          'The upload endpoints need an admin\'s dashboard login (Bearer) token (listing artifacts needs only a viewer). Secret keys (art_sec_) are not accepted yet, so a CI job cannot upload with a key today.',
       },
     ],
     guideContent: `### Endpoints
@@ -828,7 +828,7 @@ All paths are under \`/projects/:projectId/releases/:version\`, where \`:version
 | \`POST\` | \`/dsyms\` | dSYM binary or a zip of it | \`file\`, \`build\` |
 | \`GET\` | \`/artifacts\` | none | List the dSYMs and ProGuard mappings stored for the release (web source maps are not listed) |
 
-Uploads answer \`201\` with \`{ "status": "stored", ... }\`. Uploading again for the same release adds another artifact; the newest one is used.
+Uploads answer \`201\` with \`{ "status": "stored", ... }\`. Uploading again for the same release adds another ProGuard or dSYM artifact (the newest one is used); a source map uploaded again for the same file replaces the earlier one.
 
 ### Trace not deobfuscated?
 
@@ -929,7 +929,7 @@ The issue page shows "Raw trace" when no matching artifact exists for the event'
     ),
     responseSample: JSON.stringify(
       {
-        upload_url: 'https://api.example.com/api/v1/replay/upload-chunk?key=projects/1/sessions/sess_01j8xyz9abc123/chunk_0.gz&exp=1731400000&sig=...',
+        upload_url: 'https://api.example.com/api/v1/replay/upload-chunk?key=projects%2F1%2Fsessions%2Fsess_01j8xyz9abc123%2Fchunk_0.gz&exp=1731400000&sig=...',
         object_key: 'projects/1/sessions/sess_01j8xyz9abc123/chunk_0.gz',
         expires_in: 300,
       },
@@ -1015,7 +1015,7 @@ The issue page shows "Raw trace" when no matching artifact exists for the event'
       { name: 'user_prefix', type: 'query string', required: false, desc: 'Match sessions whose user ID starts with this text (type-ahead search).' },
       { name: 'environment', type: 'query string', required: false, desc: 'Filter by environment name.' },
       { name: 'from', type: 'query string (ISO-8601)', required: false, desc: 'Only sessions that started at or after this time.' },
-      { name: 'to', type: 'query string (ISO-8601)', required: false, desc: 'Only sessions that started before this time.' },
+      { name: 'to', type: 'query string (ISO-8601)', required: false, desc: 'Only sessions that started at or before this time.' },
     ],
     defaultHeaders: {
       Accept: 'application/json',
@@ -1281,7 +1281,7 @@ The issue page shows "Raw trace" when no matching artifact exists for the event'
 | Type | Prefix | Use |
 | :--- | :--- | :--- |
 | Public client | \`art_live_\` | SDK ingest, replay and \`GET /sdk/validate\` |
-| Secret admin | \`art_sec_\` | \`GET /sdk/validate-admin\` only (a public key gets 403). Server-side uploads are not available with it yet. |
+| Secret admin | \`art_sec_\` | The only key type \`GET /sdk/validate-admin\` accepts (a public key gets 403); SDK endpoints accept either type. Server-side uploads are not available with it yet. |
 
 Create, revoke and rotate keys under \`/projects/:projectId/keys\` (admin).`,
   },

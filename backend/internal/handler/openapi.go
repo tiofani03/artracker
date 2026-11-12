@@ -249,8 +249,8 @@ var openAPISpecBytes = []byte(`{
     },
     "/replay/chunk-url": {
       "post": {
-        "summary": "Request Presigned Upload URL for Replay Chunk",
-        "description": "Generates a 5-minute presigned PUT URL directly to Cloudflare R2 / S3 storage with locked Content-Length & gzip Content-Type.",
+        "summary": "Request Upload URL for Replay Chunk",
+        "description": "Returns a 5-minute upload URL for one gzip replay chunk. By default (server setting REPLAY_PROXY_UPLOAD=true) it is a signed URL on this API (PUT /api/v1/replay/upload-chunk) that streams to storage; send direct=true to get a presigned Cloudflare R2 / S3 PUT URL instead. Storage that cannot presign (for example the local-disk store) always uses the proxy.",
         "operationId": "getReplayChunkURL",
         "tags": ["Session Replay"],
         "security": [{ "ApiKeyAuth": [] }],
@@ -647,9 +647,9 @@ var openAPISpecBytes = []byte(`{
         "parameters": [
           { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
           { "name": "status", "in": "query", "required": false, "description": "open (default), resolved, ignored or all", "schema": { "type": "string", "enum": ["open", "resolved", "ignored", "all"] } },
-          { "name": "q", "in": "query", "required": false, "description": "Search in the issue title", "schema": { "type": "string" } },
-          { "name": "sort", "in": "query", "required": false, "description": "Default frequency", "schema": { "type": "string" } },
-          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 100 } }
+          { "name": "q", "in": "query", "required": false, "description": "Case-insensitive search in the issue title and type", "schema": { "type": "string" } },
+          { "name": "sort", "in": "query", "required": false, "description": "frequency (default), newest (last seen first) or oldest (first seen first)", "schema": { "type": "string", "enum": ["frequency", "newest", "oldest"] } },
+          { "name": "limit", "in": "query", "required": false, "description": "At most 200; larger values fall back to 100", "schema": { "type": "integer", "default": 100, "maximum": 200 } }
         ],
         "responses": {
           "200": { "description": "Object with an items array of issues (id, title, type, status, count, first_seen, last_seen, assigned_to, latest_message)" },
@@ -700,11 +700,19 @@ var openAPISpecBytes = []byte(`{
     "/projects/{projectID}/issues/{issueID}/assign": {
       "post": {
         "summary": "Assign Issue",
-        "description": "Assigns the issue to the signed-in user.",
+        "description": "Assigns the issue to the signed-in user, or to the user in the optional user_id body field. A JSON body is required: send {} to assign to yourself.",
         "operationId": "assignIssue",
         "tags": ["Issues"],
         "security": [{ "BearerAuth": [] }],
         "parameters": [ { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }, { "name": "issueID", "in": "path", "required": true, "schema": { "type": "integer" } } ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "user_id": { "type": "integer", "description": "Assign this user instead of the caller" } } }
+            }
+          }
+        },
         "responses": {
           "200": { "description": "The updated issue" },
           "404": { "description": "Issue not found in this project" }
@@ -856,7 +864,7 @@ var openAPISpecBytes = []byte(`{
       },
       "post": {
         "summary": "Add a Manual Chat Channel (admin, tenant mode)",
-        "description": "Adds a chat delivered through the organisation's own bot. chat is a numeric chat id (^-?[1-9][0-9]{4,19}$) or a public @username (^@[A-Za-z][A-Za-z0-9_]{4,31}$); label is 1 to 80 Unicode code points, not only whitespace, on one line with no control characters. Telegram is not contacted: the channel is saved with chat_type empty (the platform only ever calls sendMessage and getMe).",
+        "description": "Adds a chat delivered through the organisation's own bot. chat is a numeric chat id (^-?[1-9][0-9]{4,19}$) or a public @username (^@[A-Za-z][A-Za-z0-9_]{4,31}$); label is 1 to 80 Unicode code points, not only whitespace, on one line with no control characters. Telegram is not contacted: the channel is saved with chat_type empty (when sending alerts the platform only calls sendMessage and getMe; it reads the bot's updates only for chat discovery).",
         "operationId": "createAlertChannel",
         "tags": ["Alerts"],
         "security": [{ "BearerAuth": [] }],
@@ -1180,6 +1188,7 @@ var openAPISpecBytes = []byte(`{
           "user_id": { "type": "string", "example": "usr_42" },
           "environment": { "type": "string", "example": "production" },
           "start_time": { "type": "string", "format": "date-time" },
+          "direct": { "type": "boolean", "description": "true: ask for a presigned storage URL; false: force the signed API proxy URL. Default follows the server setting REPLAY_PROXY_UPLOAD (proxy)." },
           "format": {
             "type": "string",
             "description": "Chunk format about to be uploaded. Send artracker-screen-v1 for screenshot-mode mobile replay; omit for rrweb / wireframe chunks.",

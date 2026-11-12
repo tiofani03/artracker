@@ -105,8 +105,8 @@ Anyone can create an organization and becomes its `owner`. Non-members get `404`
 
 ### API keys
 
-- `art_live_...` public client key (for SDKs), `art_sec_...` secret key (server-to-server). Today the
-  secret key is only accepted by `/api/v1/sdk/validate-admin`.
+- `art_live_...` public client key (for SDKs), `art_sec_...` secret key (server-to-server). `/api/v1/sdk/validate-admin`
+  is the only endpoint that requires a secret key; the SDK endpoints accept either key type.
 - The full key is shown once at creation; only a SHA-256 hash is stored.
 - Validate a key: `curl -H 'X-Artracker-Key: <key>' /api/v1/sdk/validate` (200 with project id, else 401).
   `/api/v1/sdk/validate-admin` accepts secret keys only (public key gets 403).
@@ -138,7 +138,7 @@ Two bot modes, set with `ALERTS_BOT_MODE`:
 - `tenant` (default, the SaaS mode): each organisation connects its own bot (created with [@BotFather](https://t.me/BotFather)) in Settings. Bot tokens are stored encrypted with the master key.
 - `shared` (self-hosting): one operator bot for the whole deployment, from `TELEGRAM_BOT_TOKEN` or `TELEGRAM_BOT_TOKEN_FILE`.
 
-Privacy in `tenant` mode: the platform only calls Telegram's `sendMessage` and `getMe` and never reads updates, but the operator holds the master key and so could, in principle, decrypt a stored token and use the bot, including reading its updates. Use a dedicated, alert-only bot and keep BotFather's privacy mode on. Telegram itself sees every message it delivers, and even the `minimal` detail level still sends the project name, environment and release.
+Privacy in `tenant` mode: the platform calls Telegram's `sendMessage` and `getMe` for alerts and reads the bot's pending updates (`getUpdates`) only when an admin opens chat discovery on the Alerts page, but the operator holds the master key and so could, in principle, decrypt a stored token and use the bot, including reading its updates. Use a dedicated, alert-only bot and keep BotFather's privacy mode on. Telegram itself sees every message it delivers, and even the `minimal` detail level still sends the project name, environment and release.
 
 The master key is `ALERTS_MASTER_KEY` (standard base64 of exactly 32 bytes) or `ALERTS_MASTER_KEY_FILE` (a file holding it); generate one with `openssl rand -base64 32` and keep it safe, since losing it makes stored bot tokens unreadable. It is optional in development and in `shared` mode, but a key that is set and malformed stops startup. `ALERTS_MASTER_KEY_ID` (default `v1`) labels the key.
 
@@ -196,14 +196,14 @@ docker compose -f docker-compose.prod.yml up -d
 docker image prune -f
 ```
 
-Production `.env` must set (the API refuses to start or compose refuses to run without them):
+Production `.env` needs the following. Compose refuses to run without `POSTGRES_PASSWORD`, `JWT_SECRET` and `PUBLIC_URL`, and the API refuses to start without a valid `JWT_SECRET` and an alerts key or shared bot; the rest depends on the features you use:
 
 - `POSTGRES_PASSWORD`
 - `JWT_SECRET`: a random string of at least 32 characters (the placeholder from `.env.example` is rejected)
 - `PUBLIC_URL`: the dashboard's public URL (used for OAuth redirects and links in alerts)
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` to sign in
 - `ALERTS_MASTER_KEY`, or `ALERTS_BOT_MODE=shared` (see [Alerts](#alerts-telegram))
-- the `R2_*` variables, or `REPLAY_LOCAL_DIR`, if you want session replay
+- the `R2_*` variables if you want session replay (`REPLAY_LOCAL_DIR` keeps chunks on the container's own disk and is meant for development)
 
 Pin a build with `TAG=<sha>` in `.env`. Migrations are embedded in the API
 binary and run at boot, so there is no separate migrate step.
