@@ -1,3 +1,4 @@
+// Go twin: backend/internal/issues/severity.go (IsFatal); keep rules in sync.
 import type { Issue, IssueStatus } from '../api'
 
 /** Status wording shared across the Issues pages. */
