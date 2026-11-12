@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/tiofani03/artracker/backend/internal/auth"
 	"github.com/tiofani03/artracker/backend/internal/ingest"
 )
 
@@ -31,6 +32,11 @@ func (h *Handler) VerifyIngestKey(c *fiber.Ctx) error {
 
 	info, err := h.ingestSvc.KeyCache().Resolve(c.Context(), rawKey)
 	if err != nil {
+		h.ingestSvc.Metrics().IncRejectedRequests()
+		return fiber.NewError(fiber.StatusUnauthorized, "invalid api key")
+	}
+
+	if info.KeyType == auth.KeyMCP {
 		h.ingestSvc.Metrics().IncRejectedRequests()
 		return fiber.NewError(fiber.StatusUnauthorized, "invalid api key")
 	}

@@ -56,8 +56,27 @@ func (h *Handler) RequireProjectRole(min auth.Role) fiber.Handler {
 			return fiber.NewError(fiber.StatusForbidden, "insufficient role")
 		}
 		c.Locals("projectID", pid)
+		c.Locals("projectRole", role)
 		return c.Next()
 	}
+}
+
+// requireRoleForKeyType enforces the role needed to manage a key of type kt:
+// mcp keys need Member, every other type needs Admin. It reads the role that
+// RequireProjectRole stored and fails closed when it is absent.
+func requireRoleForKeyType(c *fiber.Ctx, kt auth.KeyType) error {
+	role, ok := c.Locals("projectRole").(auth.Role)
+	if !ok {
+		return fiber.NewError(fiber.StatusForbidden, "insufficient role")
+	}
+	min := auth.RoleAdmin
+	if kt == auth.KeyMCP {
+		min = auth.RoleMember
+	}
+	if !role.AtLeast(min) {
+		return fiber.NewError(fiber.StatusForbidden, "insufficient role")
+	}
+	return nil
 }
 
 func (h *Handler) ListKeys(c *fiber.Ctx) error {
@@ -108,8 +127,11 @@ func (h *Handler) CreateKey(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid json body")
 	}
 	kt := auth.KeyType(in.KeyType)
-	if kt != auth.KeyPublicClient && kt != auth.KeySecretAdmin {
-		return fiber.NewError(fiber.StatusBadRequest, "key_type must be public_client or secret_admin")
+	if kt != auth.KeyPublicClient && kt != auth.KeySecretAdmin && kt != auth.KeyMCP {
+		return fiber.NewError(fiber.StatusBadRequest, "key_type must be public_client, secret_admin or mcp")
+	}
+	if err := requireRoleForKeyType(c, kt); err != nil {
+		return err
 	}
 	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
 	defer cancel()
@@ -127,15 +149,33 @@ func (h *Handler) RevokeKey(c *fiber.Ctx) error {
 	}
 	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
 	defer cancel()
-	var k APIKey
-	// COALESCE keeps the original revoked_at, which makes revoke idempotent.
-	err = scanKey(h.db.QueryRow(ctx, `
-		UPDATE api_keys SET is_active = false, revoked_at = COALESCE(revoked_at, now())
-		WHERE id = $1 AND project_id = $2 RETURNING `+keyColumns, keyID, c.Locals("projectID")), &k)
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	// Lock the row so the type checked below is the type that gets revoked.
+	var keyType string
+	err = tx.QueryRow(ctx, `SELECT key_type FROM api_keys WHERE id = $1 AND project_id = $2 FOR UPDATE`,
+		keyID, c.Locals("projectID")).Scan(&keyType)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errKeyNotFound
 	}
 	if err != nil {
+		return err
+	}
+	if err := requireRoleForKeyType(c, auth.KeyType(keyType)); err != nil {
+		return err
+	}
+	var k APIKey
+	// COALESCE keeps the original revoked_at, which makes revoke idempotent.
+	err = scanKey(tx.QueryRow(ctx, `
+		UPDATE api_keys SET is_active = false, revoked_at = COALESCE(revoked_at, now())
+		WHERE id = $1 AND project_id = $2 RETURNING `+keyColumns, keyID, c.Locals("projectID")), &k)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 	if h.ingestSvc != nil {
@@ -167,6 +207,9 @@ func (h *Handler) RotateKey(c *fiber.Ctx) error {
 		return errKeyNotFound
 	}
 	if err != nil {
+		return err
+	}
+	if err := requireRoleForKeyType(c, auth.KeyType(keyType)); err != nil {
 		return err
 	}
 	if !active {
@@ -216,6 +259,9 @@ func (h *Handler) sdkValidate(adminOnly bool) fiber.Handler {
 		defer cancel()
 		pid, kt, ok := h.ValidateKey(ctx, c.Get("X-Artracker-Key"))
 		if !ok {
+			return fiber.NewError(fiber.StatusUnauthorized, "invalid api key")
+		}
+		if kt == auth.KeyMCP {
 			return fiber.NewError(fiber.StatusUnauthorized, "invalid api key")
 		}
 		if adminOnly && kt != auth.KeySecretAdmin {
