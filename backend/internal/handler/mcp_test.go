@@ -32,7 +32,13 @@ func (e *testEnv) serveMCP(t *testing.T) string {
 // rawMCP posts an initialize request with the given headers.
 func rawMCP(t *testing.T, method, url string, hdr map[string]string) (*http.Response, string) {
 	t.Helper()
-	req, _ := http.NewRequest(method, url, strings.NewReader(mcpInitBody))
+	return rawMCPBody(t, method, url, mcpInitBody, hdr)
+}
+
+// rawMCPBody sends body with the given method and headers.
+func rawMCPBody(t *testing.T, method, url, body string, hdr map[string]string) (*http.Response, string) {
+	t.Helper()
+	req, _ := http.NewRequest(method, url, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	for k, v := range hdr {

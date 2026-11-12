@@ -106,7 +106,7 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Get("/projects/:projectID/releases/:version/artifacts", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListReleaseArtifacts)
 
 	// MCP (Streamable HTTP, stateless): POST only; GET/DELETE answer 405.
-	api.Post("/mcp", h.RequireMCPKey, h.MCP)
+	api.Post("/mcp", h.RequireMCPKey, h.GuardMCP, h.MCP)
 	api.Get("/mcp", h.MCPMethodNotAllowed)
 	api.Delete("/mcp", h.MCPMethodNotAllowed)
 
