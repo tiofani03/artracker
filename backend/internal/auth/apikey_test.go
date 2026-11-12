@@ -43,3 +43,16 @@ func TestGenerateKey(t *testing.T) {
 		t.Error("unknown key type should error")
 	}
 }
+
+func TestGenerateKeyMCPPrefix(t *testing.T) {
+	plain, _, _, err := GenerateKey(KeyMCP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(plain, "art_mcp_") {
+		t.Fatalf("mcp key %q lacks art_mcp_ prefix", plain)
+	}
+	if got, ok := KeyTypeOf(plain); !ok || got != KeyMCP {
+		t.Fatalf("KeyTypeOf = %q,%v want mcp", got, ok)
+	}
+}

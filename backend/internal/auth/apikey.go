@@ -10,11 +10,13 @@ type KeyType string
 const (
 	KeyPublicClient KeyType = "public_client"
 	KeySecretAdmin  KeyType = "secret_admin"
+	KeyMCP          KeyType = "mcp"
 )
 
 var keyPrefixes = map[KeyType]string{
 	KeyPublicClient: "art_live_",
 	KeySecretAdmin:  "art_sec_",
+	KeyMCP:          "art_mcp_",
 }
 
 // GenerateKey creates a key: type prefix + 32 random bytes (base64url).

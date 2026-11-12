@@ -6,10 +6,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/gofiber/fiber/v2"
 
 	"github.com/tiofani03/artracker/backend/internal/auth"
+	"github.com/tiofani03/artracker/backend/internal/config"
+	"github.com/tiofani03/artracker/backend/internal/ingest"
 )
 
 func (e *testEnv) addProject(t *testing.T, orgID int64, slug string) int64 {
@@ -202,5 +208,83 @@ func TestCrossTenantKeyAccess404(t *testing.T) {
 	}
 	if r := e.validate(t, "/api/v1/sdk/validate", keyB.Secret); r.StatusCode != 200 {
 		t.Errorf("B's key must stay active, got %d", r.StatusCode)
+	}
+}
+
+func memberFixture(t *testing.T) (*testEnv, int64, map[string]string, map[string]string) {
+	e, org, project, adminHdr := keyFixture(t)
+	uid, memberHdr := e.addUser(t, "member")
+	e.addMember(t, org, uid, "member")
+	return e, project, adminHdr, memberHdr
+}
+
+func TestCreateMCPKeyAsMember(t *testing.T) {
+	e, project, _, member := memberFixture(t)
+	k := e.createKey(t, project, "mcp", member)
+	if !strings.HasPrefix(k.Secret, "art_mcp_") || k.Key.KeyType != "mcp" {
+		t.Fatalf("created = %+v", k)
+	}
+}
+
+func TestCreateSecretKeyAsMemberForbidden(t *testing.T) {
+	e, project, _, member := memberFixture(t)
+	path := fmt.Sprintf("/api/v1/projects/%d/keys", project)
+	for _, kt := range []string{"secret_admin", "public_client"} {
+		if r := e.post(t, path, fmt.Sprintf(`{"key_type":%q}`, kt), member); r.StatusCode != 403 {
+			t.Errorf("member create %s = %d, want 403", kt, r.StatusCode)
+		}
+	}
+}
+
+func TestRevokeKeyRoleByType(t *testing.T) {
+	e, project, admin, member := memberFixture(t)
+	mcpKey := e.createKey(t, project, "mcp", admin)
+	pubKey := e.createKey(t, project, "public_client", admin)
+	base := fmt.Sprintf("/api/v1/projects/%d/keys/", project)
+
+	if r := e.post(t, fmt.Sprintf("%s%d/revoke", base, pubKey.Key.ID), ``, member); r.StatusCode != 403 {
+		t.Errorf("member revoke public = %d, want 403", r.StatusCode)
+	}
+	if r := e.post(t, fmt.Sprintf("%s%d/rotate", base, pubKey.Key.ID), ``, member); r.StatusCode != 403 {
+		t.Errorf("member rotate public = %d, want 403", r.StatusCode)
+	}
+	if r := e.post(t, fmt.Sprintf("%s%d/rotate", base, mcpKey.Key.ID), ``, member); r.StatusCode != 201 {
+		t.Errorf("member rotate mcp = %d, want 201", r.StatusCode)
+	}
+	mcp2 := e.createKey(t, project, "mcp", admin)
+	if r := e.post(t, fmt.Sprintf("%s%d/revoke", base, mcp2.Key.ID), ``, member); r.StatusCode != 200 {
+		t.Errorf("member revoke mcp = %d, want 200", r.StatusCode)
+	}
+	// the public key must still be active after the forbidden attempts
+	var active bool
+	_ = e.pool.QueryRow(context.Background(), `SELECT is_active FROM api_keys WHERE id=$1`, pubKey.Key.ID).Scan(&active)
+	if !active {
+		t.Error("public key was revoked by a member")
+	}
+}
+
+func TestIngestRejectsMCPKey(t *testing.T) {
+	ingestSvc := ingest.NewService(ingest.Config{Workers: 1, QueueSize: 10, BatchSize: 10, FlushIntervalMs: 50,
+		ProjectRPS: 100, ProjectEventsPS: 5000, KeyCacheTTLSec: 60}, nil, ingest.NewMemoryStorageSink())
+	key := "art_mcp_test_api_key_0123456789abcdef01234567"
+	ingestSvc.KeyCache().(*ingest.MemoryKeyCache).SeedKey(key, ingest.KeyInfo{ProjectID: 88, KeyType: auth.KeyMCP}, time.Hour)
+	h := New(testDB(t), config.Config{Env: "development"}, auth.NewIssuer(testSecret, time.Hour), map[string]OAuthProvider{}).WithIngest(ingestSvc)
+	app := fiber.New(fiber.Config{ErrorHandler: ErrorHandler})
+	h.Routes(app.Group("/api/v1"))
+
+	for _, c := range []struct{ method, path string }{
+		{"POST", "/api/v1/ingest"},
+		{"GET", "/api/v1/sdk/validate"},
+		{"GET", "/api/v1/sdk/validate-admin"},
+	} {
+		req := httptest.NewRequest(c.method, c.path, strings.NewReader(`{}`))
+		req.Header.Set("X-Artracker-Key", key)
+		resp, err := app.Test(req, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != 401 {
+			t.Errorf("%s %s with mcp key = %d, want 401", c.method, c.path, resp.StatusCode)
+		}
 	}
 }

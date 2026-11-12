@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -280,7 +281,7 @@ func (s *Service) dispatchProject(ctx context.Context, now time.Time, incs []pen
 		return s.skipBothStages(ctx, allIDs)
 	}
 
-	mc := MessageContext{ProjectName: incs[0].ProjectName, OrgID: incs[0].OrgID, ProjectID: pid, PublicURL: s.publicURL}
+	mc := MessageContext{ProjectName: incs[0].ProjectName, OrgID: incs[0].OrgID, ProjectID: pid, PublicURL: s.publicURL, MCPServer: s.mcpServerName(ctx, pid)}
 	if snd.org != nil && snd.org.bot != nil {
 		mc.Detail = snd.org.bot.level // this organisation's own level, never another's
 	}
@@ -626,4 +627,22 @@ func errClass(err error) string {
 		return "deadline_exceeded"
 	}
 	return fmt.Sprintf("%T", err)
+}
+
+// mcpServerName returns the MCP server name ("artracker-<slug>") when the
+// project has an active mcp key, else "". A lookup error yields "" so alert
+// delivery is never blocked by it.
+func (s *Service) mcpServerName(ctx context.Context, projectID int64) string {
+	var slug string
+	err := s.db.QueryRow(ctx, `
+SELECT p.slug FROM projects p
+WHERE p.id = $1 AND EXISTS (SELECT 1 FROM api_keys k WHERE k.project_id = p.id AND k.key_type = 'mcp' AND k.is_active)`,
+		projectID).Scan(&slug)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("alerts: mcp key lookup", "project_id", projectID, "error_class", errClass(err))
+		}
+		return ""
+	}
+	return "artracker-" + slug
 }

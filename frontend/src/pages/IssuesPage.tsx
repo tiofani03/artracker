@@ -4,16 +4,11 @@ import DashboardShell from '../components/DashboardShell'
 import CustomSelect from '../components/CustomSelect'
 import { Link } from '../router'
 import '../dashboard.css'
+import { isFatalCrash, STATUS_LABEL } from '../issues/severity'
 
 type StatusFilter = 'all' | IssueStatus
 type SeverityFilter = 'all' | 'fatal' | 'non-fatal'
 type SortKey = 'frequency' | 'newest' | 'oldest'
-
-const STATUS_LABEL: Record<IssueStatus, string> = {
-  open: 'Open',
-  resolved: 'Closed',
-  ignored: 'Muted',
-}
 
 function formatAgo(iso: string): string {
   const then = new Date(iso).getTime()
@@ -35,22 +30,6 @@ function formatExactDate(iso: string): string {
     minute: '2-digit',
     second: '2-digit',
   })
-}
-
-function isFatalCrash(issue: Issue): boolean {
-  const type = (issue.type || '').toLowerCase()
-  const title = (issue.title || '').toLowerCase()
-  return (
-    type.includes('fatal') ||
-    type.includes('crash') ||
-    type.includes('panic') ||
-    title.includes('uncaught') ||
-    title.includes('unhandled') ||
-    title.includes('fatal') ||
-    title.includes('crash') ||
-    type.includes('typeerror') ||
-    type.includes('referenceerror')
-  )
 }
 
 function IssuesList({ projectId }: { projectId: number }) {

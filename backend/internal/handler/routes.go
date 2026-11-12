@@ -63,9 +63,9 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Patch("/projects/:projectID/replay-settings", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.UpdateReplaySettings)
 
 	api.Get("/projects/:projectID/keys", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListKeys)
-	api.Post("/projects/:projectID/keys", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.CreateKey)
-	api.Post("/projects/:projectID/keys/:keyID/revoke", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.RevokeKey)
-	api.Post("/projects/:projectID/keys/:keyID/rotate", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.RotateKey)
+	api.Post("/projects/:projectID/keys", h.RequireAuth, h.RequireProjectRole(auth.RoleMember), h.CreateKey)
+	api.Post("/projects/:projectID/keys/:keyID/revoke", h.RequireAuth, h.RequireProjectRole(auth.RoleMember), h.RevokeKey)
+	api.Post("/projects/:projectID/keys/:keyID/rotate", h.RequireAuth, h.RequireProjectRole(auth.RoleMember), h.RotateKey)
 
 	api.Get("/projects/:projectID/stats", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetProjectStats)
 	api.Get("/projects/:projectID/events", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListProjectEvents)
@@ -104,6 +104,11 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Post("/projects/:projectID/releases/:version/dsyms", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.UploadDSYM)
 	api.Post("/projects/:projectID/releases/:version/proguard", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.UploadProguard)
 	api.Get("/projects/:projectID/releases/:version/artifacts", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListReleaseArtifacts)
+
+	// MCP (Streamable HTTP, stateless): POST only; GET/DELETE answer 405.
+	api.Post("/mcp", h.RequireMCPKey, h.GuardMCP, h.MCP)
+	api.Get("/mcp", h.MCPMethodNotAllowed)
+	api.Delete("/mcp", h.MCPMethodNotAllowed)
 
 	api.Get("/sdk/validate", h.sdkValidate(false))
 	api.Get("/sdk/validate-admin", h.sdkValidate(true))

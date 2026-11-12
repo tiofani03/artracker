@@ -7,11 +7,11 @@ const TYPES: { value: KeyType; title: string; desc: string; prefix: string }[] =
   { value: 'public_client', title: 'Public Client Key', desc: 'Safe to embed in client SDKs (Web, React, Android, iOS).', prefix: 'art_live_…' },
   { value: 'secret_admin', title: 'Secret Admin Key', desc: 'Server-side ingestion and management only. Never ship in client apps.', prefix: 'art_sec_…' },
 ]
-const TYPE_LABEL: Record<KeyType, string> = { public_client: 'Public Client', secret_admin: 'Secret Admin' }
+const TYPE_LABEL: Record<KeyType, string> = { public_client: 'Public Client', secret_admin: 'Secret Admin', mcp: 'MCP' }
 
-type Props = { project: Project; canManage: boolean }
+type Props = { project: Project; canManage: boolean; canManageMcp?: boolean }
 
-export default function ApiKeysPanel({ project, canManage }: Props) {
+export default function ApiKeysPanel({ project, canManage, canManageMcp = false }: Props) {
   const toast = useToast()
   const [keys, setKeys] = useState<ApiKey[]>([])
   const [loading, setLoading] = useState(true)
@@ -90,6 +90,7 @@ export default function ApiKeysPanel({ project, canManage }: Props) {
     }
   }
 
+  const showActions = canManage || (canManageMcp && keys.some((k) => k.key_type === 'mcp'))
   const modalOpen = generating || fresh !== null
 
   return (
@@ -139,7 +140,8 @@ export default function ApiKeysPanel({ project, canManage }: Props) {
                   <th scope="col">Scope / Type</th>
                   <th scope="col">Status</th>
                   <th scope="col">Created Date</th>
-                  {canManage && (
+                  <th scope="col">Created By</th>
+                  {showActions && (
                     <th scope="col" style={{ textAlign: 'right' }}>
                       Actions
                     </th>
@@ -163,10 +165,13 @@ export default function ApiKeysPanel({ project, canManage }: Props) {
                       </span>
                     </td>
                     <td data-label="Created">{new Date(k.created_at).toLocaleDateString()}</td>
-                    {canManage && (
+                    <td data-label="Created By" title={k.created_by_email ?? undefined}>
+                      {k.created_by_name || k.created_by_email || 'Unknown'}
+                    </td>
+                    {showActions && (
                       <td className="dash-table__cell-actions">
                         <div className="dash-table__actions">
-                          {k.is_active &&
+                          {k.is_active && (canManage || k.key_type === 'mcp') &&
                             (confirmId === k.id ? (
                               <>
                                 <button type="button" className="dash-btn dash-btn--danger" onClick={() => void revoke(k.id)}>
@@ -178,9 +183,11 @@ export default function ApiKeysPanel({ project, canManage }: Props) {
                               </>
                             ) : (
                               <>
-                                <button type="button" className="dash-btn" onClick={() => void rotate(k.id)}>
-                                  Rotate
-                                </button>
+                                {canManage && (
+                                  <button type="button" className="dash-btn" onClick={() => void rotate(k.id)}>
+                                    Rotate
+                                  </button>
+                                )}
                                 <button type="button" className="dash-btn" onClick={() => setConfirmId(k.id)}>
                                   Revoke
                                 </button>

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -21,6 +22,10 @@ type APIKey struct {
 	IsActive  bool       `json:"is_active"`
 	CreatedAt time.Time  `json:"created_at"`
 	RevokedAt *time.Time `json:"revoked_at"`
+	// Creator, set only by ListKeys; omitted for keys minted before
+	// created_by existed or whose creator was deleted.
+	CreatedByName  *string `json:"created_by_name,omitempty"`
+	CreatedByEmail *string `json:"created_by_email,omitempty"`
 }
 
 const keyColumns = `id, project_id, key_type, prefix, is_active, created_at, revoked_at`
@@ -56,14 +61,36 @@ func (h *Handler) RequireProjectRole(min auth.Role) fiber.Handler {
 			return fiber.NewError(fiber.StatusForbidden, "insufficient role")
 		}
 		c.Locals("projectID", pid)
+		c.Locals("projectRole", role)
 		return c.Next()
 	}
+}
+
+// requireRoleForKeyType enforces the role needed to manage a key of type kt:
+// mcp keys need Member, every other type needs Admin. It reads the role that
+// RequireProjectRole stored and fails closed when it is absent.
+func requireRoleForKeyType(c *fiber.Ctx, kt auth.KeyType) error {
+	role, ok := c.Locals("projectRole").(auth.Role)
+	if !ok {
+		return fiber.NewError(fiber.StatusForbidden, "insufficient role")
+	}
+	min := auth.RoleAdmin
+	if kt == auth.KeyMCP {
+		min = auth.RoleMember
+	}
+	if !role.AtLeast(min) {
+		return fiber.NewError(fiber.StatusForbidden, "insufficient role")
+	}
+	return nil
 }
 
 func (h *Handler) ListKeys(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
 	defer cancel()
-	rows, err := h.db.Query(ctx, `SELECT `+keyColumns+` FROM api_keys WHERE project_id = $1 ORDER BY created_at DESC, id DESC`,
+	rows, err := h.db.Query(ctx, `
+		SELECT k.id, k.project_id, k.key_type, k.prefix, k.is_active, k.created_at, k.revoked_at, u.name, u.email
+		FROM api_keys k LEFT JOIN users u ON u.id = k.created_by
+		WHERE k.project_id = $1 ORDER BY k.created_at DESC, k.id DESC`,
 		c.Locals("projectID"))
 	if err != nil {
 		return err
@@ -72,7 +99,8 @@ func (h *Handler) ListKeys(c *fiber.Ctx) error {
 	items := []APIKey{}
 	for rows.Next() {
 		var k APIKey
-		if err := scanKey(rows, &k); err != nil {
+		if err := rows.Scan(&k.ID, &k.ProjectID, &k.KeyType, &k.Prefix, &k.IsActive, &k.CreatedAt, &k.RevokedAt,
+			&k.CreatedByName, &k.CreatedByEmail); err != nil {
 			return err
 		}
 		items = append(items, k)
@@ -88,15 +116,16 @@ type dbQuerier interface {
 }
 
 // insertKey generates and stores a key, returning metadata and the plaintext.
-func insertKey(ctx context.Context, q dbQuerier, projectID int64, kt auth.KeyType) (APIKey, string, error) {
+// createdBy is the minting user (0 when unknown, e.g. demo mode).
+func insertKey(ctx context.Context, q dbQuerier, projectID int64, kt auth.KeyType, createdBy int64) (APIKey, string, error) {
 	plain, hash, prefix, err := auth.GenerateKey(kt)
 	if err != nil {
 		return APIKey{}, "", err
 	}
 	var k APIKey
 	err = scanKey(q.QueryRow(ctx,
-		`INSERT INTO api_keys(project_id, key_type, key_hash, prefix) VALUES ($1, $2, $3, $4) RETURNING `+keyColumns,
-		projectID, string(kt), hash, prefix), &k)
+		`INSERT INTO api_keys(project_id, key_type, key_hash, prefix, created_by) VALUES ($1, $2, $3, $4, NULLIF($5::bigint, 0)) RETURNING `+keyColumns,
+		projectID, string(kt), hash, prefix, createdBy), &k)
 	return k, plain, err
 }
 
@@ -108,12 +137,15 @@ func (h *Handler) CreateKey(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid json body")
 	}
 	kt := auth.KeyType(in.KeyType)
-	if kt != auth.KeyPublicClient && kt != auth.KeySecretAdmin {
-		return fiber.NewError(fiber.StatusBadRequest, "key_type must be public_client or secret_admin")
+	if kt != auth.KeyPublicClient && kt != auth.KeySecretAdmin && kt != auth.KeyMCP {
+		return fiber.NewError(fiber.StatusBadRequest, "key_type must be public_client, secret_admin or mcp")
+	}
+	if err := requireRoleForKeyType(c, kt); err != nil {
+		return err
 	}
 	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
 	defer cancel()
-	k, plain, err := insertKey(ctx, h.db, c.Locals("projectID").(int64), kt)
+	k, plain, err := insertKey(ctx, h.db, c.Locals("projectID").(int64), kt, userID(c))
 	if err != nil {
 		return err
 	}
@@ -127,15 +159,33 @@ func (h *Handler) RevokeKey(c *fiber.Ctx) error {
 	}
 	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
 	defer cancel()
-	var k APIKey
-	// COALESCE keeps the original revoked_at, which makes revoke idempotent.
-	err = scanKey(h.db.QueryRow(ctx, `
-		UPDATE api_keys SET is_active = false, revoked_at = COALESCE(revoked_at, now())
-		WHERE id = $1 AND project_id = $2 RETURNING `+keyColumns, keyID, c.Locals("projectID")), &k)
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	// Lock the row so the type checked below is the type that gets revoked.
+	var keyType string
+	err = tx.QueryRow(ctx, `SELECT key_type FROM api_keys WHERE id = $1 AND project_id = $2 FOR UPDATE`,
+		keyID, c.Locals("projectID")).Scan(&keyType)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errKeyNotFound
 	}
 	if err != nil {
+		return err
+	}
+	if err := requireRoleForKeyType(c, auth.KeyType(keyType)); err != nil {
+		return err
+	}
+	var k APIKey
+	// COALESCE keeps the original revoked_at, which makes revoke idempotent.
+	err = scanKey(tx.QueryRow(ctx, `
+		UPDATE api_keys SET is_active = false, revoked_at = COALESCE(revoked_at, now())
+		WHERE id = $1 AND project_id = $2 RETURNING `+keyColumns, keyID, c.Locals("projectID")), &k)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 	if h.ingestSvc != nil {
@@ -169,13 +219,16 @@ func (h *Handler) RotateKey(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	if err := requireRoleForKeyType(c, auth.KeyType(keyType)); err != nil {
+		return err
+	}
 	if !active {
 		return fiber.NewError(fiber.StatusConflict, "key is already revoked")
 	}
 	if _, err := tx.Exec(ctx, `UPDATE api_keys SET is_active = false, revoked_at = now() WHERE id = $1`, keyID); err != nil {
 		return err
 	}
-	k, plain, err := insertKey(ctx, tx, projectID, auth.KeyType(keyType))
+	k, plain, err := insertKey(ctx, tx, projectID, auth.KeyType(keyType), userID(c))
 	if err != nil {
 		return err
 	}
@@ -218,9 +271,36 @@ func (h *Handler) sdkValidate(adminOnly bool) fiber.Handler {
 		if !ok {
 			return fiber.NewError(fiber.StatusUnauthorized, "invalid api key")
 		}
+		if kt == auth.KeyMCP {
+			return fiber.NewError(fiber.StatusUnauthorized, "invalid api key")
+		}
 		if adminOnly && kt != auth.KeySecretAdmin {
 			return fiber.NewError(fiber.StatusForbidden, "secret key required")
 		}
 		return c.JSON(fiber.Map{"project_id": pid, "key_type": kt})
+	}
+}
+
+// revokeMemberMCPKeys revokes the active mcp keys userID minted in orgID's
+// projects. It runs inside the caller's transaction (member removal or
+// demotion to viewer). Only mcp keys are revoked: public/secret keys are
+// shared project credentials owned by Admins and keep working. Returns the
+// number of keys revoked.
+func revokeMemberMCPKeys(ctx context.Context, tx pgx.Tx, orgID, userID int64) (int64, error) {
+	tag, err := tx.Exec(ctx, `
+		UPDATE api_keys k SET is_active = false, revoked_at = COALESCE(k.revoked_at, now())
+		FROM projects p
+		WHERE p.id = k.project_id AND p.org_id = $1 AND k.created_by = $2 AND k.key_type = 'mcp' AND k.is_active`,
+		orgID, userID)
+	if err != nil {
+		return 0, fmt.Errorf("revoke member mcp keys: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// invalidateKeyCache drops cached key lookups after keys were revoked.
+func (h *Handler) invalidateKeyCache() {
+	if h.ingestSvc != nil {
+		h.ingestSvc.KeyCache().InvalidateAll()
 	}
 }

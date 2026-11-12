@@ -53,12 +53,52 @@ type IssueEvent struct {
 	DeviceInfo         json.RawMessage `json:"device_info"`
 	ReleaseVersion     string          `json:"release_version"`
 	CreatedAt          time.Time       `json:"created_at"`
+	// Display labels from issueEventLabels. Filled only by the MCP tools and
+	// never serialised (the dashboard derives its own from device_info).
+	OSLabel, DeviceLabel, AppLabel string `json:"-"`
+}
+
+// IssueBucket is one value of a breakdown (OS version, device, app version) and
+// how many occurrences carried it.
+type IssueBucket struct {
+	Value string `json:"value"`
+	Count int64  `json:"count"`
+}
+
+// IssueAffectedUser is one user hit by the issue, with the context of their
+// most recent occurrence.
+type IssueAffectedUser struct {
+	UserID     string    `json:"user_id"`
+	Count      int64     `json:"count"`
+	LastSeen   time.Time `json:"last_seen"`
+	SessionID  string    `json:"session_id"`
+	Device     string    `json:"device"`
+	OS         string    `json:"os"`
+	AppVersion string    `json:"app_version"`
+}
+
+// IssueDailyCount is the number of occurrences on one UTC day.
+type IssueDailyCount struct {
+	Day   string `json:"day"`
+	Count int64  `json:"count"`
+}
+
+// IssueSummary aggregates every stored occurrence of an issue.
+type IssueSummary struct {
+	TotalEvents   int64               `json:"total_events"`
+	AffectedUsers int64               `json:"affected_users"`
+	OSVersions    []IssueBucket       `json:"os_versions"`
+	Devices       []IssueBucket       `json:"devices"`
+	AppVersions   []IssueBucket       `json:"app_versions"`
+	Users         []IssueAffectedUser `json:"users"`
+	Daily         []IssueDailyCount   `json:"daily"`
 }
 
 // IssueDetail is the full issue plus its occurrences.
 type IssueDetail struct {
 	Issue
-	Events []IssueEvent `json:"events"`
+	Summary IssueSummary `json:"summary"`
+	Events  []IssueEvent `json:"events"`
 }
 
 const issueSelect = `
@@ -161,12 +201,23 @@ func (h *Handler) GetIssue(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
 	defer cancel()
 
-	it, err := scanIssue(h.db.QueryRow(ctx, issueSelect+` WHERE i.id = $1 AND i.project_id = $2`, issueID, projectID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return errIssueNotFound
-	}
+	detail, err := h.loadIssueDetail(ctx, projectID, issueID, 200)
 	if err != nil {
 		return err
+	}
+	return c.JSON(detail)
+}
+
+// loadIssueDetail returns an issue scoped to projectID with its newest
+// eventLimit occurrences (stack traces symbolicated) and aggregated summary.
+// It returns errIssueNotFound when the issue is not in that project.
+func (h *Handler) loadIssueDetail(ctx context.Context, projectID, issueID int64, eventLimit int) (IssueDetail, error) {
+	it, err := scanIssue(h.db.QueryRow(ctx, issueSelect+` WHERE i.id = $1 AND i.project_id = $2`, issueID, projectID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return IssueDetail{}, errIssueNotFound
+	}
+	if err != nil {
+		return IssueDetail{}, err
 	}
 
 	rows, err := h.db.Query(ctx, `
@@ -174,17 +225,13 @@ func (h *Handler) GetIssue(c *fiber.Ctx) error {
 		FROM issue_events
 		WHERE issue_id = $1
 		ORDER BY created_at DESC, id DESC
-		LIMIT 200`, issueID)
+		LIMIT $2`, issueID, eventLimit)
 	if err != nil {
-		return err
+		return IssueDetail{}, err
 	}
 	defer rows.Close()
 
-	// Load symbolication maps once per release version referenced by these events.
-	sourceMaps := map[string][]*issues.SourceMap{}
-	proguardMaps := map[string]*symbolication.ProguardRetracer{}
-	iosSymbolicators := map[string]*symbolication.IOSSymbolicator{}
-
+	resolver := h.newTraceResolver(projectID)
 	events := []IssueEvent{}
 	for rows.Next() {
 		var ev IssueEvent
@@ -193,7 +240,7 @@ func (h *Handler) GetIssue(c *fiber.Ctx) error {
 			&ev.ID, &ev.SessionID, &ev.UserID, &ev.Message, &ev.StackTrace,
 			&breadcrumbs, &deviceInfo, &ev.ReleaseVersion, &ev.CreatedAt,
 		); err != nil {
-			return err
+			return IssueDetail{}, err
 		}
 		if len(breadcrumbs) == 0 {
 			breadcrumbs = []byte("[]")
@@ -203,46 +250,183 @@ func (h *Handler) GetIssue(c *fiber.Ctx) error {
 		}
 		ev.Breadcrumbs = breadcrumbs
 		ev.DeviceInfo = deviceInfo
-		ev.StackTraceResolved = ev.StackTrace
-
-		if ev.StackTrace != "" {
-			// 1. Web JS Source Maps
-			maps, ok := sourceMaps[ev.ReleaseVersion]
-			if !ok {
-				maps = h.loadSourceMaps(ctx, projectID, ev.ReleaseVersion)
-				sourceMaps[ev.ReleaseVersion] = maps
-			}
-			for _, sm := range maps {
-				ev.StackTraceResolved = sm.DemangleStackTrace(ev.StackTraceResolved)
-			}
-
-			// 2. Android ProGuard / R8 Mapping
-			pg, ok := proguardMaps[ev.ReleaseVersion]
-			if !ok {
-				pg = h.loadProguardRetracer(ctx, projectID, ev.ReleaseVersion)
-				proguardMaps[ev.ReleaseVersion] = pg
-			}
-			if pg != nil {
-				ev.StackTraceResolved = pg.RetraceStackTrace(ev.StackTraceResolved)
-			}
-
-			// 3. iOS dSYM / DWARF Symbolicator
-			iosSym, ok := iosSymbolicators[ev.ReleaseVersion]
-			if !ok {
-				iosSym = h.loadIOSSymbolicator(ctx, projectID, ev.ReleaseVersion)
-				iosSymbolicators[ev.ReleaseVersion] = iosSym
-			}
-			if iosSym != nil {
-				ev.StackTraceResolved = symbolication.DemangleIOSStackTrace(ev.StackTraceResolved, iosSym, 0)
-			}
-		}
+		ev.StackTraceResolved = resolver.resolve(ctx, ev.ReleaseVersion, ev.StackTrace)
 		events = append(events, ev)
 	}
 	if err := rows.Err(); err != nil {
-		return err
+		return IssueDetail{}, err
 	}
 
-	return c.JSON(IssueDetail{Issue: it, Events: events})
+	summary, err := h.loadIssueSummary(ctx, issueID)
+	if err != nil {
+		return IssueDetail{}, err
+	}
+
+	return IssueDetail{Issue: it, Summary: summary, Events: events}, nil
+}
+
+// traceResolver symbolicates stack traces for one project, loading each
+// release's source maps, ProGuard/R8 mapping and dSYM at most once.
+type traceResolver struct {
+	h          *Handler
+	projectID  int64
+	sourceMaps map[string][]*issues.SourceMap
+	proguard   map[string]*symbolication.ProguardRetracer
+	ios        map[string]*symbolication.IOSSymbolicator
+}
+
+func (h *Handler) newTraceResolver(projectID int64) *traceResolver {
+	return &traceResolver{
+		h: h, projectID: projectID,
+		sourceMaps: map[string][]*issues.SourceMap{},
+		proguard:   map[string]*symbolication.ProguardRetracer{},
+		ios:        map[string]*symbolication.IOSSymbolicator{},
+	}
+}
+
+// resolve returns trace demangled with every artifact uploaded for version.
+func (r *traceResolver) resolve(ctx context.Context, version, trace string) string {
+	if trace == "" {
+		return trace
+	}
+	// 1. Web JS Source Maps
+	maps, ok := r.sourceMaps[version]
+	if !ok {
+		maps = r.h.loadSourceMaps(ctx, r.projectID, version)
+		r.sourceMaps[version] = maps
+	}
+	for _, sm := range maps {
+		trace = sm.DemangleStackTrace(trace)
+	}
+	// 2. Android ProGuard / R8 Mapping
+	pg, ok := r.proguard[version]
+	if !ok {
+		pg = r.h.loadProguardRetracer(ctx, r.projectID, version)
+		r.proguard[version] = pg
+	}
+	if pg != nil {
+		trace = pg.RetraceStackTrace(trace)
+	}
+	// 3. iOS dSYM / DWARF Symbolicator
+	iosSym, ok := r.ios[version]
+	if !ok {
+		iosSym = r.h.loadIOSSymbolicator(ctx, r.projectID, version)
+		r.ios[version] = iosSym
+	}
+	if iosSym != nil {
+		trace = symbolication.DemangleIOSStackTrace(trace, iosSym, 0)
+	}
+	return trace
+}
+
+// issueEventLabels normalises the free-form device_info of occurrences into
+// display labels (os, device, app). SDKs disagree on key names, so each label
+// falls back through the common spellings and ends at 'Unknown'. Callers append
+// their own WHERE on e (issue_events). Shared by the dashboard summary and the
+// MCP tools so both show identical labels.
+const issueEventLabels = `
+		SELECT e.id, e.issue_id, e.user_id, e.session_id, e.created_at,
+		       COALESCE(NULLIF(CASE
+		           WHEN COALESCE(d.os_ver, '') = '' THEN d.os
+		           WHEN COALESCE(d.os, '') = '' THEN d.os_ver
+		           WHEN position(d.os_ver IN d.os) > 0 THEN d.os
+		           ELSE d.os || ' ' || d.os_ver
+		       END, ''), 'Unknown') AS os,
+		       COALESCE(NULLIF(concat_ws(' ', NULLIF(d.maker, ''), NULLIF(d.model, '')), ''), 'Unknown') AS device,
+		       COALESCE(NULLIF(e.release_version, ''), NULLIF(d.app_ver, ''), 'Unknown') AS app
+		FROM issue_events e
+		CROSS JOIN LATERAL (SELECT
+		    NULLIF(e.device_info->>'os', '') AS os,
+		    COALESCE(e.device_info->>'os_version', e.device_info->>'osVersion') AS os_ver,
+		    COALESCE(e.device_info->>'manufacturer', e.device_info->>'brand') AS maker,
+		    COALESCE(e.device_info->>'model', e.device_info->>'device_model',
+		             CASE WHEN jsonb_typeof(e.device_info->'device') = 'string' THEN e.device_info->>'device' END) AS model,
+		    COALESCE(e.device_info->>'app_version', e.device_info->>'appVersion') AS app_ver
+		) d`
+
+// issueEventContext is the labelled occurrences of one issue ($1) as CTE ev.
+const issueEventContext = `
+	WITH ev AS (` + issueEventLabels + `
+		WHERE e.issue_id = $1
+	)`
+
+const issueBreakdownLimit = 10
+
+// loadIssueSummary aggregates all stored occurrences of an issue: totals, the
+// OS / device / app-version breakdowns, the most affected users and a 14-day trend.
+func (h *Handler) loadIssueSummary(ctx context.Context, issueID int64) (IssueSummary, error) {
+	s := IssueSummary{
+		OSVersions:  []IssueBucket{},
+		Devices:     []IssueBucket{},
+		AppVersions: []IssueBucket{},
+		Users:       []IssueAffectedUser{},
+		Daily:       []IssueDailyCount{},
+	}
+
+	if err := h.db.QueryRow(ctx, issueEventContext+`
+		SELECT count(*), count(DISTINCT NULLIF(user_id, '')) FROM ev`, issueID,
+	).Scan(&s.TotalEvents, &s.AffectedUsers); err != nil {
+		return s, err
+	}
+
+	for _, b := range []struct {
+		column string
+		dst    *[]IssueBucket
+	}{{"os", &s.OSVersions}, {"device", &s.Devices}, {"app", &s.AppVersions}} {
+		rows, err := h.db.Query(ctx, issueEventContext+`
+			SELECT `+b.column+`, count(*) FROM ev
+			GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT $2`, issueID, issueBreakdownLimit)
+		if err != nil {
+			return s, err
+		}
+		buckets, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (IssueBucket, error) {
+			var bk IssueBucket
+			return bk, r.Scan(&bk.Value, &bk.Count)
+		})
+		if err != nil {
+			return s, err
+		}
+		*b.dst = buckets
+	}
+
+	rows, err := h.db.Query(ctx, issueEventContext+`
+		SELECT user_id, count(*), max(created_at),
+		       (array_agg(session_id ORDER BY created_at DESC))[1],
+		       (array_agg(device ORDER BY created_at DESC))[1],
+		       (array_agg(os ORDER BY created_at DESC))[1],
+		       (array_agg(app ORDER BY created_at DESC))[1]
+		FROM ev WHERE user_id <> ''
+		GROUP BY user_id ORDER BY 2 DESC, 3 DESC LIMIT 50`, issueID)
+	if err != nil {
+		return s, err
+	}
+	s.Users, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (IssueAffectedUser, error) {
+		var u IssueAffectedUser
+		return u, r.Scan(&u.UserID, &u.Count, &u.LastSeen, &u.SessionID, &u.Device, &u.OS, &u.AppVersion)
+	})
+	if err != nil {
+		return s, err
+	}
+
+	rows, err = h.db.Query(ctx, `
+		SELECT to_char(day_local, 'YYYY-MM-DD'),
+		       (SELECT count(*) FROM issue_events e
+		        WHERE e.issue_id = $1
+		          AND e.created_at >= day AND e.created_at < day + interval '1 day')
+		FROM generate_series(
+		    date_trunc('day', now() AT TIME ZONE 'UTC') - interval '13 days',
+		    date_trunc('day', now() AT TIME ZONE 'UTC'),
+		    interval '1 day') AS g(day_local)
+		CROSS JOIN LATERAL (SELECT day_local AT TIME ZONE 'UTC' AS day) d
+		ORDER BY day`, issueID)
+	if err != nil {
+		return s, err
+	}
+	s.Daily, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (IssueDailyCount, error) {
+		var d IssueDailyCount
+		return d, r.Scan(&d.Day, &d.Count)
+	})
+	return s, err
 }
 
 func (h *Handler) loadProguardRetracer(ctx context.Context, projectID int64, releaseVersion string) *symbolication.ProguardRetracer {
@@ -326,17 +510,29 @@ func (h *Handler) UpdateIssueStatus(c *fiber.Ctx) error {
 	if err := c.BodyParser(&in); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid json body")
 	}
-	status := strings.ToLower(strings.TrimSpace(in.Status))
-	if !validIssueStatus(status) {
-		return fiber.NewError(fiber.StatusBadRequest, "status must be open, resolved or ignored")
-	}
 
 	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
 	defer cancel()
 
-	tx, err := h.db.Begin(ctx)
+	it, err := h.setIssueStatus(ctx, projectID, issueID, in.Status)
 	if err != nil {
 		return err
+	}
+	return c.JSON(it)
+}
+
+// setIssueStatus validates and applies a status change to an issue in
+// projectID, closing its firing incidents when resolved or ignored, in one
+// transaction. It returns errIssueNotFound when the issue is not in that project.
+func (h *Handler) setIssueStatus(ctx context.Context, projectID, issueID int64, status string) (Issue, error) {
+	status = strings.ToLower(strings.TrimSpace(status))
+	if !validIssueStatus(status) {
+		return Issue{}, fiber.NewError(fiber.StatusBadRequest, "status must be open, resolved or ignored")
+	}
+
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		return Issue{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -350,20 +546,20 @@ func (h *Handler) UpdateIssueStatus(c *fiber.Ctx) error {
 		          COALESCE((SELECT e.message FROM issue_events e WHERE e.issue_id = issues.id ORDER BY e.created_at DESC, e.id DESC LIMIT 1), '')`,
 		status, issueID, projectID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errIssueNotFound
+		return Issue{}, errIssueNotFound
 	}
 	if err != nil {
-		return err
+		return Issue{}, err
 	}
 	if status == "resolved" || status == "ignored" {
 		if err := closeIssueIncidents(ctx, tx, projectID, issueID); err != nil {
-			return err
+			return Issue{}, err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return err
+		return Issue{}, err
 	}
-	return c.JSON(it)
+	return it, nil
 }
 
 // closeIssueIncidents silently closes the issue's firing new_issue and

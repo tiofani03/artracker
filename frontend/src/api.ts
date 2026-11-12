@@ -128,7 +128,7 @@ export type Project = {
   replay_screenshot_enabled: boolean
 }
 
-export type KeyType = 'public_client' | 'secret_admin'
+export type KeyType = 'public_client' | 'secret_admin' | 'mcp'
 
 export type ApiKey = {
   id: number
@@ -138,6 +138,9 @@ export type ApiKey = {
   is_active: boolean
   created_at: string
   revoked_at: string | null
+  // Who minted the key; absent for older keys or a deleted user.
+  created_by_name?: string | null
+  created_by_email?: string | null
 }
 
 // secret is the plaintext key; the server returns it exactly once.
@@ -389,7 +392,29 @@ export type IssueEvent = {
   created_at: string
 }
 
-export type IssueDetail = Issue & { events: IssueEvent[] }
+export type IssueBucket = { value: string; count: number }
+
+export type IssueAffectedUser = {
+  user_id: string
+  count: number
+  last_seen: string
+  session_id: string
+  device: string
+  os: string
+  app_version: string
+}
+
+export type IssueSummary = {
+  total_events: number
+  affected_users: number
+  os_versions: IssueBucket[]
+  devices: IssueBucket[]
+  app_versions: IssueBucket[]
+  users: IssueAffectedUser[]
+  daily: { day: string; count: number }[]
+}
+
+export type IssueDetail = Issue & { summary: IssueSummary; events: IssueEvent[] }
 
 export const issueApi = {
   list: (projectId: number, opts: { status?: string; q?: string; sort?: string } = {}) => {

@@ -27,6 +27,7 @@ type Handler struct {
 	replayStore  storage.ReplayStore
 	alertsSvc    *alerts.Service
 	replaySwitch replaySwitchCache
+	mcpLimiter   *ingest.ProjectRateLimiter
 
 	// in-memory artwork store, used only when the database is disabled (SKIP_DB)
 	mu     sync.RWMutex
@@ -36,10 +37,11 @@ type Handler struct {
 
 func New(pool *pgxpool.Pool, cfg config.Config, issuer *auth.Issuer, providers map[string]OAuthProvider) *Handler {
 	return &Handler{
-		db:        pool,
-		cfg:       cfg,
-		issuer:    issuer,
-		providers: providers,
+		db:         pool,
+		cfg:        cfg,
+		issuer:     issuer,
+		providers:  providers,
+		mcpLimiter: newMCPLimiter(),
 		ingestSvc: ingest.NewService(ingest.Config{
 			Workers:         cfg.IngestWorkers,
 			QueueSize:       cfg.IngestQueueSize,
