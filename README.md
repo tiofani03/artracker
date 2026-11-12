@@ -1,22 +1,47 @@
 # Art Tracker
 
-Monorepo starter: **Go (Fiber + pgx)** API, **Vite + React + TypeScript** frontend,
-**PostgreSQL**, everything runnable locally or via Docker Compose.
+**Art Tracker** is an app observability platform: crash and error tracking, session replay,
+product analytics and Telegram alerts. **Go (Fiber + pgx)** API, **Vite + React + TypeScript**
+dashboard, **PostgreSQL**; runnable locally or via Docker Compose.
 
 ```
 artracker/
 ├── backend/            Go API
 │   ├── cmd/api/        entrypoint (graceful shutdown, migrations on boot)
+│   ├── cmd/seed/       fills every project in the database with demo data
 │   └── internal/
-│       ├── config/     env config
-│       ├── db/         pool + embedded SQL migrations
-│       └── handler/    HTTP handlers (health, artworks CRUD)
-├── frontend/           Vite + React + TS
+│       ├── alerts/         alert rules, incidents, Telegram delivery
+│       ├── analytics/      funnels, retention, event sink
+│       ├── auth/           JWT, roles, API key generation
+│       ├── config/         env config
+│       ├── db/             pool + embedded SQL migrations
+│       ├── handler/        HTTP handlers and routes
+│       ├── ingest/         SDK ingest pipeline (queue, rate limits, sanitising)
+│       ├── issues/         crash grouping, source maps, stack trace parsing
+│       ├── storage/        replay chunk storage (R2 / local disk)
+│       └── symbolication/  ProGuard / R8 and iOS dSYM symbolication
+├── frontend/           Vite + React + TS dashboard (src/pages, components, replay, issues)
 ├── docker-compose.yml       dev: postgres only
 ├── docker-compose.prod.yml  full stack (db + api + web behind nginx)
 ├── docker-compose.build.yml local override that builds instead of pulling
 └── .github/workflows/       ci.yml (tests) + docker-publish.yml (Docker Hub)
 ```
+
+## What it does
+
+- **Issues**: errors sent by the SDKs are grouped by fingerprint into issues with counts, first/last
+  seen and open / closed / muted status. The issue page shows the deobfuscated stack trace (your own
+  frames highlighted), breadcrumbs, and breakdowns by OS version, device and app version, plus the
+  affected users and a 14-day trend. Stack traces are deobfuscated with uploaded source maps (web),
+  ProGuard / R8 mappings (Android) or dSYMs (iOS).
+- **Session replay**: DOM replay for web and screenshot-mode replay for mobile (switch per project
+  in Settings), with a performance profile per session.
+- **Analytics**: event log, funnels (including saved funnels) and retention.
+- **Alerts**: per-project rules for new issues, regressions and issue spikes, delivered to Telegram
+  (see [Alerts](#alerts-telegram)).
+- **Team**: organizations with invites and roles (see [Roles](#roles)).
+- **Demo mode**: with `APP_ENV=development`, `?demo=1` in the dashboard URL (or the `X-Demo-Mode: 1`
+  header) previews the dashboard without signing in. It is ignored in every other environment.
 
 ## Local development
 
@@ -25,22 +50,27 @@ Prerequisites: Go 1.25+, Node 22+, Docker.
 ```bash
 cp .env.example .env
 make db-up      # postgres on localhost:5433
-make api        # Go API on :8080 (runs migrations at boot)
-make web        # Vite on :5173, proxies /api -> :8080
+make api        # Go API on $PORT (default 8080; runs migrations at boot)
+make web        # Vite on $WEB_DEV_PORT (default 5173), proxies /api to the API
 ```
 
-Open http://localhost:5173.
+The API reads `PORT` from the environment or from `.env` (`go run` loads `../.env`). Vite reads the same
+`PORT` to find the API, so a `PORT=8081` in `.env` just works; set `VITE_API_TARGET` to point the proxy
+at a different API URL. Open the dashboard at http://localhost:5173 (or your `WEB_DEV_PORT`).
 
 ## API
 
-| Method | Path                 | Notes                          |
-| ------ | -------------------- | ------------------------------ |
-| GET    | `/healthz`           | pings the database             |
-| GET    | `/api/v1/artworks`   | `?limit=50&offset=0`, newest first |
-| POST   | `/api/v1/artworks`   | `{ "title": "...", ... }`      |
-| GET    | `/api/v1/artworks/:id` |                              |
-| PATCH  | `/api/v1/artworks/:id` | partial update               |
-| DELETE | `/api/v1/artworks/:id` | 204 or 404                   |
+- **SDK endpoints**, authenticated with a public client key in the `X-Artracker-Key` header:
+  `POST /api/v1/ingest` (errors, logs), `POST /api/v1/events` (analytics events),
+  `GET /api/v1/replay/config`, `POST /api/v1/replay/chunk-url` and `POST /api/v1/replay/chunk-ack`
+  (session replay), `GET /api/v1/sdk/validate` (check a key).
+- **Dashboard API** under `/api/v1`, authenticated with a login (JWT bearer) token: auth, orgs, members and
+  invites, projects, API keys, issues, sessions, analytics, alerts and release artifacts. Roles are listed
+  [below](#roles).
+- `GET /healthz` pings the database and reports the ingest and analytics queues (`503` when degraded).
+- **Reference**: the SDK guide with payloads is the dashboard's `/docs` page, and the machine-readable
+  OpenAPI spec is served at `GET /api/v1/openapi.json`.
+- `/api/v1/artworks` is a leftover starter example that nothing in the dashboard uses.
 
 Migrations live in `backend/internal/db/migrations` and are embedded into the
 binary; each file runs once, tracked in `schema_migrations`.
@@ -63,18 +93,30 @@ Sessions: a 15-minute access token (JWT, kept in memory by the SPA) and a 30-day
 
 | Action | owner | admin | member | viewer |
 | --- | :-: | :-: | :-: | :-: |
-| View org, projects, key list (prefix only) | yes | yes | yes | yes |
-| Create project | yes | yes | no | no |
-| Create / revoke / rotate API key | yes | yes | no | no |
+| View org, projects, members, issues, sessions, analytics, alerts, key list (prefix only) | yes | yes | yes | yes |
+| Triage issues (open / close / mute, assign) | yes | yes | yes | yes |
+| Save and delete funnels | yes | yes | yes | no |
+| Create project, create / revoke / rotate API keys | yes | yes | no | no |
+| Invite and remove members, manage alert rules, channels and Telegram bot | yes | yes | no | no |
+| Change replay settings, upload source maps / ProGuard mappings / dSYMs | yes | yes | no | no |
+| Change a member's role | yes | no | no | no |
 
 Anyone can create an organization and becomes its `owner`. Non-members get `404` for an org's projects and keys.
 
 ### API keys
 
-- `art_live_...` public client key (for SDKs), `art_sec_...` secret key (server-to-server).
+- `art_live_...` public client key (for SDKs), `art_sec_...` secret key (server-to-server). Today the
+  secret key is only accepted by `/api/v1/sdk/validate-admin`.
 - The full key is shown once at creation; only a SHA-256 hash is stored.
 - Validate a key: `curl -H 'X-Artracker-Key: <key>' /api/v1/sdk/validate` (200 with project id, else 401).
   `/api/v1/sdk/validate-admin` accepts secret keys only (public key gets 403).
+
+### Known limitations
+
+- Uploading source maps, ProGuard mappings and dSYMs
+  (`POST /api/v1/projects/:id/releases/:version/{sourcemaps,proguard,dsyms}`) needs a dashboard login (JWT)
+  token from an admin. A secret key (`art_sec_...`) is not accepted there, so a CI pipeline cannot upload
+  them with a key yet.
 
 ### Tests
 
@@ -106,7 +148,7 @@ Steps:
 
 1. In `shared` mode set `TELEGRAM_BOT_TOKEN`; in `tenant` mode set `ALERTS_MASTER_KEY`.
 2. Run exactly **one** API instance as the alerts worker. It evaluates alert rules and sends the messages (in `shared` mode it also polls Telegram for the link flow). Set `ALERTS_WORKER=false` on every extra replica (the default is `true`).
-3. `tenant` mode: an organisation admin connects the bot in **Settings → Team & Members**, then opens **Alerts** for a project, adds the chat id (the page explains how to find it) and sends a test message. `shared` mode: open **Alerts** for a project and use the connect link to add the bot to a group or a private chat, then send a test message.
+3. `tenant` mode: an organisation admin connects the bot in **Settings → Telegram Bot**, then opens **Alerts** for a project, adds the chat id (the page explains how to find it) and sends a test message. `shared` mode: open **Alerts** for a project and use the connect link to add the bot to a group or a private chat, then send a test message.
 
 Alert kinds: **new issue** (a never-seen error group), **regression** (a resolved issue occurs again) and **issue spike** (an issue's event rate jumps well above its recent baseline). Without a token incidents are still recorded in the dashboard, but no Telegram message is sent.
 
@@ -125,7 +167,8 @@ Same flow as portalsafekamu: images are built in CI and published to Docker
 Hub, the VPS only pulls them.
 
 ```bash
-# on every push to main (.github/workflows/docker-publish.yml)
+# on every push to main, once the repo variable PUBLISH_IMAGES=true is set
+# (.github/workflows/docker-publish.yml; publishing is off until then)
 tayooooo/artracker-api:latest   (and :<git-sha>)
 tayooooo/artracker-web:latest   (and :<git-sha>)
 ```
@@ -138,7 +181,7 @@ access token, not the account password).
 ```bash
 git clone https://github.com/tiofani03/artracker.git ~/artracker
 cd ~/artracker
-cp .env.example .env          # set POSTGRES_PASSWORD
+cp .env.example .env          # then set the production values listed below
 docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d
 curl localhost:8088/healthz
@@ -153,10 +196,20 @@ docker compose -f docker-compose.prod.yml up -d
 docker image prune -f
 ```
 
+Production `.env` must set (the API refuses to start or compose refuses to run without them):
+
+- `POSTGRES_PASSWORD`
+- `JWT_SECRET`: a random string of at least 32 characters (the placeholder from `.env.example` is rejected)
+- `PUBLIC_URL`: the dashboard's public URL (used for OAuth redirects and links in alerts)
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` to sign in
+- `ALERTS_MASTER_KEY`, or `ALERTS_BOT_MODE=shared` (see [Alerts](#alerts-telegram))
+- the `R2_*` variables, or `REPLAY_LOCAL_DIR`, if you want session replay
+
 Pin a build with `TAG=<sha>` in `.env`. Migrations are embedded in the API
 binary and run at boot, so there is no separate migrate step.
 
-The stack publishes only the web container (`WEB_PORT`, default 8088); nginx
+The stack publishes the web container (`WEB_PORT`, default 8088) and Postgres (`DB_PORT`, default 5432;
+firewall it or remove the `ports` entry if the database must stay private); nginx
 serves the SPA and proxies `/api` and `/healthz` to the API. Put Caddy/nginx
 in front for TLS:
 
@@ -177,5 +230,4 @@ docker compose -f docker-compose.prod.yml -f docker-compose.build.yml up -d --bu
 
 ## Notes
 
-- `artworks` is a starter table — replace it with the real domain model once known.
-- No auth yet; add it before exposing write endpoints to the internet.
+- Tests that need Postgres run only against a database you name in `TEST_DATABASE_URL` (see [Tests](#tests)).
