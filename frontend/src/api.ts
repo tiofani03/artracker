@@ -128,7 +128,7 @@ export type Project = {
   replay_screenshot_enabled: boolean
 }
 
-export type KeyType = 'public_client' | 'secret_admin'
+export type KeyType = 'public_client' | 'secret_admin' | 'mcp'
 
 export type ApiKey = {
   id: number
