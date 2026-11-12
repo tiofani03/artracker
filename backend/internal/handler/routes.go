@@ -105,6 +105,11 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Post("/projects/:projectID/releases/:version/proguard", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.UploadProguard)
 	api.Get("/projects/:projectID/releases/:version/artifacts", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListReleaseArtifacts)
 
+	// MCP (Streamable HTTP, stateless): POST only; GET/DELETE answer 405.
+	api.Post("/mcp", h.RequireMCPKey, h.MCP)
+	api.Get("/mcp", h.MCPMethodNotAllowed)
+	api.Delete("/mcp", h.MCPMethodNotAllowed)
+
 	api.Get("/sdk/validate", h.sdkValidate(false))
 	api.Get("/sdk/validate-admin", h.sdkValidate(true))
 
