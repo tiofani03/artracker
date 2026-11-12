@@ -212,7 +212,7 @@ ARTracker isolates ingress validation from database persistence:
 
 1. **Ingress & Anti-Zipbomb Verification**: Incoming batches over HTTP/2 are decompressed via pooled gzip readers protected by a 2 MB hard limit to prevent zip-bomb exploits.
 2. **Sharded In-Memory Key Cache**: Project API keys are verified in under 0.1ms via an in-memory sharded LRU cache with negative caching and singleflight deduplication.
-3. **Per-Project Dual Token Bucket**: Telemetry volume is rate-limited per project across both requests per second (120 RPS) and events per second (1,200 EPS).
+3. **Per-Project Dual Token Bucket**: Telemetry volume is rate-limited per project across both requests per second and events per second (defaults: 50 requests/s and 1,000 events/s per project, tunable with \`INGEST_PROJECT_RPS\` and \`INGEST_PROJECT_EVENTS_PER_SEC\`). Session replay requests have their own budget (\`REPLAY_RATE_RPS\`, default 100/s).
 4. **Buffered Channel Queue**: Valid envelopes are accepted into an in-memory worker channel and immediately return HTTP 202 Accepted to the client (<25ms SLA).
 5. **Worker Pool Batch Flush**: Asynchronous background workers consume envelopes, normalize timestamps for client clock drift, generate UUIDv7 identifiers, and bulk-insert records into range-partitioned PostgreSQL tables using the binary pgx.CopyFrom protocol.`,
   },
@@ -234,7 +234,7 @@ ARTracker isolates ingress validation from database persistence:
         type: 'warning',
         title: 'Rotated Keys',
         content:
-          'When rotating an API key in Settings, the old key remains valid during the transition window before full revocation takes effect.',
+          'Rotating an API key in Settings revokes the old key immediately and issues a new one. Because key lookups are cached for up to 60 seconds (`INGEST_KEY_CACHE_TTL_SEC`), the old key can keep working for up to a minute on a busy API instance.',
       },
     ],
     guideContent: `### Client SDK Authentication
@@ -273,7 +273,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
         type: 'warning',
         title: 'Attribute Size Cap',
         content:
-          'Individual event attributes exceeding 32 KB are automatically truncated and marked with __truncated: true to protect database storage.',
+          'Individual event attributes exceeding 32 KB are automatically truncated and marked with _truncated: true to protect database storage.',
       },
     ],
     headers: [
@@ -284,7 +284,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
     params: [
       { name: 'sent_at', type: 'string (ISO-8601)', required: false, desc: 'Device wall-clock timestamp when envelope was dispatched. Used to correct client clock skew.' },
       { name: 'sdk', type: 'object', required: false, desc: 'Client library identifier and version string (e.g. { name: "artracker-browser", version: "1.2.0" }).' },
-      { name: 'context', type: 'object', required: false, desc: 'Global device/environment metadata: environment, app_version, os, browser, user_agent.' },
+      { name: 'context', type: 'object', required: false, desc: 'Batch-level metadata. The server reads `environment` (default "production") and `app_version` (or `release_version`), which is stored as each item\'s release and used to find the right source map or mapping file. Other keys are ignored: send device details in each item\'s `attributes` (see Error Reporting & Issues).' },
       {
         name: 'items',
         type: 'array<RawItem>',
@@ -302,7 +302,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
         ],
       },
     ],
-    responseSample: JSON.stringify({ status: 'accepted', queued_items: 2 }, null, 2),
+    responseSample: JSON.stringify({ status: 'accepted', queued: 2 }, null, 2),
     defaultHeaders: {
       'Content-Type': 'application/json',
       'X-Artracker-Key': 'art_live_xxxxxxxxxxxxxxxx',
@@ -410,7 +410,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
           {
             sent_at: new Date().toISOString(),
             sdk: { name: 'artracker-web', version: '1.2.0' },
-            context: { environment: 'production', release: 'v2.4.1' },
+            context: { environment: 'production', app_version: 'v2.4.1' },
             items: [
               {
                 type: 'log',
@@ -714,6 +714,127 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
     },
   },
   {
+    id: 'error-reporting',
+    title: 'Error Reporting & Issues',
+    category: 'ISSUES & RELEASES API',
+    isGuide: true,
+    description:
+      'How errors sent to /ingest become issues, and which fields the dashboard reads for stack traces, breadcrumbs and the Android / device breakdowns.',
+    callouts: [
+      {
+        type: 'info',
+        title: 'What creates an issue',
+        content:
+          'Only items with type "log" and level "error" or "fatal" are grouped into issues. Events and lower log levels are stored but never create an issue.',
+      },
+    ],
+    guideContent: `### Fields read from an error item
+
+Send these in the item's \`attributes\` (the item itself carries \`message\`, \`session_id\`, \`user_id\`, \`timestamp\`):
+
+| Attribute | Used for |
+| :--- | :--- |
+| \`stack_trace\` (or \`stack\`, \`stacktrace\`) | Grouping fingerprint and the Stack Trace tab. Deobfuscated with the release's source map / ProGuard mapping / dSYM. |
+| \`breadcrumbs\` | Array of \`{ category, message, timestamp }\`. Shown on the Breadcrumbs tab (the last 50). |
+| \`device_info\` (or \`device\`, \`context\`) | Object with the device keys below. |
+
+The release comes from \`context.app_version\` (or \`context.release_version\`) on the batch. It selects the right mapping file and is the "App Version" in the breakdowns.
+
+### Device keys
+
+The issue page counts how many crashes hit each OS version, device and app version, and lists the affected users. It reads these \`device_info\` keys, trying the alternatives in order:
+
+| Shown as | Keys |
+| :--- | :--- |
+| OS version | \`os\` plus \`os_version\` (or \`osVersion\`), for example \`Android 14\` |
+| Device | \`manufacturer\` (or \`brand\`) plus \`model\` (or \`device_model\`, \`device\`), for example \`samsung SM-A546E\` |
+| App version | the batch \`app_version\`, else \`device_info.app_version\` (or \`appVersion\`) |
+
+Anything missing shows as \`Unknown\`. Other keys are kept and appear on the Device tab.
+
+### Example (Android)
+
+\`\`\`json
+{
+  "context": { "environment": "production", "app_version": "2.5.1" },
+  "items": [{
+    "type": "log",
+    "level": "fatal",
+    "message": "java.lang.NullPointerException",
+    "session_id": "ses_94829",
+    "user_id": "usr_83910",
+    "attributes": {
+      "stack_trace": "java.lang.NullPointerException\\n\\tat com.gli.shop.checkout.CheckoutActivity.onPaymentResult(CheckoutActivity.kt:214)",
+      "device_info": { "os": "Android", "os_version": "14", "manufacturer": "samsung", "model": "SM-A546E" },
+      "breadcrumbs": [{ "category": "navigation", "message": "CartActivity -> CheckoutActivity", "timestamp": "2026-11-12T09:00:01Z" }]
+    }
+  }]
+}
+\`\`\`
+
+Each item may carry an optional \`id\` (string) that the server keeps with the stored record.`,
+  },
+  {
+    id: 'issues-api',
+    title: 'Issues API',
+    category: 'ISSUES & RELEASES API',
+    isGuide: true,
+    description:
+      'Dashboard endpoints for listing and triaging issues. They need a login (Bearer) token; every role, including viewer, can read and triage.',
+    guideContent: `### Endpoints
+
+| Method | Path | Purpose |
+| :--- | :--- | :--- |
+| \`GET\` | \`/projects/:projectId/issues\` | List issues. Query: \`status\` (open, resolved, ignored, all; default open), \`q\` (search), \`sort\` (default frequency), \`limit\` (default 100). |
+| \`GET\` | \`/projects/:projectId/issues/:issueId\` | One issue with its latest events (up to 200, newest first, stack traces deobfuscated) and a \`summary\`. |
+| \`PATCH\` | \`/projects/:projectId/issues/:issueId\` | Body \`{ "status": "open" }\`, \`"resolved"\` or \`"ignored"\`. Resolving or muting also closes the issue's firing alert incidents. |
+| \`POST\` | \`/projects/:projectId/issues/:issueId/assign\` | Assign the issue to the signed-in user. |
+
+### The summary object
+
+\`GET .../issues/:issueId\` includes \`summary\`, computed over every stored event of the issue:
+
+| Field | Meaning |
+| :--- | :--- |
+| \`total_events\` | Stored events for this issue |
+| \`affected_users\` | Distinct non-empty \`user_id\` values |
+| \`os_versions\`, \`devices\`, \`app_versions\` | Top 10 \`{ value, count }\` buckets, most frequent first |
+| \`users\` | Up to 50 users with \`count\`, \`last_seen\`, \`session_id\` and the device, OS and app version of their latest crash |
+| \`daily\` | Crashes per UTC day for the last 14 days (zero-filled) |`,
+  },
+  {
+    id: 'release-artifacts',
+    title: 'Mapping & Symbol Uploads',
+    category: 'ISSUES & RELEASES API',
+    isGuide: true,
+    description:
+      'Upload source maps, ProGuard / R8 mappings and iOS dSYMs per release so stack traces are deobfuscated.',
+    callouts: [
+      {
+        type: 'warning',
+        title: 'Login token required',
+        content:
+          'These endpoints need an admin\'s dashboard login (Bearer) token. Secret keys (art_sec_) are not accepted yet, so a CI job cannot upload with a key today.',
+      },
+    ],
+    guideContent: `### Endpoints
+
+All paths are under \`/projects/:projectId/releases/:version\`, where \`:version\` must equal the \`app_version\` your SDK reports.
+
+| Method | Path | Body | Query |
+| :--- | :--- | :--- | :--- |
+| \`POST\` | \`/sourcemaps\` | Source map JSON | \`file\`: name of the minified file the map belongs to |
+| \`POST\` | \`/proguard\` | ProGuard / R8 \`mapping.txt\` | \`file\`, \`build\` (build number) |
+| \`POST\` | \`/dsyms\` | dSYM binary or a zip of it | \`file\`, \`build\` |
+| \`GET\` | \`/artifacts\` | none | List what is stored for the release |
+
+Uploads answer \`201\` with \`{ "status": "stored", ... }\`. Uploading again for the same release adds another artifact; the newest one is used.
+
+### Trace not deobfuscated?
+
+The issue page shows "Raw trace" when no artifact exists for the event's release. Check \`GET .../artifacts\` for the exact \`app_version\` string the crashing app reported.`,
+  },
+  {
     id: 'replay-config',
     title: 'Replay Capture Settings',
     category: 'SESSION REPLAY API',
@@ -744,13 +865,13 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
     method: 'POST',
     path: '/replay/chunk-url',
     description:
-      'Generates a 5-minute presigned PUT URL directly to Cloudflare R2 / S3 storage for uploading an rrweb DOM snapshot chunk in gzip format.',
+      'Returns a 5-minute upload URL for one replay chunk (gzip). By default this is a signed URL on this API (`PUT /api/v1/replay/upload-chunk`) that streams the chunk to storage; set `direct: true` (or `REPLAY_PROXY_UPLOAD=false` on the server) to get a presigned Cloudflare R2 / S3 URL instead.',
     callouts: [
       {
         type: 'tip',
-        title: 'Direct-to-R2 Architecture',
+        title: 'Proxy or Direct Upload',
         content:
-          'Browser SDKs upload compressed DOM snapshot chunks directly to Cloudflare R2 via presigned PUT URLs, offloading high-bandwidth replay video streaming from the Go API server.',
+          'The default signed API proxy avoids browser CORS preflight problems on the storage bucket. With `direct: true` SDKs upload straight to R2 with a presigned PUT, which offloads bandwidth from the API; storage that cannot presign (for example the local-disk store used in development) always falls back to the proxy.',
       },
       {
         type: 'warning',
@@ -788,6 +909,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
       { name: 'user_id', type: 'string', required: false, desc: 'Optional user identifier.' },
       { name: 'environment', type: 'string', required: false, desc: 'Environment name (default: production).' },
       { name: 'start_time', type: 'string (ISO-8601)', required: false, desc: 'Session initiation timestamp.' },
+      { name: 'direct', type: 'boolean', required: false, desc: 'true: ask for a presigned storage URL; false: force the signed API proxy URL. Default follows the server setting `REPLAY_PROXY_UPLOAD` (proxy).' },
       { name: 'format', type: 'string', required: false, desc: 'Chunk format about to be uploaded; send artracker-screen-v1 for screenshot replay. Answered with 403 screenshot_disabled when the project switch is off.' },
     ],
     defaultHeaders: {
@@ -807,7 +929,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
     ),
     responseSample: JSON.stringify(
       {
-        upload_url: 'https://artracker-storage.r2.cloudflarestorage.com/projects/1/sessions/sess_01j8xyz9abc123/chunk_0.gz?X-Amz-Signature=...',
+        upload_url: 'https://api.example.com/api/v1/replay/upload-chunk?key=projects/1/sessions/sess_01j8xyz9abc123/chunk_0.gz&exp=1731400000&sig=...',
         object_key: 'projects/1/sessions/sess_01j8xyz9abc123/chunk_0.gz',
         expires_in: 300,
       },
@@ -889,7 +1011,11 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
       { name: 'has_error', type: 'query boolean', required: false, desc: 'Filter sessions containing errors (true/false).' },
       { name: 'has_rage_click', type: 'query boolean', required: false, desc: 'Filter sessions containing rage clicks (true/false).' },
       { name: 'user_id', type: 'query string', required: false, desc: 'Filter by specific user identifier.' },
+      { name: 'has_dead_click', type: 'query boolean', required: false, desc: 'Filter sessions containing dead clicks (true/false).' },
+      { name: 'user_prefix', type: 'query string', required: false, desc: 'Match sessions whose user ID starts with this text (type-ahead search).' },
       { name: 'environment', type: 'query string', required: false, desc: 'Filter by environment name.' },
+      { name: 'from', type: 'query string (ISO-8601)', required: false, desc: 'Only sessions that started at or after this time.' },
+      { name: 'to', type: 'query string (ISO-8601)', required: false, desc: 'Only sessions that started before this time.' },
     ],
     defaultHeaders: {
       Accept: 'application/json',
@@ -1119,13 +1245,54 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
     ),
   },
   {
+    id: 'management-api',
+    title: 'Alerts & Project Management API',
+    category: 'MANAGEMENT API',
+    isGuide: true,
+    description:
+      'Other dashboard endpoints, all behind a login (Bearer) token. The minimum role is shown per row.',
+    guideContent: `### Alerts
+
+| Method | Path | Min. role |
+| :--- | :--- | :--- |
+| \`GET\` | \`/projects/:projectId/alerts/rules\` | viewer |
+| \`PATCH\` | \`/projects/:projectId/alerts/rules/:kind\` (\`new_issue\`, \`regression\`, \`issue_spike\`) | admin |
+| \`GET\` | \`/projects/:projectId/alerts/channels\` | viewer |
+| \`GET\` | \`/projects/:projectId/alerts/channels/discover\` (chats that wrote to the bot) | admin |
+| \`POST\` | \`/projects/:projectId/alerts/channels\`, \`.../link-code\` | admin |
+| \`PATCH\` / \`DELETE\` | \`/projects/:projectId/alerts/channels/:channelId\` | admin |
+| \`POST\` | \`/projects/:projectId/alerts/channels/:channelId/test\` | admin |
+| \`GET\` | \`/projects/:projectId/alerts/incidents?status=&limit=\` | viewer |
+| \`GET\`, \`PUT\`, \`PATCH\`, \`DELETE\` | \`/orgs/:orgId/alerts/telegram-bot\` (the organization's own bot) | viewer for GET, admin otherwise |
+
+### Replay, funnels and navigation
+
+| Method | Path | Notes | Min. role |
+| :--- | :--- | :--- | :--- |
+| \`GET\` | \`/projects/:projectId/sessions/:sessionId/chunks\` | Chunk list; \`from_seq\`, \`to_seq\` | viewer |
+| \`GET\` | \`/projects/:projectId/sessions/:sessionId/perf\` | Performance profile of the session | viewer |
+| \`PATCH\` | \`/projects/:projectId/replay-settings\` | \`{ "screenshot_enabled": true }\` switches screenshot-mode replay | admin |
+| \`POST\` | \`/projects/:projectId/analytics/funnels\` | Save a funnel preset | member |
+| \`DELETE\` | \`/projects/:projectId/analytics/funnels/:funnelId\` | Delete a saved funnel | member |
+| \`GET\` | \`/projects/:projectId/nav-counts\` | Sidebar badges: open issues, firing alerts, frustrated replays (24h) | viewer |
+
+### API keys
+
+| Type | Prefix | Use |
+| :--- | :--- | :--- |
+| Public client | \`art_live_\` | SDK ingest, replay and \`GET /sdk/validate\` |
+| Secret admin | \`art_sec_\` | \`GET /sdk/validate-admin\` only (a public key gets 403). Server-side uploads are not available with it yet. |
+
+Create, revoke and rotate keys under \`/projects/:projectId/keys\` (admin).`,
+  },
+  {
     id: 'healthz',
     title: 'Health & Ingest Buffer Status',
     category: 'SYSTEM & HEALTH',
     method: 'GET',
     path: '/healthz',
     description:
-      'Returns real-time health metrics including database pool readiness, queue buffer depth, active workers, and throughput statistics.',
+      'Returns database readiness plus the ingest and analytics queue statistics. Answers 200 with `status: ok`, or 503 with `status: degraded` when the database is down or a queue is at 95% utilization or more. With no database configured, `db` is `disabled`.',
     responseSample: JSON.stringify(
       {
         status: 'ok',
@@ -1139,6 +1306,14 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
           requests_per_sec: 14,
           events_received_total: 10420,
           events_flushed_total: 10420,
+        },
+        analytics: {
+          queue_depth: 0,
+          queue_capacity: 2048,
+          utilization_pct: 0,
+          workers: 4,
+          events_received: 3120,
+          events_flushed: 3120,
         },
       },
       null,
