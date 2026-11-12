@@ -89,3 +89,36 @@ func TestFormatEscapesAndTruncates(t *testing.T) {
 		t.Errorf("message too long: %d", len(out))
 	}
 }
+
+func TestFormatFireFixWithClaudeLine(t *testing.T) {
+	const want = "Fix with Claude: <code>/mcp__artracker-shop__fix_issue 11</code>"
+	mc := testMC()
+	mc.MCPServer = "artracker-shop"
+	for _, kind := range []RuleKind{KindNewIssue, KindRegression, KindIssueSpike} {
+		inc := testInc()
+		inc.IssueID = 11
+		inc.RuleKind = kind
+		if kind == KindIssueSpike {
+			inc.Spike = &SpikeDetail{Count: 30, WindowMinutes: 10, Baseline: 2}
+		}
+		if out := FormatFire(inc, mc); !strings.Contains(out, want) {
+			t.Errorf("%s: missing %q in:\n%s", kind, want, out)
+		}
+	}
+	inc := testInc()
+	inc.IssueID = 11
+	mc.MCPServer = ""
+	if out := FormatFire(inc, mc); strings.Contains(out, "Fix with Claude") {
+		t.Errorf("empty MCPServer must add no line:\n%s", out)
+	}
+	mc.MCPServer = "artracker-shop"
+	mc.Detail = DetailMinimal
+	if out := FormatFire(inc, mc); strings.Contains(out, "Fix with Claude") {
+		t.Errorf("minimal must add no line:\n%s", out)
+	}
+	mc.Detail = DetailFull
+	mc.MCPServer = "a<b"
+	if out := FormatFire(inc, mc); !strings.Contains(out, "/mcp__a&lt;b__fix_issue 11") {
+		t.Errorf("server name not escaped:\n%s", out)
+	}
+}
