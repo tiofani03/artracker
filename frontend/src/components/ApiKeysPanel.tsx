@@ -140,6 +140,7 @@ export default function ApiKeysPanel({ project, canManage, canManageMcp = false 
                   <th scope="col">Scope / Type</th>
                   <th scope="col">Status</th>
                   <th scope="col">Created Date</th>
+                  <th scope="col">Created By</th>
                   {showActions && (
                     <th scope="col" style={{ textAlign: 'right' }}>
                       Actions
@@ -164,6 +165,9 @@ export default function ApiKeysPanel({ project, canManage, canManageMcp = false 
                       </span>
                     </td>
                     <td data-label="Created">{new Date(k.created_at).toLocaleDateString()}</td>
+                    <td data-label="Created By" title={k.created_by_email ?? undefined}>
+                      {k.created_by_name || k.created_by_email || 'Unknown'}
+                    </td>
                     {showActions && (
                       <td className="dash-table__cell-actions">
                         <div className="dash-table__actions">

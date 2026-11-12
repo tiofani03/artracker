@@ -138,6 +138,9 @@ export type ApiKey = {
   is_active: boolean
   created_at: string
   revoked_at: string | null
+  // Who minted the key; absent for older keys or a deleted user.
+  created_by_name?: string | null
+  created_by_email?: string | null
 }
 
 // secret is the plaintext key; the server returns it exactly once.

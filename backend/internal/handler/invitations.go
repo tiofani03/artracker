@@ -287,12 +287,30 @@ func (h *Handler) UpdateOrgMemberRole(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "cannot change the role of the organization owner")
 	}
 
-	_, err = h.db.Exec(ctx, `
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	_, err = tx.Exec(ctx, `
 		UPDATE organization_members
 		SET role = $1
 		WHERE org_id = $2 AND user_id = $3`, newRole, orgID, targetUserID)
 	if err != nil {
 		return fmt.Errorf("update member role: %w", err)
+	}
+	// A viewer cannot mint mcp keys, so a demoted member keeps none.
+	var revoked int64
+	if newRole == "viewer" {
+		if revoked, err = revokeMemberMCPKeys(ctx, tx, orgID, int64(targetUserID)); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if revoked > 0 {
+		h.invalidateKeyCache()
 	}
 
 	return c.JSON(fiber.Map{
@@ -329,9 +347,25 @@ func (h *Handler) RemoveOrgMember(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "cannot remove the organization owner")
 	}
 
-	_, err = h.db.Exec(ctx, `DELETE FROM organization_members WHERE org_id = $1 AND user_id = $2`, orgID, targetUserID)
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	_, err = tx.Exec(ctx, `DELETE FROM organization_members WHERE org_id = $1 AND user_id = $2`, orgID, targetUserID)
 	if err != nil {
 		return fmt.Errorf("delete member: %w", err)
+	}
+	// Removal ends the member's MCP access: their mcp keys go with them.
+	revoked, err := revokeMemberMCPKeys(ctx, tx, orgID, int64(targetUserID))
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if revoked > 0 {
+		h.invalidateKeyCache()
 	}
 
 	return c.SendStatus(fiber.StatusNoContent)
@@ -442,6 +476,13 @@ func (h *Handler) AcceptInvite(c *fiber.Ctx) error {
 	if err != nil {
 		return fmt.Errorf("insert org membership: %w", err)
 	}
+	// Re-accepting as a viewer demotes an existing member: drop their mcp keys.
+	var revoked int64
+	if role == "viewer" {
+		if revoked, err = revokeMemberMCPKeys(ctx, tx, orgID, currentUserID); err != nil {
+			return err
+		}
+	}
 
 	// Mark invitation accepted
 	_, err = tx.Exec(ctx, `
@@ -454,6 +495,9 @@ func (h *Handler) AcceptInvite(c *fiber.Ctx) error {
 
 	if err := tx.Commit(ctx); err != nil {
 		return err
+	}
+	if revoked > 0 {
+		h.invalidateKeyCache()
 	}
 
 	return c.JSON(AcceptInviteResponse{
