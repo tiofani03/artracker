@@ -97,6 +97,7 @@ func newMCPServer(h *Handler, mc mcpContext) *mcp.Server {
 // registerMCPTools is the single place tools and prompts are attached to a
 // per-request server. Each later task adds one registerXxx(s, h, mc) call.
 func registerMCPTools(s *mcp.Server, h *Handler, mc mcpContext) {
+	registerIssueTools(s, h, mc)
 	// Tasks 5-7 register list_issues, get_issue, get_issue_events,
 	// get_session_timeline, update_issue and the fix_issue prompt here.
 }

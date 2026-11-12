@@ -53,6 +53,9 @@ type IssueEvent struct {
 	DeviceInfo         json.RawMessage `json:"device_info"`
 	ReleaseVersion     string          `json:"release_version"`
 	CreatedAt          time.Time       `json:"created_at"`
+	// Display labels from issueEventLabels. Filled only by the MCP tools and
+	// never serialised (the dashboard derives its own from device_info).
+	OSLabel, DeviceLabel, AppLabel string `json:"-"`
 }
 
 // IssueBucket is one value of a breakdown (OS version, device, app version) and
@@ -228,11 +231,7 @@ func (h *Handler) loadIssueDetail(ctx context.Context, projectID, issueID int64,
 	}
 	defer rows.Close()
 
-	// Load symbolication maps once per release version referenced by these events.
-	sourceMaps := map[string][]*issues.SourceMap{}
-	proguardMaps := map[string]*symbolication.ProguardRetracer{}
-	iosSymbolicators := map[string]*symbolication.IOSSymbolicator{}
-
+	resolver := h.newTraceResolver(projectID)
 	events := []IssueEvent{}
 	for rows.Next() {
 		var ev IssueEvent
@@ -251,39 +250,7 @@ func (h *Handler) loadIssueDetail(ctx context.Context, projectID, issueID int64,
 		}
 		ev.Breadcrumbs = breadcrumbs
 		ev.DeviceInfo = deviceInfo
-		ev.StackTraceResolved = ev.StackTrace
-
-		if ev.StackTrace != "" {
-			// 1. Web JS Source Maps
-			maps, ok := sourceMaps[ev.ReleaseVersion]
-			if !ok {
-				maps = h.loadSourceMaps(ctx, projectID, ev.ReleaseVersion)
-				sourceMaps[ev.ReleaseVersion] = maps
-			}
-			for _, sm := range maps {
-				ev.StackTraceResolved = sm.DemangleStackTrace(ev.StackTraceResolved)
-			}
-
-			// 2. Android ProGuard / R8 Mapping
-			pg, ok := proguardMaps[ev.ReleaseVersion]
-			if !ok {
-				pg = h.loadProguardRetracer(ctx, projectID, ev.ReleaseVersion)
-				proguardMaps[ev.ReleaseVersion] = pg
-			}
-			if pg != nil {
-				ev.StackTraceResolved = pg.RetraceStackTrace(ev.StackTraceResolved)
-			}
-
-			// 3. iOS dSYM / DWARF Symbolicator
-			iosSym, ok := iosSymbolicators[ev.ReleaseVersion]
-			if !ok {
-				iosSym = h.loadIOSSymbolicator(ctx, projectID, ev.ReleaseVersion)
-				iosSymbolicators[ev.ReleaseVersion] = iosSym
-			}
-			if iosSym != nil {
-				ev.StackTraceResolved = symbolication.DemangleIOSStackTrace(ev.StackTraceResolved, iosSym, 0)
-			}
-		}
+		ev.StackTraceResolved = resolver.resolve(ctx, ev.ReleaseVersion, ev.StackTrace)
 		events = append(events, ev)
 	}
 	if err := rows.Err(); err != nil {
@@ -298,12 +265,67 @@ func (h *Handler) loadIssueDetail(ctx context.Context, projectID, issueID int64,
 	return IssueDetail{Issue: it, Summary: summary, Events: events}, nil
 }
 
-// issueEventContext normalises the free-form device_info of every occurrence
-// into display labels. SDKs disagree on key names, so each label falls back
-// through the common spellings and ends at 'Unknown'.
-const issueEventContext = `
-	WITH ev AS (
-		SELECT e.user_id, e.session_id, e.created_at,
+// traceResolver symbolicates stack traces for one project, loading each
+// release's source maps, ProGuard/R8 mapping and dSYM at most once.
+type traceResolver struct {
+	h          *Handler
+	projectID  int64
+	sourceMaps map[string][]*issues.SourceMap
+	proguard   map[string]*symbolication.ProguardRetracer
+	ios        map[string]*symbolication.IOSSymbolicator
+}
+
+func (h *Handler) newTraceResolver(projectID int64) *traceResolver {
+	return &traceResolver{
+		h: h, projectID: projectID,
+		sourceMaps: map[string][]*issues.SourceMap{},
+		proguard:   map[string]*symbolication.ProguardRetracer{},
+		ios:        map[string]*symbolication.IOSSymbolicator{},
+	}
+}
+
+// resolve returns trace demangled with every artifact uploaded for version.
+func (r *traceResolver) resolve(ctx context.Context, version, trace string) string {
+	if trace == "" {
+		return trace
+	}
+	// 1. Web JS Source Maps
+	maps, ok := r.sourceMaps[version]
+	if !ok {
+		maps = r.h.loadSourceMaps(ctx, r.projectID, version)
+		r.sourceMaps[version] = maps
+	}
+	for _, sm := range maps {
+		trace = sm.DemangleStackTrace(trace)
+	}
+	// 2. Android ProGuard / R8 Mapping
+	pg, ok := r.proguard[version]
+	if !ok {
+		pg = r.h.loadProguardRetracer(ctx, r.projectID, version)
+		r.proguard[version] = pg
+	}
+	if pg != nil {
+		trace = pg.RetraceStackTrace(trace)
+	}
+	// 3. iOS dSYM / DWARF Symbolicator
+	iosSym, ok := r.ios[version]
+	if !ok {
+		iosSym = r.h.loadIOSSymbolicator(ctx, r.projectID, version)
+		r.ios[version] = iosSym
+	}
+	if iosSym != nil {
+		trace = symbolication.DemangleIOSStackTrace(trace, iosSym, 0)
+	}
+	return trace
+}
+
+// issueEventLabels normalises the free-form device_info of occurrences into
+// display labels (os, device, app). SDKs disagree on key names, so each label
+// falls back through the common spellings and ends at 'Unknown'. Callers append
+// their own WHERE on e (issue_events). Shared by the dashboard summary and the
+// MCP tools so both show identical labels.
+const issueEventLabels = `
+		SELECT e.id, e.issue_id, e.user_id, e.session_id, e.created_at,
 		       COALESCE(NULLIF(CASE
 		           WHEN COALESCE(d.os_ver, '') = '' THEN d.os
 		           WHEN COALESCE(d.os, '') = '' THEN d.os_ver
@@ -320,7 +342,11 @@ const issueEventContext = `
 		    COALESCE(e.device_info->>'model', e.device_info->>'device_model',
 		             CASE WHEN jsonb_typeof(e.device_info->'device') = 'string' THEN e.device_info->>'device' END) AS model,
 		    COALESCE(e.device_info->>'app_version', e.device_info->>'appVersion') AS app_ver
-		) d
+		) d`
+
+// issueEventContext is the labelled occurrences of one issue ($1) as CTE ev.
+const issueEventContext = `
+	WITH ev AS (` + issueEventLabels + `
 		WHERE e.issue_id = $1
 	)`
 
