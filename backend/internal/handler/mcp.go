@@ -65,7 +65,9 @@ func (h *Handler) RequireMCPKey(c *fiber.Ctx) error {
 // and the server is rebuilt per request for the key's project; JSON responses
 // because nothing streams from server to client in v1 (and the fasthttp
 // adaptor buffers the response anyway).
-var mcpHTTPOptions = &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true}
+// MaxRequestBodyBytes repeats GuardMCP's size cap inside the SDK as defence in
+// depth.
+var mcpHTTPOptions = &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, MaxRequestBodyBytes: mcpMaxBodyBytes}
 
 // MCP serves the Streamable HTTP transport for the authenticated key's project.
 func (h *Handler) MCP(c *fiber.Ctx) error {
@@ -193,8 +195,15 @@ func jsonRPCInvalidRequest(c *fiber.Ctx, msg string) error {
 }
 
 // GuardMCP runs after RequireMCPKey (so unauthenticated callers only ever see
-// 401) and rejects requests that are too frequent, too large, batched or too
-// deeply nested before the SDK parses them.
+// 401) and rejects requests that are too frequent, content-encoded, too large,
+// batched or too deeply nested before the SDK parses them.
+//
+// It inspects the raw request body, the exact bytes the SDK reads through the
+// adaptor. Fiber's c.Body() decodes per Content-Encoding instead (unbounded
+// for gzip/br/deflate, empty or an error string for unknown or malformed
+// encodings), which would let the guard check different bytes than the SDK
+// parses. The SDK ignores Content-Encoding, so any value other than identity
+// is refused with 415 before the body is touched.
 func (h *Handler) GuardMCP(c *fiber.Ctx) error {
 	mc, ok := c.Locals("mcpCtx").(mcpContext)
 	if !ok {
@@ -206,7 +215,10 @@ func (h *Handler) GuardMCP(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusTooManyRequests, "rate limit exceeded")
 		}
 	}
-	body := c.Body()
+	if ce := strings.TrimSpace(c.Get(fiber.HeaderContentEncoding)); ce != "" && !strings.EqualFold(ce, "identity") {
+		return fiber.NewError(fiber.StatusUnsupportedMediaType, "Content-Encoding is not supported")
+	}
+	body := c.Request().Body()
 	if len(body) > mcpMaxBodyBytes {
 		return fiber.NewError(fiber.StatusRequestEntityTooLarge, "request body too large")
 	}

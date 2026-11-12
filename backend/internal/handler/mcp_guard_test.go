@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"net/http"
 	"strings"
@@ -73,6 +75,76 @@ func TestMCPRequestGuards(t *testing.T) {
 	}
 	if out, isErr := callTool(t, cs, "list_issues", nil); isErr {
 		t.Fatalf("list_issues: %s", out)
+	}
+}
+
+// postMCPEncoded posts body to /mcp with a Content-Encoding header (key may be "").
+func postMCPEncoded(t *testing.T, url, key, body, encoding string) (*http.Response, string) {
+	t.Helper()
+	hdr := map[string]string{"Content-Encoding": encoding}
+	if key != "" {
+		hdr["Authorization"] = "Bearer " + key
+	}
+	return rawMCPBody(t, "POST", url, body, hdr)
+}
+
+// The guard must inspect the same raw bytes the SDK parses. Fiber's c.Body()
+// decodes per Content-Encoding (and returns nothing or an error string for an
+// unknown or malformed encoding), so any encoding other than identity is
+// refused with 415 before the body is touched.
+func TestMCPRejectsContentEncoding(t *testing.T) {
+	e, _, project, hdr := keyFixture(t)
+	url := e.serveMCP(t)
+	k := e.createKey(t, project, "mcp", hdr)
+
+	deep := initWithExperimental(nestedJSON(37), `"t"`)
+	batch := "[" + mcpInitBody + "]"
+	huge := initWithExperimental(`{}`, `"`+strings.Repeat("x", 70<<10)+`"`)
+	var gz bytes.Buffer
+	zw := gzip.NewWriter(&gz)
+	_, _ = zw.Write([]byte(mcpInitBody))
+	_ = zw.Close()
+
+	// Authentication still runs first.
+	if resp, out := postMCPEncoded(t, url, "", deep, "gzip"); resp.StatusCode != 401 {
+		t.Fatalf("unauthenticated gzip: status = %d (%s), want 401", resp.StatusCode, out)
+	}
+
+	cases := []struct{ name, body, enc string }{
+		{"deep identity,identity", deep, "identity, identity"},
+		{"deep fake gzip", deep, "gzip"},
+		{"huge identity,identity", huge, "identity, identity"},
+		{"batch x", batch, "x"},
+		{"batch x,y", batch, "x, y"},
+		{"real gzip", gz.String(), "gzip"},
+		{"real gzip upper", gz.String(), "GZIP"},
+		{"deflate", mcpInitBody, "deflate"},
+		{"br", mcpInitBody, "br"},
+	}
+	for _, c := range cases {
+		resp, out := postMCPEncoded(t, url, k.Secret, c.body, c.enc)
+		if resp.StatusCode != 415 || !strings.Contains(out, `"error"`) {
+			t.Errorf("%s: status = %d (%.80s), want 415 JSON error", c.name, resp.StatusCode, out)
+		}
+	}
+
+	// Without the header the existing guards still answer.
+	if resp, out := postMCPBody(t, url, k.Secret, huge); resp.StatusCode != 413 {
+		t.Fatalf("plain oversize: status = %d (%.200s), want 413", resp.StatusCode, out)
+	}
+	if resp, out := postMCPBody(t, url, k.Secret, batch); resp.StatusCode != 400 {
+		t.Fatalf("plain batch: status = %d (%.200s), want 400", resp.StatusCode, out)
+	}
+
+	// identity (any case, surrounding spaces) is a no-op encoding and allowed.
+	for _, enc := range []string{"identity", "Identity", " IDENTITY "} {
+		if resp, out := postMCPEncoded(t, url, k.Secret, mcpInitBody, enc); resp.StatusCode != 200 {
+			t.Fatalf("Content-Encoding %q: status = %d (%.200s), want 200", enc, resp.StatusCode, out)
+		}
+	}
+	// identity does not bypass the size and depth guards.
+	if resp, out := postMCPEncoded(t, url, k.Secret, deep, "identity"); resp.StatusCode != 400 {
+		t.Fatalf("deep identity: status = %d (%.200s), want 400", resp.StatusCode, out)
 	}
 }
 

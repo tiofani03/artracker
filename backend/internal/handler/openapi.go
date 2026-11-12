@@ -51,7 +51,11 @@ var openAPISpecBytes = []byte(`{
         "responses": {
           "200": { "description": "JSON-RPC 2.0 response (application/json)" },
           "202": { "description": "Notification accepted, no body" },
-          "401": { "description": "Missing, invalid, revoked or non-mcp key" }
+          "400": { "description": "Malformed JSON-RPC, a batch request, or JSON nested deeper than 32 levels" },
+          "401": { "description": "Missing, invalid, revoked or non-mcp key" },
+          "413": { "description": "Request body larger than 64 KB" },
+          "415": { "description": "Content-Encoding other than identity (compressed bodies are not accepted)" },
+          "429": { "description": "Per-project rate limit exceeded; see the Retry-After header" }
         }
       }
     },
