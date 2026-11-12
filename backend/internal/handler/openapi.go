@@ -24,6 +24,37 @@ var openAPISpecBytes = []byte(`{
     { "url": "https://art.exlm.my.id/api/v1", "description": "Production Edge Cluster" }
   ],
   "paths": {
+    "/mcp": {
+      "post": {
+        "summary": "MCP endpoint (AI assistants)",
+        "description": "Model Context Protocol server over Streamable HTTP in stateless mode with JSON responses: the body is a JSON-RPC 2.0 message (initialize, tools/list, tools/call, prompts/list, prompts/get). Tools: list_issues, get_issue, get_issue_events, get_session_timeline, update_issue; prompt: fix_issue. Authenticate with an MCP key (art_mcp_) as Authorization: Bearer or X-Artracker-Key. The key is scoped to one project and is MCP-only. GET and DELETE answer 405.",
+        "operationId": "mcpRpc",
+        "tags": ["MCP"],
+        "security": [{ "McpKeyAuth": [] }, { "ApiKeyAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["jsonrpc", "method"],
+                "properties": {
+                  "jsonrpc": { "type": "string", "enum": ["2.0"] },
+                  "id": { "type": "integer", "example": 1 },
+                  "method": { "type": "string", "example": "tools/list" },
+                  "params": { "type": "object" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "JSON-RPC 2.0 response (application/json)" },
+          "202": { "description": "Notification accepted, no body" },
+          "401": { "description": "Missing, invalid, revoked or non-mcp key" }
+        }
+      }
+    },
     "/ingest": {
       "post": {
         "summary": "Batch Telemetry Ingestion",
@@ -1102,6 +1133,11 @@ var openAPISpecBytes = []byte(`{
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT"
+      },
+      "McpKeyAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Project MCP key starting with art_mcp_"
       },
       "ApiKeyAuth": {
         "type": "apiKey",

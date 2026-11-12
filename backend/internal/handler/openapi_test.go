@@ -89,6 +89,8 @@ func TestOpenAPIDocumentsScreenshotReplay(t *testing.T) {
 // SDKs never call directly. Every other route must appear in the spec, so a new route either gets a
 // spec entry or an entry here with a reason. Keys are "METHOD /path/{param}" as in the spec.
 var openAPIUndocumented = map[string]string{
+	"GET /mcp":                                       "405 by design (stateless MCP)",
+	"DELETE /mcp":                                    "405 by design (stateless MCP)",
 	"GET /artworks":                                  "legacy starter example",
 	"POST /artworks":                                 "legacy starter example",
 	"GET /artworks/{id}":                             "legacy starter example",
