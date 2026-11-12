@@ -615,3 +615,137 @@ INSERT INTO alert_incidents(project_id, rule_kind, issue_id) VALUES ($1, 'new_is
 		}
 	}
 }
+
+// insertIssueWithEvents creates an issue and one event per device spec.
+func insertIssueWithEvents(t *testing.T, env *issueEnv, events []struct {
+	user, release string
+	device        map[string]any
+}) int64 {
+	t.Helper()
+	ctx := context.Background()
+	var issueID int64
+	if err := env.pool.QueryRow(ctx, `
+		INSERT INTO issues(project_id, fingerprint, title, type, status, count)
+		VALUES ($1, 'fp-summary', 'java.lang.NullPointerException', 'NullPointerException', 'open', $2)
+		RETURNING id`, env.projectID, len(events)).Scan(&issueID); err != nil {
+		t.Fatal(err)
+	}
+	for i, ev := range events {
+		dev, _ := json.Marshal(ev.device)
+		if _, err := env.pool.Exec(ctx, `
+			INSERT INTO issue_events(issue_id, user_id, device_info, release_version, created_at)
+			VALUES ($1, $2, $3, $4, now() - make_interval(mins => $5))`,
+			issueID, ev.user, dev, ev.release, i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return issueID
+}
+
+func getIssueDetail(t *testing.T, env *issueEnv, issueID int64) IssueDetail {
+	t.Helper()
+	resp, err := env.app.Test(httptest.NewRequest("GET", "/api/v1/projects/999/issues/"+strconv.FormatInt(issueID, 10), nil), -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var detail IssueDetail
+	if err := json.NewDecoder(resp.Body).Decode(&detail); err != nil {
+		t.Fatal(err)
+	}
+	return detail
+}
+
+func bucketCount(bs []IssueBucket, value string) int64 {
+	for _, b := range bs {
+		if b.Value == value {
+			return b.Count
+		}
+	}
+	return -1
+}
+
+func TestIssueDetailSummaryBreakdowns(t *testing.T) {
+	env := newIssueEnv(t)
+	android14 := map[string]any{"os": "Android", "os_version": "14", "manufacturer": "samsung", "model": "SM-A546E"}
+	android13 := map[string]any{"os": "Android", "os_version": "13", "manufacturer": "Xiaomi", "model": "Redmi Note 12"}
+	issueID := insertIssueWithEvents(t, env, []struct {
+		user, release string
+		device        map[string]any
+	}{
+		{"u_1", "2.5.1", android14},
+		{"u_1", "2.5.1", android14},
+		{"u_2", "2.5.0", android13},
+		{"", "", map[string]any{"app_version": "2.4.0"}},
+	})
+
+	s := getIssueDetail(t, env, issueID).Summary
+
+	if s.TotalEvents != 4 {
+		t.Errorf("total_events = %d, want 4", s.TotalEvents)
+	}
+	if s.AffectedUsers != 2 {
+		t.Errorf("affected_users = %d, want 2 (anonymous events excluded)", s.AffectedUsers)
+	}
+	if got := bucketCount(s.OSVersions, "Android 14"); got != 2 {
+		t.Errorf("Android 14 = %d, want 2 (buckets %+v)", got, s.OSVersions)
+	}
+	if got := bucketCount(s.OSVersions, "Unknown"); got != 1 {
+		t.Errorf("Unknown OS = %d, want 1 (buckets %+v)", got, s.OSVersions)
+	}
+	if got := bucketCount(s.Devices, "samsung SM-A546E"); got != 2 {
+		t.Errorf("samsung device = %d, want 2 (buckets %+v)", got, s.Devices)
+	}
+	if got := bucketCount(s.AppVersions, "2.4.0"); got != 1 {
+		t.Errorf("app_version fallback 2.4.0 = %d, want 1 (buckets %+v)", got, s.AppVersions)
+	}
+	if s.OSVersions[0].Value != "Android 14" {
+		t.Errorf("buckets not sorted by count desc: %+v", s.OSVersions)
+	}
+}
+
+func TestIssueDetailSummaryAffectedUsers(t *testing.T) {
+	env := newIssueEnv(t)
+	issueID := insertIssueWithEvents(t, env, []struct {
+		user, release string
+		device        map[string]any
+	}{
+		{"u_1", "2.5.1", map[string]any{"os": "Android", "os_version": "14", "model": "Pixel 8"}},
+		{"u_2", "2.5.0", map[string]any{"os": "Android", "os_version": "13", "model": "Pixel 6"}},
+		{"u_1", "2.5.0", map[string]any{"os": "Android", "os_version": "13", "model": "Pixel 7"}},
+	})
+
+	users := getIssueDetail(t, env, issueID).Summary.Users
+	if len(users) != 2 {
+		t.Fatalf("users = %+v, want 2 entries", users)
+	}
+	top := users[0]
+	if top.UserID != "u_1" || top.Count != 2 {
+		t.Fatalf("top user = %+v, want u_1 with 2 crashes", top)
+	}
+	// Device/OS/app version come from that user's most recent event.
+	if top.Device != "Pixel 8" || top.OS != "Android 14" || top.AppVersion != "2.5.1" {
+		t.Fatalf("top user context = %+v, want Pixel 8 / Android 14 / 2.5.1", top)
+	}
+}
+
+func TestIssueDetailSummaryDailyTrend(t *testing.T) {
+	env := newIssueEnv(t)
+	issueID := insertIssueWithEvents(t, env, []struct {
+		user, release string
+		device        map[string]any
+	}{
+		{"u_1", "1.0", map[string]any{}},
+		{"u_2", "1.0", map[string]any{}},
+	})
+	daily := getIssueDetail(t, env, issueID).Summary.Daily
+	if len(daily) != 14 {
+		t.Fatalf("daily = %d points, want 14", len(daily))
+	}
+	var sum int64
+	for _, d := range daily {
+		sum += d.Count
+	}
+	if sum != 2 {
+		t.Fatalf("daily sum = %d, want 2", sum)
+	}
+}

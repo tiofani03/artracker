@@ -55,10 +55,47 @@ type IssueEvent struct {
 	CreatedAt          time.Time       `json:"created_at"`
 }
 
+// IssueBucket is one value of a breakdown (OS version, device, app version) and
+// how many occurrences carried it.
+type IssueBucket struct {
+	Value string `json:"value"`
+	Count int64  `json:"count"`
+}
+
+// IssueAffectedUser is one user hit by the issue, with the context of their
+// most recent occurrence.
+type IssueAffectedUser struct {
+	UserID     string    `json:"user_id"`
+	Count      int64     `json:"count"`
+	LastSeen   time.Time `json:"last_seen"`
+	SessionID  string    `json:"session_id"`
+	Device     string    `json:"device"`
+	OS         string    `json:"os"`
+	AppVersion string    `json:"app_version"`
+}
+
+// IssueDailyCount is the number of occurrences on one UTC day.
+type IssueDailyCount struct {
+	Day   string `json:"day"`
+	Count int64  `json:"count"`
+}
+
+// IssueSummary aggregates every stored occurrence of an issue.
+type IssueSummary struct {
+	TotalEvents   int64               `json:"total_events"`
+	AffectedUsers int64               `json:"affected_users"`
+	OSVersions    []IssueBucket       `json:"os_versions"`
+	Devices       []IssueBucket       `json:"devices"`
+	AppVersions   []IssueBucket       `json:"app_versions"`
+	Users         []IssueAffectedUser `json:"users"`
+	Daily         []IssueDailyCount   `json:"daily"`
+}
+
 // IssueDetail is the full issue plus its occurrences.
 type IssueDetail struct {
 	Issue
-	Events []IssueEvent `json:"events"`
+	Summary IssueSummary `json:"summary"`
+	Events  []IssueEvent `json:"events"`
 }
 
 const issueSelect = `
@@ -242,7 +279,117 @@ func (h *Handler) GetIssue(c *fiber.Ctx) error {
 		return err
 	}
 
-	return c.JSON(IssueDetail{Issue: it, Events: events})
+	summary, err := h.loadIssueSummary(ctx, issueID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(IssueDetail{Issue: it, Summary: summary, Events: events})
+}
+
+// issueEventContext normalises the free-form device_info of every occurrence
+// into display labels. SDKs disagree on key names, so each label falls back
+// through the common spellings and ends at 'Unknown'.
+const issueEventContext = `
+	WITH ev AS (
+		SELECT e.user_id, e.session_id, e.created_at,
+		       COALESCE(NULLIF(CASE
+		           WHEN COALESCE(d.os_ver, '') = '' THEN d.os
+		           WHEN COALESCE(d.os, '') = '' THEN d.os_ver
+		           WHEN position(d.os_ver IN d.os) > 0 THEN d.os
+		           ELSE d.os || ' ' || d.os_ver
+		       END, ''), 'Unknown') AS os,
+		       COALESCE(NULLIF(concat_ws(' ', NULLIF(d.maker, ''), NULLIF(d.model, '')), ''), 'Unknown') AS device,
+		       COALESCE(NULLIF(e.release_version, ''), NULLIF(d.app_ver, ''), 'Unknown') AS app
+		FROM issue_events e
+		CROSS JOIN LATERAL (SELECT
+		    NULLIF(e.device_info->>'os', '') AS os,
+		    COALESCE(e.device_info->>'os_version', e.device_info->>'osVersion') AS os_ver,
+		    COALESCE(e.device_info->>'manufacturer', e.device_info->>'brand') AS maker,
+		    COALESCE(e.device_info->>'model', e.device_info->>'device_model',
+		             CASE WHEN jsonb_typeof(e.device_info->'device') = 'string' THEN e.device_info->>'device' END) AS model,
+		    COALESCE(e.device_info->>'app_version', e.device_info->>'appVersion') AS app_ver
+		) d
+		WHERE e.issue_id = $1
+	)`
+
+const issueBreakdownLimit = 10
+
+// loadIssueSummary aggregates all stored occurrences of an issue: totals, the
+// OS / device / app-version breakdowns, the most affected users and a 14-day trend.
+func (h *Handler) loadIssueSummary(ctx context.Context, issueID int64) (IssueSummary, error) {
+	s := IssueSummary{
+		OSVersions:  []IssueBucket{},
+		Devices:     []IssueBucket{},
+		AppVersions: []IssueBucket{},
+		Users:       []IssueAffectedUser{},
+		Daily:       []IssueDailyCount{},
+	}
+
+	if err := h.db.QueryRow(ctx, issueEventContext+`
+		SELECT count(*), count(DISTINCT NULLIF(user_id, '')) FROM ev`, issueID,
+	).Scan(&s.TotalEvents, &s.AffectedUsers); err != nil {
+		return s, err
+	}
+
+	for _, b := range []struct {
+		column string
+		dst    *[]IssueBucket
+	}{{"os", &s.OSVersions}, {"device", &s.Devices}, {"app", &s.AppVersions}} {
+		rows, err := h.db.Query(ctx, issueEventContext+`
+			SELECT `+b.column+`, count(*) FROM ev
+			GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT $2`, issueID, issueBreakdownLimit)
+		if err != nil {
+			return s, err
+		}
+		buckets, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (IssueBucket, error) {
+			var bk IssueBucket
+			return bk, r.Scan(&bk.Value, &bk.Count)
+		})
+		if err != nil {
+			return s, err
+		}
+		*b.dst = buckets
+	}
+
+	rows, err := h.db.Query(ctx, issueEventContext+`
+		SELECT user_id, count(*), max(created_at),
+		       (array_agg(session_id ORDER BY created_at DESC))[1],
+		       (array_agg(device ORDER BY created_at DESC))[1],
+		       (array_agg(os ORDER BY created_at DESC))[1],
+		       (array_agg(app ORDER BY created_at DESC))[1]
+		FROM ev WHERE user_id <> ''
+		GROUP BY user_id ORDER BY 2 DESC, 3 DESC LIMIT 50`, issueID)
+	if err != nil {
+		return s, err
+	}
+	s.Users, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (IssueAffectedUser, error) {
+		var u IssueAffectedUser
+		return u, r.Scan(&u.UserID, &u.Count, &u.LastSeen, &u.SessionID, &u.Device, &u.OS, &u.AppVersion)
+	})
+	if err != nil {
+		return s, err
+	}
+
+	rows, err = h.db.Query(ctx, `
+		SELECT to_char(day_local, 'YYYY-MM-DD'),
+		       (SELECT count(*) FROM issue_events e
+		        WHERE e.issue_id = $1
+		          AND e.created_at >= day AND e.created_at < day + interval '1 day')
+		FROM generate_series(
+		    date_trunc('day', now() AT TIME ZONE 'UTC') - interval '13 days',
+		    date_trunc('day', now() AT TIME ZONE 'UTC'),
+		    interval '1 day') AS g(day_local)
+		CROSS JOIN LATERAL (SELECT day_local AT TIME ZONE 'UTC' AS day) d
+		ORDER BY day`, issueID)
+	if err != nil {
+		return s, err
+	}
+	s.Daily, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (IssueDailyCount, error) {
+		var d IssueDailyCount
+		return d, r.Scan(&d.Day, &d.Count)
+	})
+	return s, err
 }
 
 func (h *Handler) loadProguardRetracer(ctx context.Context, projectID int64, releaseVersion string) *symbolication.ProguardRetracer {

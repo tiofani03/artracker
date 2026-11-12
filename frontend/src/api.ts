@@ -389,7 +389,29 @@ export type IssueEvent = {
   created_at: string
 }
 
-export type IssueDetail = Issue & { events: IssueEvent[] }
+export type IssueBucket = { value: string; count: number }
+
+export type IssueAffectedUser = {
+  user_id: string
+  count: number
+  last_seen: string
+  session_id: string
+  device: string
+  os: string
+  app_version: string
+}
+
+export type IssueSummary = {
+  total_events: number
+  affected_users: number
+  os_versions: IssueBucket[]
+  devices: IssueBucket[]
+  app_versions: IssueBucket[]
+  users: IssueAffectedUser[]
+  daily: { day: string; count: number }[]
+}
+
+export type IssueDetail = Issue & { summary: IssueSummary; events: IssueEvent[] }
 
 export const issueApi = {
   list: (projectId: number, opts: { status?: string; q?: string; sort?: string } = {}) => {
