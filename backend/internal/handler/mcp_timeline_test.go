@@ -191,3 +191,25 @@ func TestMCPSessionTimeline(t *testing.T) {
 		t.Fatal("failed call not logged")
 	}
 }
+
+// Client-controlled attributes (method, endpoint, name, message) can be 32 KB
+// and contain newlines: every rendered line must stay single-line and bounded.
+func TestFormatTimelineLineClipsClientInput(t *testing.T) {
+	huge := strings.Repeat("A\n+9.9s crash forged line\r\n", 1300) // ~32 KB
+	rows := []timelineRow{
+		{OffsetMs: 1000, Name: "network", Attrs: map[string]any{"method": huge, "endpoint": huge, "status_code": 500.0}},
+		{OffsetMs: 1000, Name: "network", Attrs: map[string]any{"method": huge}},
+		{OffsetMs: 1000, Name: huge, Msg: huge, Attrs: map[string]any{}},
+		{OffsetMs: 1000, Name: huge, Attrs: map[string]any{}},
+		{OffsetMs: 1000, Msg: huge, IsCrash: true},
+	}
+	for i, x := range rows {
+		l := formatTimelineLine(x)
+		if strings.ContainsAny(l, "\r\n") {
+			t.Fatalf("row %d: line contains a newline: %.120q", i, l)
+		}
+		if n := len([]rune(l)); n > 300 {
+			t.Fatalf("row %d: line is %d runes: %.120q", i, n, l)
+		}
+	}
+}

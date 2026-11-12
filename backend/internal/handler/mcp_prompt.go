@@ -27,7 +27,7 @@ func registerFixTools(s *mcp.Server, h *Handler, mc mcpContext) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "update_issue",
 		Description: "Change an issue's status. Only call after the developer has explicitly agreed. " +
-			"status is open, resolved or ignored; resolving or ignoring also closes the issue's firing alerts.",
+			"status is open, resolved or ignored; resolving or ignoring also closes the issue's firing new-issue and regression alerts (spike alerts are not touched).",
 		InputSchema: updateIssueSchema(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in updateIssueIn) (*mcp.CallToolResult, any, error) {
 		status := strings.ToLower(strings.TrimSpace(in.Status))
@@ -82,12 +82,15 @@ func (h *Handler) fixIssuePromptText(ctx context.Context, mc mcpContext, arg str
 	defer cancel()
 
 	var id int64
-	var title string
-	// Prompt arguments arrive as strings; anything that is not a positive
-	// number is treated as "not given".
-	if n, err := strconv.ParseInt(strings.TrimSpace(arg), 10, 64); err == nil && n > 0 {
-		err := h.db.QueryRow(ctx, `SELECT id, title FROM issues WHERE id = $1 AND project_id = $2`,
-			n, mc.ProjectID).Scan(&id, &title)
+	arg = strings.TrimSpace(arg)
+	if arg != "" {
+		// Prompt arguments arrive as strings. A given id that is not a positive
+		// number is "not found", never a silent fallback to another issue.
+		n, err := strconv.ParseInt(arg, 10, 64)
+		if err != nil || n <= 0 {
+			return fmt.Sprintf("Issue %q was not found in this project. Call list_issues to see the available issues.", clip(arg, 32)), nil, nil
+		}
+		err = h.db.QueryRow(ctx, `SELECT id FROM issues WHERE id = $1 AND project_id = $2`, n, mc.ProjectID).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Sprintf("Issue #%d was not found in this project. Call list_issues to see the available issues.", n), nil, nil
 		}
@@ -102,13 +105,16 @@ func (h *Handler) fixIssuePromptText(ctx context.Context, mc mcpContext, arg str
 		if len(rows) == 0 {
 			return fmt.Sprintf("There are no open crashes in %s right now. Nothing to fix.", mc.ProjectName), nil, nil
 		}
-		id, title = rows[0].ID, rows[0].Title
+		id = rows[0].ID
 	}
-	return fixIssueText(mc, id, title), &id, nil
+	return fixIssueText(mc, id), &id, nil
 }
 
-func fixIssueText(mc mcpContext, id int64, title string) string {
-	return fmt.Sprintf(`Fix the crash #%[1]d in %[2]s (%[3]s): %[4]s
+// fixIssueText never includes the issue title: it is end-user controlled
+// (crash messages come from devices) and text in a user-role prompt carries
+// the developer's authority. get_issue returns the title as tool data.
+func fixIssueText(mc mcpContext, id int64) string {
+	return fmt.Sprintf(`Fix the crash #%[1]d in %[2]s (%[3]s).
 
 Work through these steps in order:
 1. Call get_issue with issue_id %[1]d to read the stack trace, the breakdowns and the breadcrumbs. Note the event id and session id it shows.
@@ -117,5 +123,5 @@ Work through these steps in order:
 4. Explain the root cause to the developer, citing the files and lines.
 5. Propose a fix and show the change. Do not apply it before the developer agrees.
 6. After the developer confirms the fix, ask the developer before calling update_issue to mark issue #%[1]d resolved. Never change the status without that explicit yes.`,
-		id, mc.ProjectName, mc.Platform, clip(title, 200))
+		id, mc.ProjectName, mc.Platform)
 }

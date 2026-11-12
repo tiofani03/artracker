@@ -149,7 +149,8 @@ func formatTimelineLine(x timelineRow) string {
 	if category == "network" {
 		i := strings.LastIndex(label, " ")
 		method, status := label[:i], label[i+1:]
-		parts := []string{off, "network", method}
+		// method comes from client attributes (up to 32 KB, may hold newlines).
+		parts := []string{off, "network", clip(method, 40)}
 		if ep := jsString(x.Attrs["endpoint"]); ep != "" {
 			parts = append(parts, clip(ep, timelineMsgMax))
 		}
