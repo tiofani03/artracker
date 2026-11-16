@@ -13,4 +13,5 @@ treat them as user documentation.
 
 Planning notes: [plan.md](plan.md), [plan-web.md](plan-web.md), [plan-android.md](plan-android.md),
 [growth-analytics-plan.md](growth-analytics-plan.md), [mobile-visual-fidelity-plan.md](mobile-visual-fidelity-plan.md),
-[plan-app-tauri.md](plan-app-tauri.md) (desktop Linux & Android app).
+[plan-app-tauri.md](plan-app-tauri.md) (desktop Linux & Android app),
+[plan-app-login-callback.md](plan-app-login-callback.md) (login Google kembali ke app).

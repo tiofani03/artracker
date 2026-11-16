@@ -1,7 +1,8 @@
 import { BASE } from '../api'
+import { IS_APP } from '../appTarget'
 import { useAuth } from '../auth/AuthContext'
 import GoogleIcon from '../components/GoogleIcon'
-import { Link, Redirect } from '../router'
+import { Link, Redirect, useSearch } from '../router'
 import '../dashboard.css'
 
 const ERRORS: Record<string, string> = {
@@ -12,7 +13,7 @@ const ERRORS: Record<string, string> = {
 
 export default function LoginPage() {
   const { user, loading } = useAuth()
-  const code = new URLSearchParams(window.location.search).get('error')
+  const code = new URLSearchParams(useSearch()).get('error')
   const errorMessage = code ? (ERRORS[code] ?? 'Sign-in failed. Please try again.') : ''
   if (!loading && user) return <Redirect to="/dashboard" />
 
@@ -40,7 +41,18 @@ export default function LoginPage() {
           </p>
         )}
 
-        <a className="sso-provider-btn login__google" href={`${BASE}/auth/google/login`}>
+        <a
+          className="sso-provider-btn login__google"
+          href={`${BASE}/auth/google/login`}
+          onClick={
+            IS_APP
+              ? (e) => {
+                  e.preventDefault()
+                  void import('../auth/appAuth').then(({ startAppLogin }) => startAppLogin())
+                }
+              : undefined
+          }
+        >
           <span className="sso-provider-btn__left">
             <span className="sso-provider-btn__icon" aria-hidden="true">
               <GoogleIcon size={16} />
@@ -54,9 +66,11 @@ export default function LoginPage() {
           </span>
         </a>
 
-        <p className="login__foot">
-          <Link to="/">← Back to home</Link>
-        </p>
+        {!IS_APP && (
+          <p className="login__foot">
+            <Link to="/">← Back to home</Link>
+          </p>
+        )}
       </div>
     </main>
   )

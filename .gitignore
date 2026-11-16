@@ -15,3 +15,5 @@ bin/
 
 # Local implementation plans (not pushed)
 docs/superpowers/plans/
+
+!frontend/.env.app

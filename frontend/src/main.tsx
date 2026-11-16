@@ -1,9 +1,9 @@
-import { StrictMode } from 'react'
+import { StrictMode, Suspense, lazy } from 'react'
 import { createRoot } from 'react-dom/client'
 import './tokens.css'
 import './base.css'
 import './index.css'
-import App from './App.tsx'
+import { IS_APP } from './appTarget'
 import { AuthProvider } from './auth/AuthContext'
 import DashboardPage from './pages/DashboardPage'
 import DocsPage from './pages/DocsPage'
@@ -12,7 +12,27 @@ import SettingsPage from './pages/SettingsPage'
 import IssuesPage from './pages/IssuesPage'
 import IssueDetailPage from './pages/IssueDetailPage'
 import InviteAcceptPage from './pages/InviteAcceptPage'
-import { useLocation } from './router'
+import { Redirect, useLocation } from './router'
+
+// The landing page is web-only: in the app build this import is dead code, so the page
+// never reaches the bundle.
+// (import.meta.env is checked inline so the bundler can fold it; a re-exported const cannot.)
+const Landing = import.meta.env.VITE_TARGET === 'app' ? null : lazy(() => import('./App.tsx'))
+
+if (IS_APP) {
+  void import('./auth/appAuth').then(({ installExternalLinkHandler }) => installExternalLinkHandler())
+
+  // Android: tint the system-bar strips like the page, whatever the user picked in the toggle.
+  const syncNativeTheme = () => {
+    const bridge = (window as unknown as { ArtrackerNative?: { setTheme(t: string): void } }).ArtrackerNative
+    bridge?.setTheme(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light')
+  }
+  syncNativeTheme()
+  new MutationObserver(syncNativeTheme).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['data-theme'],
+  })
+}
 
 function Routes() {
   const path = useLocation().replace(/\/+$/, '') || '/'
@@ -43,7 +63,12 @@ function Routes() {
     case '/dashboard/settings':
       return <SettingsPage />
     default:
-      return <App />
+      if (IS_APP || !Landing) return <Redirect to="/login" />
+      return (
+        <Suspense fallback={null}>
+          <Landing />
+        </Suspense>
+      )
   }
 }
 

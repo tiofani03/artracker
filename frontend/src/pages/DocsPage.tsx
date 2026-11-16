@@ -1442,7 +1442,7 @@ export default function DocsPage() {
               </svg>
               <span>ARTracker</span>
             </Link>
-            <span className="fuma-brand__badge">Docs v1.0</span>
+            <span className="fuma-brand__badge fuma-nav__extra">Docs v1.0</span>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -1457,14 +1457,14 @@ export default function DocsPage() {
                 <circle cx="11" cy="11" r="8" />
                 <path d="m21 21-4.3-4.3" />
               </svg>
-              <span>Search docs...</span>
-              <kbd className="fuma-kbd">⌘K</kbd>
+              <span className="fuma-nav__extra">Search docs...</span>
+              <kbd className="fuma-kbd fuma-nav__extra">⌘K</kbd>
             </button>
 
             {/* Toggle Playground Button */}
             <button
               type="button"
-              className={`fuma-panel-btn${playgroundOpen ? ' is-active' : ''}`}
+              className={`fuma-panel-btn fuma-nav__extra${playgroundOpen ? ' is-active' : ''}`}
               onClick={() => setPlaygroundOpen((prev) => !prev)}
               title={playgroundOpen ? 'Collapse API Playground' : 'Open API Playground'}
             >
@@ -1479,14 +1479,14 @@ export default function DocsPage() {
               href={`${BASE}/openapi.json`}
               target="_blank"
               rel="noreferrer"
-              className="fuma-nav__link"
+              className="fuma-nav__link fuma-nav__extra"
               style={{ fontSize: '0.8125rem', fontFamily: 'var(--font-outlier)' }}
             >
               OpenAPI Spec
             </a>
 
             {user && (
-              <span style={{ fontSize: '0.8125rem', color: 'var(--color-muted)' }}>
+              <span className="fuma-nav__extra" style={{ fontSize: '0.8125rem', color: 'var(--color-muted)' }}>
                 {user.email}
               </span>
             )}
@@ -1574,6 +1574,7 @@ function DocsView({
   onSelect?: () => void
 }) {
   const [selectedId, setSelectedId] = useState<string>('ingest-batch')
+  const [navOpen, setNavOpen] = useState(false)
   const [projectKeys, setProjectKeys] = useState<ApiKey[]>([])
   const [activeKey, setActiveKey] = useState<string>('')
   const [copiedUrl, setCopiedUrl] = useState(false)
@@ -1841,8 +1842,20 @@ print(response.status_code, response.json())`
 
   return (
     <div className={`fuma-container${playgroundOpen ? '' : ' has-console-collapsed'}`}>
+      {/* Phones: the section list collapses behind the current page title */}
+      <button
+        type="button"
+        className="fuma-mobile-nav-toggle"
+        aria-expanded={navOpen}
+        aria-controls="fuma-col-nav"
+        onClick={() => setNavOpen((o) => !o)}
+      >
+        <span>{activeSection.title}</span>
+        <span aria-hidden="true">{navOpen ? '▴' : '▾'}</span>
+      </button>
+
       {/* COLUMN 1: LEFT NAVIGATION */}
-      <aside className="fuma-col-nav">
+      <aside id="fuma-col-nav" className={`fuma-col-nav${navOpen ? ' is-open' : ''}`}>
         {categories.map((cat) => (
           <div key={cat} className="fuma-group">
             <div className="fuma-group__title">{cat}</div>
@@ -1856,6 +1869,7 @@ print(response.status_code, response.json())`
                   className={`fuma-item${isActive ? ' is-active' : ''}`}
                   onClick={() => {
                     setSelectedId(s.id)
+                    setNavOpen(false)
                     onSelect?.()
                   }}
                 >

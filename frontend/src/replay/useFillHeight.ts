@@ -3,6 +3,9 @@ import { fillHeight } from './fit'
 
 const px = (v: string) => Number.parseFloat(v) || 0
 
+const SHORT_VIEWPORT_PX = 500
+const SHORT_VIEWPORT_MIN_PX = 560
+
 /** Space the element's ancestors keep below it (padding, border, margin): a viewport-high child must leave it free. */
 export function chromeBelow(el: HTMLElement): number {
   let total = 0
@@ -27,7 +30,10 @@ export function useFillHeight(ref: RefObject<HTMLElement | null>, active: boolea
       const el = ref.current
       if (!el) return
       const top = el.getBoundingClientRect().top + window.scrollY
-      setHeight(fillHeight(window.innerHeight, top, chromeBelow(el), min))
+      // Short viewports (a phone on its side): a viewport-high workspace would leave the stage a
+      // sliver, so let the page scroll and give the workspace a usable height instead.
+      const floor = window.innerHeight < SHORT_VIEWPORT_PX ? Math.max(min, SHORT_VIEWPORT_MIN_PX) : min
+      setHeight(fillHeight(window.innerHeight, top, chromeBelow(el), floor))
     }
     measure()
     window.addEventListener('resize', measure)

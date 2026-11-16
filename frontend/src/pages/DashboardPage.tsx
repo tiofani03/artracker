@@ -316,13 +316,18 @@ function DashboardInner({
   const [replayDeviceMode, setReplayDeviceMode] = useState<DeviceMode>('auto')
   // The replay workspace is exactly viewport-high (no page scroll); measured from its position on the page.
   const replayContainerRef = useRef<HTMLDivElement | null>(null)
+  // Phones show the queue as a full-screen sheet: it always starts closed and is never persisted,
+  // otherwise one visit would make every later load open on top of the player.
+  const isPhone = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches
   const [queueOpen, setQueueOpen] = useState<boolean>(() =>
-    readBool(browserStorage(), QUEUE_OPEN_KEY, defaultQueueOpen(typeof window === 'undefined' ? 0 : window.innerWidth)),
+    isPhone()
+      ? false
+      : readBool(browserStorage(), QUEUE_OPEN_KEY, defaultQueueOpen(typeof window === 'undefined' ? 0 : window.innerWidth)),
   )
   const toggleQueue = () => {
     const next = !queueOpen
     setQueueOpen(next)
-    writeBool(browserStorage(), QUEUE_OPEN_KEY, next)
+    if (!isPhone()) writeBool(browserStorage(), QUEUE_OPEN_KEY, next)
   }
   const replayHeight = useFillHeight(replayContainerRef, section === 'replays')
   const [replayLoading, setReplayLoading] = useState<boolean>(true)
@@ -344,8 +349,10 @@ function DashboardInner({
   const [logPageSize, setLogPageSize] = useState<number>(() => {
     try {
       const stored = localStorage.getItem('artracker.logs.pagesize')
-      const val = stored ? parseInt(stored, 10) : 50
-      return !isNaN(val) && val > 0 ? val : 50
+      // phones: shorter pages keep the stream (and its pagination bar) within a few screens
+      const dflt = typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches ? 20 : 50
+      const val = stored ? parseInt(stored, 10) : dflt
+      return !isNaN(val) && val > 0 ? val : dflt
     } catch {
       return 50
     }
@@ -1138,7 +1145,7 @@ function DashboardInner({
                   <div className={`dash-replay-grid${queueVisible ? '' : ' is-rail-closed'}`}>
                     {/* Left Column: Session Queue with Pagination */}
                     {queueVisible && (
-                    <section className="dash-card dash-card--compact" aria-label="Recorded sessions">
+                    <section className="dash-card dash-card--compact replay-queue" aria-label="Recorded sessions">
                       <div className="dash-card__head">
                         <div>
                           <h2 className="dash-card__title">Session Queue</h2>
@@ -1146,6 +1153,14 @@ function DashboardInner({
                             {replayTotal} total · PII masked on client
                           </p>
                         </div>
+                        {/* phones: the queue is a full-screen sheet, so it needs its own way out */}
+                        <button
+                          type="button"
+                          className="dash-btn replay-queue__close"
+                          onClick={() => setQueueOpen(false)}
+                        >
+                          Close
+                        </button>
                       </div>
                       <div className="dash-user-search">
                         <svg className="dash-user-search__icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1219,6 +1234,8 @@ function DashboardInner({
                               className={`dash-session-item${selected ? ' is-selected' : ''}`}
                               onClick={() => {
                                 setSelectedSessionId(s.id)
+                                // phones: picking a session returns to the player (not persisted)
+                                if (isPhone()) setQueueOpen(false)
                               }}
                             >
                               <div className="dash-session-item__row-1">

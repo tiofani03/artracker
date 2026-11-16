@@ -1096,6 +1096,13 @@ export default function ReplayPlayer({
               </button>
               {menuOpen && (
                 <div className="or-header-menu__panel" role="menu" aria-label="Player options">
+                  {/* the header drops the id on phones; it stays reachable (and selectable) here */}
+                  <div className="or-header-menu__row or-header-menu__row--id">
+                    <span className="or-header-menu__label">Session</span>
+                    <span className="or-res-chip or-header-menu__id" title={session.id}>
+                      {session.id}
+                    </span>
+                  </div>
                   <div className="or-header-menu__row">
                     <span className="or-header-menu__label">Device viewport</span>
                     <div className="dash-seg" role="group" aria-label="Device viewport mode">

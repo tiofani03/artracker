@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthContext'
 import { Link, Redirect, useLocation } from '../router'
 import OrgSwitcher from './OrgSwitcher'
 import ProjectSelector from './ProjectSelector'
+import { API_ORIGIN, IS_APP } from '../appTarget'
 import ThemeToggle from './ThemeToggle'
 import { readWorkspaceFromSearch, stripWorkspaceParams } from '../utils/deepLink'
 import { formatNavBadge } from '../utils/navBadge'
@@ -162,7 +163,7 @@ type Props = {
 export default function DashboardShell({ sectionTitle, toolbar, allowDemo = false, children }: Props) {
   const { user: authUser, loading, logout, reload } = useAuth()
   const path = useLocation().replace(/\/+$/, '') || '/'
-  const isDemoQuery = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1'
+  const isDemoQuery = !IS_APP && typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1'
   const isDemo = allowDemo && !authUser && isDemoQuery
 
   // A deep link (?org=&project=) beats the remembered workspace; non-member ids fall back below.
@@ -222,7 +223,7 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
     let cancelled = false
     ;(async () => {
       try {
-        const res = await fetch('/healthz')
+        const res = await fetch(`${API_ORIGIN}/healthz`)
         if (!res.ok) {
           if (!cancelled) setDbHealth('down')
           return
@@ -513,8 +514,8 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
               <div className="console-crumbs">
                 {activeOrg && (
                   <>
-                    <span className="console-crumbs__muted">{activeOrg.name}</span>
-                    <span className="console-crumbs__sep" aria-hidden="true">/</span>
+                    <span className="console-crumbs__muted console-crumbs__org">{activeOrg.name}</span>
+                    <span className="console-crumbs__sep console-crumbs__org" aria-hidden="true">/</span>
                   </>
                 )}
                 {project && (
