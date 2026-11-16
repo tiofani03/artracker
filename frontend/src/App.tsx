@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { BASE } from './api'
 import { useAuth } from './auth/AuthContext'
 import GoogleIcon from './components/GoogleIcon'
+import ThemeToggle from './components/ThemeToggle'
 import { navigate } from './router'
 
 declare global {
@@ -17,97 +17,26 @@ declare global {
   }
 }
 
-type SdkPlatform = 'web' | 'android' | 'ios'
-
-const SDK_ORDER: SdkPlatform[] = ['web', 'android', 'ios']
-
-const SDK_DATA: Record<
-  SdkPlatform,
+const START_STEPS = [
   {
-    label: string
-    file: string
-    heading: string
-    summary: string
-    guarantees: string[]
-    code: string
-  }
-> = {
-  web: {
-    label: 'Web (TypeScript)',
-    file: 'instrumentation.ts',
-    heading: 'Browser & SPA capture',
-    summary:
-      'Records DOM mutations, fetch timings, and unhandled rejections off the main thread.',
-    guarantees: [
-      'Automatic client masking on password and card inputs',
-      'Batched background transport via sendBeacon',
-      'Source-map symbolication tied to session timestamps',
-    ],
-    code: `import { initARTracker } from '@artracker/browser'
-
-initARTracker({
-  endpoint: 'https://art.exlm.my.id',
-  appKey: 'art_live_a892b109',
-  sessionReplay: {
-    sampleRate: 1.0,
-    maskInputs: { password: true, payment: true },
+    index: '01',
+    title: 'Deploy',
+    body: 'Run Postgres, the Go API, and the dashboard together with one Docker Compose command. Migrations run on their own.',
+    note: 'Self-hosted · your data stays on your server',
   },
-  network: { captureHeaders: false },
-})`,
+  {
+    index: '02',
+    title: 'Create a project',
+    body: 'Sign in, create a project, and copy its public key. Add it to your app and it is ready to report.',
+    note: 'Public keys are safe to ship in client apps',
   },
-  android: {
-    label: 'Android (Kotlin)',
-    file: 'MainApplication.kt',
-    heading: 'Jetpack Compose & View capture',
-    summary:
-      'Captures Compose semantics, OkHttp spans, ANR traces, and crash tombstones.',
-    guarantees: [
-      'Quantized wireframe diffs under 45 KB per session minute',
-      'Offline ring buffer persisted until Wi-Fi resumes',
-      'Automatic ProGuard / R8 mapping correlation',
-    ],
-    code: `import id.exlm.artracker.ARTracker
-import id.exlm.artracker.ReplayConfig
-
-class MainApplication : Application() {
-  override fun onCreate() {
-    super.onCreate()
-    ARTracker.start(
-      context = this,
-      endpoint = "https://art.exlm.my.id",
-      appKey = "art_live_a892b109",
-      replay = ReplayConfig(redactTextInputs = true)
-    )
-  }
-}`,
+  {
+    index: '03',
+    title: 'Watch it arrive',
+    body: 'Sessions, crashes, and logs show up in the dashboard. Errors are grouped into issues for you.',
+    note: 'Replays, issues, and alerts in one place',
   },
-  ios: {
-    label: 'iOS (Swift)',
-    file: 'AppDelegate.swift',
-    heading: 'SwiftUI & UIKit instrumentation',
-    summary:
-      'Delivers SwiftUI hierarchy snapshots, URLSession metrics, and MetricKit crash diagnostics.',
-    guarantees: [
-      'Masks SecureField and tagged views before encoding',
-      'Low-overhead delta diffs under 40 KB per minute',
-      'Symbolicated crash reports linked to user gestures',
-    ],
-    code: `import ARTracker
-import SwiftUI
-
-@main
-struct MyApp: App {
-    init() {
-        ARTracker.configure(
-            endpoint: "https://art.exlm.my.id",
-            appKey: "art_live_a892b109",
-            maskSensitiveViews: true
-        )
-    }
-    var body: some Scene { WindowGroup { ContentView() } }
-}`,
-  },
-}
+]
 
 const ENGINES = [
   {
@@ -393,14 +322,7 @@ export default function App() {
   const { user } = useAuth()
   const scrollBarRef = useRef<HTMLDivElement | null>(null)
   const dialogRef = useRef<HTMLDialogElement | null>(null)
-  const tabRefs = useRef<Record<SdkPlatform, HTMLButtonElement | null>>({
-    web: null,
-    android: null,
-    ios: null,
-  })
 
-  const [activeSdk, setActiveSdk] = useState<SdkPlatform>('web')
-  const [copiedSdk, setCopiedSdk] = useState(false)
 
   // Mount untouched ScrollCraft engine for smooth entrance choreography
   useEffect(() => {
@@ -445,32 +367,6 @@ export default function App() {
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
 
-  const handleSdkKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>, current: SdkPlatform) => {
-    const idx = SDK_ORDER.indexOf(current)
-    let nextIdx = idx
-    if (e.key === 'ArrowRight') nextIdx = (idx + 1) % SDK_ORDER.length
-    else if (e.key === 'ArrowLeft') nextIdx = (idx - 1 + SDK_ORDER.length) % SDK_ORDER.length
-    else if (e.key === 'Home') nextIdx = 0
-    else if (e.key === 'End') nextIdx = SDK_ORDER.length - 1
-    else return
-
-    e.preventDefault()
-    const next = SDK_ORDER[nextIdx]
-    setActiveSdk(next)
-    setCopiedSdk(false)
-    tabRefs.current[next]?.focus()
-  }
-
-  const copySdkCode = async () => {
-    try {
-      await navigator.clipboard.writeText(SDK_DATA[activeSdk].code)
-      setCopiedSdk(true)
-      window.setTimeout(() => setCopiedSdk(false), 1800)
-    } catch {
-      setCopiedSdk(false)
-    }
-  }
-
   const openSsoModal = () => {
     if (user) {
       navigate('/dashboard')
@@ -483,7 +379,6 @@ export default function App() {
     dialogRef.current?.close()
   }
 
-  const currentSdk = SDK_DATA[activeSdk]
 
   return (
     <>
@@ -515,8 +410,8 @@ export default function App() {
             <a href="#features" className="site-nav__link">
               Features
             </a>
-            <a href="#sdks" className="site-nav__link">
-              Native SDKs
+            <a href="#get-started" className="site-nav__link">
+              Get started
             </a>
             <a
               href="/docs"
@@ -539,6 +434,7 @@ export default function App() {
           </nav>
 
           <div className="header-tools">
+            <ThemeToggle showLabel={false} />
             <button type="button" className="key key--primary" onClick={openSsoModal}>
               {user ? 'Dashboard' : 'Login'}
             </button>
@@ -623,87 +519,39 @@ export default function App() {
           </div>
         </section>
 
-        {/* Section 3: Drop-in Native SDK Switcher */}
-        <section id="sdks" className="sdk-section">
+        {/* Section 3: Get started in three steps */}
+        <section id="get-started" className="sdk-section">
           <div className="container">
             <div className="sdk-header" data-sc-in>
-              <h2>Drop-in SDKs for Web, Kotlin, and Swift.</h2>
+              <h2>Up and running in three steps.</h2>
               <p className="sdk-header__desc">
-                Initialize capture in under fifteen lines. Sensitive fields are masked locally
-                before payloads touch the network.
+                Self-host with Docker, create a project, and start seeing what your users see.
               </p>
             </div>
 
-            <div className="sdk-frame cut" data-sc-in>
-              <div className="sdk-tablist" role="tablist" aria-label="Target SDK platform">
-                {SDK_ORDER.map((platform) => (
-                  <button
-                    key={platform}
-                    ref={(el) => {
-                      tabRefs.current[platform] = el
-                    }}
-                    id={`sdk-tab-${platform}`}
-                    type="button"
-                    role="tab"
-                    aria-selected={activeSdk === platform}
-                    aria-controls={`sdk-panel-${platform}`}
-                    tabIndex={activeSdk === platform ? 0 : -1}
-                    className="sdk-tab"
-                    onClick={() => {
-                      setActiveSdk(platform)
-                      setCopiedSdk(false)
-                    }}
-                    onKeyDown={(e) => handleSdkKeyDown(e, platform)}
-                  >
-                    {SDK_DATA[platform].label}
-                  </button>
-                ))}
-              </div>
+            <ol className="steps-grid">
+              {START_STEPS.map((step) => (
+                <li key={step.index} className="step-card cut" data-sc-in>
+                  <span className="step-card__index">{step.index}</span>
+                  <h3>{step.title}</h3>
+                  <p className="step-card__body">{step.body}</p>
+                  <p className="step-card__note">{step.note}</p>
+                </li>
+              ))}
+            </ol>
 
-              <div
-                id={`sdk-panel-${activeSdk}`}
-                role="tabpanel"
-                aria-labelledby={`sdk-tab-${activeSdk}`}
-                className="sdk-panel"
+            <p className="steps-docs">
+              Need setup details?{' '}
+              <a
+                href="/docs"
+                onClick={(e) => {
+                  e.preventDefault()
+                  navigate('/docs')
+                }}
               >
-                <div className="sdk-details">
-                  <h3>{currentSdk.heading}</h3>
-                  <p className="sdk-details__desc">{currentSdk.summary}</p>
-                  <ul className="sdk-list">
-                    {currentSdk.guarantees.map((item) => (
-                      <li key={item} className="sdk-list__item">
-                        {item}
-                      </li>
-                    ))}
-                  </ul>
-                  <p style={{ marginTop: '1.25rem', fontSize: '0.8125rem' }}>
-                    Need raw HTTP/2 ingest or custom language SDK?{' '}
-                    <a
-                      href="/docs"
-                      onClick={(e) => {
-                        e.preventDefault()
-                        navigate('/docs')
-                      }}
-                      style={{ color: 'var(--color-accent)', fontWeight: 600 }}
-                    >
-                      Explore the Ingestion API Documentation &rarr;
-                    </a>
-                  </p>
-                </div>
-
-                <div key={activeSdk} className="graphite-pane">
-                  <div className="graphite-pane__bar">
-                    <span>{currentSdk.file}</span>
-                    <button type="button" className="copy-btn" onClick={copySdkCode}>
-                      {copiedSdk ? 'Copied' : 'Copy snippet'}
-                    </button>
-                  </div>
-                  <pre className="code-pre">
-                    <code>{currentSdk.code}</code>
-                  </pre>
-                </div>
-              </div>
-            </div>
+                Read the documentation &rarr;
+              </a>
+            </p>
           </div>
         </section>
 
@@ -714,8 +562,7 @@ export default function App() {
               <div className="close-copy">
                 <h2>Start capturing sessions in minutes.</h2>
                 <p className="close-copy__desc">
-                  Connect your Web, Android, or iOS app and trace every issue back to the exact
-                  user action.
+                  Deploy on your own server, then trace every issue back to the exact user action.
                 </p>
               </div>
 
@@ -749,7 +596,7 @@ export default function App() {
           <span>ARTracker v0.2.0</span>
           <div className="footer-links">
             <a href="#features">Features</a>
-            <a href="#sdks">Native SDKs</a>
+            <a href="#get-started">Get started</a>
             <a
               href="/docs"
               onClick={(e) => {

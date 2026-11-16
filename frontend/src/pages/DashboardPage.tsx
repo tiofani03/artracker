@@ -1024,9 +1024,10 @@ function DashboardInner({
                         <h2 className="dash-card__title">Top Marketing Campaigns</h2>
                         <p className="dash-card__desc">UTM acquisition and checkout conversion.</p>
                       </div>
+                      {/* Temporarily hidden: campaigns page is disabled
                       <button type="button" className="dash-btn" onClick={() => goSection('/dashboard/campaigns')}>
                         Campaigns →
-                      </button>
+                      </button> */}
                     </div>
 
                     <div className="dash-table-wrap">

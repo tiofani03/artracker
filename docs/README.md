@@ -12,4 +12,5 @@ treat them as user documentation.
 | Design specs and implementation plans of recent work | `superpowers/specs/` (new plans are git-ignored) |
 
 Planning notes: [plan.md](plan.md), [plan-web.md](plan-web.md), [plan-android.md](plan-android.md),
-[growth-analytics-plan.md](growth-analytics-plan.md), [mobile-visual-fidelity-plan.md](mobile-visual-fidelity-plan.md).
+[growth-analytics-plan.md](growth-analytics-plan.md), [mobile-visual-fidelity-plan.md](mobile-visual-fidelity-plan.md),
+[plan-app-tauri.md](plan-app-tauri.md) (desktop Linux & Android app).
