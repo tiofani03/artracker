@@ -9199,3 +9199,143 @@ select {
     font-size: max(0.75rem, 12px);
   }
 }
+
+
+/* =====================================================================
+   Session replay on phones
+   - one compact player header; the session id moves into the options menu
+   - the route/screen caption stops floating over the device frame
+   - narrower timeline label column, tighter stage padding
+===================================================================== */
+.or-header-menu__row--id {
+  display: none;
+}
+
+.or-header-menu__id {
+  user-select: all;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .or-queue-toggle {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .or-unified-header {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: var(--space-xs);
+    padding: 6px var(--space-sm);
+  }
+
+  .or-unified-header__left {
+    width: auto;
+    flex: 1 1 0;
+    flex-wrap: nowrap;
+    min-width: 0;
+  }
+
+  .or-unified-header__user {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .or-unified-header__id {
+    display: none;
+  }
+
+  .or-unified-header__right {
+    width: auto;
+    flex: 0 0 auto;
+    padding-top: 0;
+    border-top: 0;
+    gap: var(--space-xs);
+  }
+
+  .or-header-menu__row--id {
+    display: flex;
+  }
+
+  .or-stage {
+    padding: var(--space-xs);
+  }
+
+  .or-route-strip {
+    position: static;
+    max-width: none;
+    padding: 4px var(--space-sm);
+    background: var(--color-paper-2);
+    border-bottom: var(--rule-hair) solid var(--color-rule);
+    pointer-events: auto;
+  }
+
+  .or-tracks__grid {
+    grid-template-columns: 64px minmax(0, 1fr);
+    column-gap: var(--space-xs);
+  }
+
+  .or-tracks__head {
+    justify-content: space-between;
+  }
+}
+
+/* Phones: the session queue is a full-screen sheet instead of a 1-row strip above the player */
+.replay-queue__close {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .dash-replay-grid {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .dash-replay-grid > .replay-queue {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-modal);
+    border-radius: 0;
+    padding-top: max(var(--space-sm), env(safe-area-inset-top));
+  }
+
+  .replay-queue .dash-card__head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-sm);
+  }
+
+  .replay-queue__close {
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+}
+
+/* Landscape phones: one-row topbar so the player keeps its height */
+@media (max-width: 900px) and (max-height: 500px) {
+  .console-topbar {
+    flex-wrap: nowrap;
+  }
+
+  .console-topbar__right > :not(.theme-toggle-btn) {
+    order: 2;
+    flex: 0 0 auto;
+  }
+
+  .console-topbar__right > .theme-toggle-btn {
+    order: 3;
+  }
+
+  .console-topbar__right > .dash-seg {
+    width: auto;
+  }
+
+  .console-topbar__right > .dash-seg .dash-seg__btn {
+    flex: none;
+  }
+}
