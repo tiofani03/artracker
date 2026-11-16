@@ -344,8 +344,10 @@ function DashboardInner({
   const [logPageSize, setLogPageSize] = useState<number>(() => {
     try {
       const stored = localStorage.getItem('artracker.logs.pagesize')
-      const val = stored ? parseInt(stored, 10) : 50
-      return !isNaN(val) && val > 0 ? val : 50
+      // phones: shorter pages keep the stream (and its pagination bar) within a few screens
+      const dflt = typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches ? 20 : 50
+      const val = stored ? parseInt(stored, 10) : dflt
+      return !isNaN(val) && val > 0 ? val : dflt
     } catch {
       return 50
     }

@@ -8956,3 +8956,246 @@ select {
 .mcp-connect__snippet code {
   user-select: all;
 }
+
+
+/* =====================================================================
+   Mobile friendliness
+   - topbar: one row (crumbs + theme toggle), the range switch gets its own row
+   - closed drawer must not leak its shadow into the viewport
+   - touch devices: >= 44px hit areas (WCAG 2.5.5 / Apple HIG) without changing desktop density
+===================================================================== */
+@media (max-width: 900px) {
+  .console-sidebar {
+    box-shadow: none;
+    visibility: hidden;
+    transition:
+      transform var(--dur-short) var(--ease-out),
+      visibility 0s linear var(--dur-short);
+  }
+
+  .console-sidebar.is-open {
+    box-shadow: var(--shadow-modal);
+    visibility: visible;
+    transition-delay: 0s;
+  }
+
+  .console-topbar {
+    flex-wrap: wrap;
+    row-gap: var(--space-xs);
+    padding-block: var(--space-xs);
+  }
+
+  .console-topbar__left {
+    order: 1;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  /* children become direct flex items: theme toggle stays on row 1, the toolbar drops to row 2 */
+  .console-topbar__right {
+    display: contents;
+  }
+
+  .console-topbar__right > .theme-toggle-btn {
+    order: 2;
+  }
+
+  .console-topbar__right > :not(.theme-toggle-btn) {
+    order: 3;
+    flex: 1 0 100%;
+  }
+
+  .console-topbar__right > .dash-seg {
+    display: flex;
+  }
+
+  .console-topbar__right > .dash-seg .dash-seg__btn {
+    flex: 1;
+  }
+
+  .console-topbar .theme-toggle-btn__label {
+    display: none;
+  }
+
+  .console-crumbs {
+    flex-wrap: nowrap;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .console-crumbs__muted,
+  .console-crumbs__current {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .console-crumbs__current {
+    flex: 0 1 auto;
+  }
+
+  .console-crumbs__sep,
+  .console-crumbs .badge {
+    flex: 0 0 auto;
+  }
+}
+
+/* phones: org name is the first thing to go, project and page title stay */
+@media (max-width: 520px) {
+  .console-crumbs__org {
+    display: none;
+  }
+}
+
+@media (pointer: coarse) {
+  .dash-btn,
+  .dash-seg__btn,
+  .dash-page-tab,
+  .fb-tab,
+  .theme-toggle-btn,
+  .cselect__trigger,
+  .console-nav__item {
+    min-height: 44px;
+  }
+
+  .dash-icon-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .theme-toggle-btn {
+    min-width: 44px;
+    justify-content: center;
+  }
+
+  .dash-btn {
+    min-width: 44px;
+  }
+
+  .fb-search__input,
+  .mo-stream-search__input {
+    min-height: 44px;
+  }
+
+  .issue-header__back,
+  .issue-event__replay {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  /* replay timeline markers are 10px dots: grow the hit area, not the dot */
+  .replay-marker-dot {
+    position: relative;
+  }
+
+  .replay-marker-dot::after {
+    content: '';
+    position: absolute;
+    inset: -17px;
+  }
+
+  .or-transport-btn,
+  .or-transport-speed-btn,
+  .or-tracks__btn,
+  .or-queue-toggle,
+  .or-header-menu__btn,
+  .or-side-panel__sheet-toggle {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* Event stream on phones: filter tabs scroll instead of clipping, tighter paddings */
+@media (max-width: 640px) {
+  .mo-stream-header {
+    padding: var(--space-md);
+  }
+
+  .mo-stream-header__controls {
+    width: 100%;
+  }
+
+  .mo-stream-seg {
+    flex: 1 1 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .mo-stream-seg::-webkit-scrollbar {
+    display: none;
+  }
+
+  .mo-stream-seg__btn {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .mo-stream-toolbar {
+    padding: 10px var(--space-md);
+  }
+}
+
+@media (pointer: coarse) {
+  .or-side-tab,
+  .or-activity-row__bar,
+  .cselect--md .cselect__trigger,
+  .cselect--sm .cselect__trigger,
+  .fuma-brand,
+  .fuma-endpoint-bar__copy {
+    min-height: 44px;
+  }
+
+  .dash-seg__btn {
+    min-width: 44px;
+  }
+}
+
+/* Phones: UI text never below 12px (device-mock labels and chart text are left alone). */
+@media (max-width: 640px) {
+  .console-sidebar__ver,
+  .picker__caption,
+  .console-nav__heading,
+  .console-account__email,
+  .badge,
+  .dash-cell-sub,
+  .or-queue-toggle,
+  .or-unified-header__id,
+  .or-status-pill,
+  .or-event-badge,
+  .or-telemetry-active-card__time,
+  .or-telemetry-flow__label,
+  .or-flow-time,
+  .or-flow-text,
+  .or-transport-filter-btn,
+  .dash-code,
+  .or-tracks__btn,
+  .or-track-label__name,
+  .mo-stream-seg__count,
+  .mo-card__subtitle,
+  .mo-card__session-chip,
+  .mo-card__env-tag,
+  .mo-card__time-exact,
+  .mo-card__time-ago,
+  .mo-pagination__size-label,
+  .dash-seg__btn,
+  .fb-metric-card__title,
+  .fb-pill,
+  .fb-metric-card__hint,
+  .fb-row__msg,
+  .fb-badge-severity,
+  .fb-time-exact,
+  .fb-status-tag,
+  .issue-header__meta,
+  .fuma-method,
+  .fuma-param-req,
+  .fuma-param-type,
+  .fuma-param-opt,
+  .dash-table th,
+  .dash-btn,
+  .fuma-method {
+    font-size: max(0.75rem, 12px);
+  }
+}
