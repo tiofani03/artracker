@@ -38,6 +38,7 @@ func (h *Handler) Routes(api fiber.Router) {
 	a.Get("/:provider/login", h.OAuthLogin)
 	a.Get("/:provider/callback", h.OAuthCallback)
 	a.Post("/refresh", h.Refresh)
+	a.Post("/app/exchange", h.AppExchange)
 	a.Post("/logout", h.Logout)
 	a.Get("/me", h.RequireAuth, h.Me)
 

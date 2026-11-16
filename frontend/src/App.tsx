@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { BASE } from './api'
 import { useAuth } from './auth/AuthContext'
 import GoogleIcon from './components/GoogleIcon'

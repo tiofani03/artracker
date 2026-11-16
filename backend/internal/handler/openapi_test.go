@@ -101,6 +101,7 @@ var openAPIUndocumented = map[string]string{
 	"GET /auth/{provider}/login":                     "browser login flow",
 	"GET /auth/{provider}/callback":                  "browser login flow",
 	"POST /auth/refresh":                             "browser session cookie flow",
+	"POST /auth/app/exchange":                        "native app login (deep-link code redemption)",
 	"POST /auth/logout":                              "browser session cookie flow",
 	"GET /auth/me":                                   "browser session",
 	"POST /orgs":                                     "dashboard organization management",
