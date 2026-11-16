@@ -1,3 +1,5 @@
+import { API_ORIGIN } from '../appTarget'
+
 /**
  * Decodes one replay chunk: gunzips when the gzip magic (0x1f 0x8b) is present (the CDN or
  * browser may already have decoded it via Content-Encoding), then parses JSON.
@@ -24,7 +26,7 @@ export async function parseChunkBytes(buf: ArrayBuffer): Promise<unknown | null>
 export function chunkFetchUrl(rawUrl: string): string {
   try {
     const u = new URL(rawUrl)
-    if (u.pathname.includes('/api/v1/replay/download-chunk')) return `${u.pathname}${u.search}`
+    if (u.pathname.includes('/api/v1/replay/download-chunk')) return `${API_ORIGIN}${u.pathname}${u.search}`
   } catch {
     // relative or malformed: use as-is
   }

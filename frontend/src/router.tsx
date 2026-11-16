@@ -16,8 +16,13 @@ export function useLocation(): string {
   return useSyncExternalStore(subscribe, () => window.location.pathname)
 }
 
+/** Current query string; re-renders when navigate() changes only the query (e.g. /login?error=x). */
+export function useSearch(): string {
+  return useSyncExternalStore(subscribe, () => window.location.search)
+}
+
 export function navigate(to: string, replace = false) {
-  if (to === window.location.pathname) return
+  if (to === window.location.pathname + window.location.search) return
   if (replace) window.history.replaceState(null, '', to)
   else window.history.pushState(null, '', to)
   window.dispatchEvent(new Event(NAV_EVENT))

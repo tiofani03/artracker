@@ -29,6 +29,9 @@ export type User = {
   orgs: OrgMembership[]
 }
 
+import { IS_APP } from './appTarget'
+import { getRefreshToken, setRefreshToken } from './auth/appStore'
+
 export const BASE: string = import.meta.env.VITE_API_BASE ?? '/api/v1'
 
 export class UnauthorizedError extends Error {
@@ -52,10 +55,42 @@ let refreshing: Promise<void> | null = null
 function refreshAccess(): Promise<void> {
   refreshing ??= (async () => {
     try {
-      const res = await fetch(`${BASE}/auth/refresh`, { method: 'POST', credentials: 'include' })
+      // Web: httpOnly cookie. App: no usable cookie jar, so the refresh token lives in
+      // the app store and travels in the body (the server rotates it each time).
+      const call = (token: string | null) =>
+        fetch(
+          `${BASE}/auth/refresh`,
+          IS_APP
+            ? {
+                method: 'POST',
+                credentials: 'omit',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ refresh_token: token }),
+              }
+            : { method: 'POST', credentials: 'include' },
+        )
+
+      let sent = IS_APP ? await getRefreshToken() : null
+      if (IS_APP && !sent) throw new UnauthorizedError()
+      let res = await call(sent)
+
+      if (IS_APP && res.status === 401) {
+        // A second webview load can race this one: it already rotated the token, so ours is
+        // stale (401) while the fresh one sits in the store. Only a token that is still the one
+        // we sent is really dead; otherwise retry once with the new one instead of wiping it.
+        await new Promise((r) => setTimeout(r, 400))
+        const now = await getRefreshToken()
+        if (now && now !== sent) {
+          sent = now
+          res = await call(sent)
+        }
+        if (res.status === 401 && (await getRefreshToken()) === sent) await setRefreshToken(null)
+      }
       if (!res.ok) throw new UnauthorizedError()
-      const body = (await res.json()) as { access_token: string }
+
+      const body = (await res.json()) as { access_token: string; refresh_token?: string }
       accessToken = body.access_token
+      if (IS_APP && body.refresh_token) await setRefreshToken(body.refresh_token)
     } catch (err) {
       accessToken = null
       throw err instanceof UnauthorizedError ? err : new UnauthorizedError()
@@ -69,10 +104,10 @@ function refreshAccess(): Promise<void> {
 async function request<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
-    credentials: 'include',
+    credentials: IS_APP ? 'omit' : 'include',
     headers: {
       'Content-Type': 'application/json',
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : { 'X-Demo-Mode': '1' }),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : IS_APP ? {} : { 'X-Demo-Mode': '1' }),
       ...(init.headers ?? {}),
     },
   })
@@ -108,7 +143,12 @@ export const authApi = {
   refresh: () => refreshAccess(),
   me: () => request<User>('/auth/me'),
   logout: async () => {
-    await request<void>('/auth/logout', { method: 'POST' }, false)
+    try {
+      const body = IS_APP ? JSON.stringify({ refresh_token: await getRefreshToken() }) : undefined
+      await request<void>('/auth/logout', { method: 'POST', body }, false)
+    } finally {
+      if (IS_APP) await setRefreshToken(null)
+    }
     accessToken = null
   },
 }

@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { authApi, setAccessToken, type User } from '../api'
+import { IS_APP } from '../appTarget'
 
 type AuthState = {
   user: User | null
@@ -39,6 +40,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (!IS_APP) return
+    void import('./appAuth').then(({ initAppDeepLinks }) => initAppDeepLinks(reload))
+  }, [reload])
 
   const logout = useCallback(async () => {
     try {
