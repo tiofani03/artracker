@@ -202,3 +202,16 @@ func TestListSessionsIgnoresReplayChunkEvents(t *testing.T) {
 
 	wantIDs(t, s.ids(t, ""))
 }
+
+// A crash-only session takes its environment from the issue event, not a hard-coded default.
+func TestListSessionsCrashOnlyEnvironment(t *testing.T) {
+	s := newSessionListEnv(t, "crashenv")
+	issue := s.mcpAddIssue(t, s.pid, "NPE", "crash", "open", 1)
+	s.mcpAddEvent(t, issue, mcpTestEvent{user: "carol", session: "ses_crash_env", ageMins: 5})
+	if _, err := s.pool.Exec(context.Background(), `UPDATE issue_events SET environment = 'staging' WHERE session_id = 'ses_crash_env'`); err != nil {
+		t.Fatal(err)
+	}
+
+	wantIDs(t, s.ids(t, "environment=staging"), "ses_crash_env")
+	wantIDs(t, s.ids(t, "environment=production"))
+}

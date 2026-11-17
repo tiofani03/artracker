@@ -193,7 +193,7 @@ func jsString(v any) string {
 }
 
 // classifyMarker is a rule-for-rule Go port of classifyMarker in
-// frontend/src/components/ReplayPlayer.tsx (the dashboard's replay markers),
+// frontend/src/replay/classifyMarker.ts (the dashboard's replay markers),
 // returning its badgeLabel. Keep both in sync. Differences: the final
 // fallback returns the event name (the TS code returns 'event' / 'log' from
 // the event kind, which the timeline does not carry).

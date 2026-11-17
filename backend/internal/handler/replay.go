@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net/url"
 	"regexp"
@@ -611,41 +612,11 @@ func (h *Handler) GetProjectSession(c *fiber.Ctx) error {
 		return fmt.Errorf("query session: %w", err)
 	}
 
-	// Correlated events for the player timeline: telemetry rows plus crash rows (same 'ie_' id prefix as
-	// ListProjectEvents). Replay chunk uploads are bookkeeping, not events.
-	eventRows, err := h.db.Query(ctx, `
-		SELECT id, kind, name, level, message, session_id, user_id, environment, release_version, event_timestamp, attributes
-		FROM (
-			SELECT id::text AS id, kind, name, level, message, session_id, user_id, environment, release_version, event_timestamp, attributes
-			FROM telemetry_events
-			WHERE project_id = $1 AND session_id = $2 AND name <> 'replay_chunk'
-			UNION ALL
-			SELECT 'ie_' || ie.id::text, 'crash', i.type, 'fatal', COALESCE(NULLIF(ie.message, ''), i.title),
-				ie.session_id, ie.user_id, 'production', ie.release_version, ie.created_at, '{}'::jsonb
-			FROM issue_events ie JOIN issues i ON i.id = ie.issue_id
-			WHERE i.project_id = $1 AND ie.session_id = $2
-		) timeline
-		ORDER BY event_timestamp ASC
-		LIMIT 200`, projectID, sessionID)
+	// A timeline failure must not hide replay chunks: log it and answer with an empty timeline.
+	timelineEvents, err := h.sessionTimeline(ctx, projectID, sessionID)
 	if err != nil {
-		return fmt.Errorf("query session timeline: %w", err)
-	}
-	defer eventRows.Close()
-
-	timelineEvents := make([]TelemetryEventItem, 0)
-	for eventRows.Next() {
-		var ev TelemetryEventItem
-		if err := eventRows.Scan(
-			&ev.ID, &ev.Kind, &ev.Name, &ev.Level, &ev.Message,
-			&ev.SessionID, &ev.UserID, &ev.Environment, &ev.ReleaseVersion,
-			&ev.EventTimestamp, &ev.Attributes,
-		); err != nil {
-			return fmt.Errorf("scan timeline event: %w", err)
-		}
-		timelineEvents = append(timelineEvents, ev)
-	}
-	if err := eventRows.Err(); err != nil {
-		return fmt.Errorf("timeline rows: %w", err)
+		slog.Error("session timeline failed", "err", err, "project_id", projectID, "session_id", sessionID)
+		timelineEvents = make([]TelemetryEventItem, 0)
 	}
 
 	return c.JSON(ReplaySessionDetailResponse{
@@ -653,6 +624,57 @@ func (h *Handler) GetProjectSession(c *fiber.Ctx) error {
 		Chunks:         chunks,
 		TimelineEvents: timelineEvents,
 	})
+}
+
+// Caps for the correlated events of one session. Telemetry and crash rows are capped separately so a long session
+// cannot push its (few, usually last) crashes out of the timeline.
+const (
+	maxTimelineTelemetryRows = 200
+	maxTimelineCrashRows     = 200
+)
+
+// sessionTimeline returns the correlated events for the player timeline, oldest first: up to
+// maxTimelineTelemetryRows telemetry rows (replay chunk uploads are bookkeeping, not events) plus up to
+// maxTimelineCrashRows crash rows (same 'ie_' id prefix as ListProjectEvents).
+func (h *Handler) sessionTimeline(ctx context.Context, projectID int64, sessionID string) ([]TelemetryEventItem, error) {
+	rows, err := h.db.Query(ctx, `
+		SELECT id, kind, name, level, message, session_id, user_id, environment, release_version, event_timestamp, attributes
+		FROM (
+			(SELECT id::text AS id, kind, name, level, message, session_id, user_id, environment, release_version, event_timestamp, attributes
+			FROM telemetry_events
+			WHERE project_id = $1 AND session_id = $2 AND name <> 'replay_chunk'
+			ORDER BY event_timestamp ASC
+			LIMIT $3)
+			UNION ALL
+			(SELECT 'ie_' || ie.id::text, 'crash', i.type, 'fatal', COALESCE(NULLIF(ie.message, ''), i.title),
+				ie.session_id, ie.user_id, COALESCE(NULLIF(ie.environment, ''), 'production'), ie.release_version, ie.created_at, '{}'::jsonb
+			FROM issue_events ie JOIN issues i ON i.id = ie.issue_id
+			WHERE i.project_id = $1 AND ie.session_id = $2
+			ORDER BY ie.created_at ASC
+			LIMIT $4)
+		) timeline
+		ORDER BY event_timestamp ASC, id`, projectID, sessionID, maxTimelineTelemetryRows, maxTimelineCrashRows)
+	if err != nil {
+		return nil, fmt.Errorf("query session timeline: %w", err)
+	}
+	defer rows.Close()
+
+	events := make([]TelemetryEventItem, 0)
+	for rows.Next() {
+		var ev TelemetryEventItem
+		if err := rows.Scan(
+			&ev.ID, &ev.Kind, &ev.Name, &ev.Level, &ev.Message,
+			&ev.SessionID, &ev.UserID, &ev.Environment, &ev.ReleaseVersion,
+			&ev.EventTimestamp, &ev.Attributes,
+		); err != nil {
+			return nil, fmt.Errorf("scan timeline event: %w", err)
+		}
+		events = append(events, ev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timeline rows: %w", err)
+	}
+	return events, nil
 }
 
 // sessionChunks lists a replay session's chunks, in order, with download URLs.

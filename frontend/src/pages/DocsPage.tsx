@@ -1001,7 +1001,7 @@ The issue page shows "Raw trace" when no matching artifact exists for the event'
     method: 'GET',
     path: '/projects/:projectId/sessions?has_error=true&limit=25',
     description:
-      'Queries recorded sessions with filters for errors, rage clicks, user ID, environment, and date range. Sessions whose SDK has replay disabled (or sampled out) are listed too, derived from their telemetry and crash events with `has_replay: false`, `chunk_count: 0` and no chunks; without `from` they are looked up in the last 7 days. Crashes show up in the session timeline as `kind: "crash"` events.',
+      'Queries recorded sessions with filters for errors, rage clicks, user ID, environment, and date range. Sessions whose SDK has replay disabled (or sampled out) are listed too, derived from their telemetry and crash events with `has_replay: false`, `chunk_count: 0` and no chunks; without `from` they are looked up in the last 7 days, and list counts cover only that window while the session detail covers the whole session. Crashes show up in the session timeline as `kind: "crash"` events.',
     headers: [
       { name: 'Authorization', type: 'string', required: true, desc: 'Bearer <token>' },
     ],

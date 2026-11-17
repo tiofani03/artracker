@@ -460,7 +460,7 @@ var openAPISpecBytes = []byte(`{
     "/projects/{projectID}/sessions": {
       "get": {
         "summary": "List Project Replay Sessions",
-        "description": "Retrieves recorded sessions, including sessions without replay that are derived from telemetry and crash events (has_replay false; looked up in the last 7 days unless from is given), with filters for errors, rage clicks, user ID, environment, and time range.",
+        "description": "Retrieves recorded sessions, including sessions without replay that are derived from telemetry and crash events (has_replay false; looked up in the last 7 days unless from is given), with filters for errors, rage clicks, user ID, environment, and time range. List counts (event_count, has_error and the other flags) cover only that window; the session detail covers the whole session.",
         "operationId": "listProjectSessions",
         "tags": ["Session Replay"],
         "security": [{ "BearerAuth": [] }],

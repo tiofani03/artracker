@@ -33,7 +33,7 @@ src AS (
 	FROM telemetry_events
 	WHERE project_id = $1 AND session_id <> '' AND name <> 'replay_chunk' AND %s
 	UNION ALL
-	SELECT ie.session_id, ie.user_id, NULL::text, ie.created_at, 'fatal'::text, ''::text, true
+	SELECT ie.session_id, ie.user_id, NULLIF(ie.environment, ''), ie.created_at, 'fatal'::text, ''::text, true
 	FROM issue_events ie JOIN issues i ON i.id = ie.issue_id
 	WHERE i.project_id = $1 AND ie.session_id <> '' AND %s
 ), tel AS (
