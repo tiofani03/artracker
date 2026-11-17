@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { replayEmptyMessage, replayViewState } from './viewState'
+import { pickSelectedSession, replayEmptyMessage, replayViewState, resolveActiveSession } from './viewState'
 
 const s = (loading: boolean, sessionCount: number, filter: string) => replayViewState({ loading, sessionCount, filter })
 
@@ -62,4 +62,25 @@ describe('replayViewState with a user search', () => {
   it('keeps the workspace so the search box stays on screen', () => {
     expect(replayViewState({ loading: false, sessionCount: 0, filter: 'all', userQuery: 'user_4' })).toBe('workspace')
   })
+})
+
+describe('pickSelectedSession', () => {
+  it('keeps a selection that is on the page', () => expect(pickSelectedSession('b', ['a', 'b'], '')).toBe('b'))
+  it('keeps a deep-linked session that is not on the page', () => expect(pickSelectedSession('x', ['a', 'b'], 'x')).toBe('x'))
+  it('falls back to the first item only when nothing explicit was asked for', () => {
+    expect(pickSelectedSession('', ['a', 'b'], '')).toBe('a')
+    expect(pickSelectedSession('x', ['a', 'b'], '')).toBe('a') // stale selection after a filter change
+  })
+  it('returns empty for an empty page with no deep link', () => expect(pickSelectedSession('', [], '')).toBe(''))
+})
+
+describe('resolveActiveSession', () => {
+  const a = { id: 'a' }, b = { id: 'b' }
+  it('prefers the loaded detail', () => expect(resolveActiveSession({ detail: b, detailStatus: 'ok', selectedId: 'b', list: [a] })).toBe(b))
+  it('uses the list item while detail loads', () => expect(resolveActiveSession({ detail: null, detailStatus: 'loading', selectedId: 'a', list: [a, b] })).toBe(a))
+  it('never substitutes another session for a selected id', () => {
+    expect(resolveActiveSession({ detail: null, detailStatus: 'not_found', selectedId: 'zzz', list: [a, b] })).toBeNull()
+    expect(resolveActiveSession({ detail: null, detailStatus: 'loading', selectedId: 'zzz', list: [a, b] })).toBeNull()
+  })
+  it('defaults to the first item when nothing is selected', () => expect(resolveActiveSession({ detail: null, detailStatus: 'idle', selectedId: '', list: [a, b] })).toBe(a))
 })

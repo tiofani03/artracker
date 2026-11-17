@@ -35,3 +35,32 @@ export function replayEmptyMessage(filter: string, loading: boolean, userQuery =
   if (filter === 'all') return 'No sessions yet'
   return `No sessions match “${FILTER_LABEL[filter] ?? filter}”`
 }
+
+export type ReplayDetailStatus = 'idle' | 'loading' | 'ok' | 'not_found'
+
+/**
+ * Which session is selected after the list (re)loads. A selection that is on the page stays; a deep-linked one
+ * that is not on this page stays too (it is loaded by id); anything else falls back to the first item.
+ */
+export function pickSelectedSession(cur: string, itemIds: string[], urlSession: string): string {
+  if (itemIds.includes(cur)) return cur
+  if (cur !== '' && cur === urlSession) return cur
+  return itemIds[0] ?? ''
+}
+
+/**
+ * The session the player shows. A selected id is never swapped for another session: if it is neither the loaded
+ * detail nor on the current page, there is nothing to show yet (or it does not exist).
+ */
+export function resolveActiveSession<T extends { id: string }>(a: {
+  detail: T | null
+  detailStatus: ReplayDetailStatus
+  selectedId: string
+  list: T[]
+}): T | null {
+  if (a.detail && a.detail.id === a.selectedId) return a.detail
+  const found = a.list.find((s) => s.id === a.selectedId)
+  if (found) return found
+  if (a.selectedId !== '') return null
+  return a.list[0] ?? null
+}

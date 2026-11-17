@@ -18,7 +18,13 @@ import DashboardShell from '../components/DashboardShell'
 import ReplayPlayer, { type DeviceMode } from '../components/ReplayPlayer'
 import { useFillHeight } from '../replay/useFillHeight'
 import { normalizeUserQuery } from '../replay/userSearch'
-import { replayEmptyMessage, replayViewState } from '../replay/viewState'
+import {
+  pickSelectedSession,
+  replayEmptyMessage,
+  replayViewState,
+  resolveActiveSession,
+  type ReplayDetailStatus,
+} from '../replay/viewState'
 import { browserStorage, defaultQueueOpen, readBool, writeBool } from '../replay/prefs'
 import GrowthAnalyticsView from '../components/analytics/GrowthAnalyticsView'
 import CampaignsView from '../components/campaigns/CampaignsView'
@@ -339,6 +345,7 @@ function DashboardInner({
     timelineEvents: TelemetryEvent[]
   } | null>(null)
   const [detailLoading, setDetailLoading] = useState<boolean>(false)
+  const [detailStatus, setDetailStatus] = useState<ReplayDetailStatus>('idle')
   const [liveCapture, setLiveCapture] = useState<LiveCaptureResult | null>(null)
   const [isCapturingLive, setIsCapturingLive] = useState<boolean>(false)
   const [seedingSessions, setSeedingSessions] = useState<boolean>(false)
@@ -359,14 +366,16 @@ function DashboardInner({
   })
   const [expandedLogIds, setExpandedLogIds] = useState<Set<string>>(new Set())
 
-  const activeReplaySession = useMemo(() => {
-    if (sessionDetail?.session) return sessionDetail.session
-    if (selectedSessionId) {
-      const found = replaySessions.find((s) => s.id === selectedSessionId)
-      if (found) return found
-    }
-    return replaySessions[0] ?? null
-  }, [sessionDetail, selectedSessionId, replaySessions])
+  const activeReplaySession = useMemo(
+    () =>
+      resolveActiveSession({
+        detail: sessionDetail?.session ?? null,
+        detailStatus,
+        selectedId: selectedSessionId,
+        list: replaySessions,
+      }),
+    [sessionDetail, detailStatus, selectedSessionId, replaySessions],
+  )
   // Never hide the queue while nothing is selected, or the user would have no way to pick a session
   const queueVisible = queueOpen || !activeReplaySession || replaySessions.length === 0
   const replayView = replayViewState({
@@ -428,10 +437,13 @@ function DashboardInner({
         if (seq !== replayRequestSeq.current) return
         setReplaySessions(res.items)
         setReplayTotal(res.total)
-        setSelectedSessionId((cur) => {
-          if (cur && res.items.some((s) => s.id === cur)) return cur
-          return res.items[0]?.id ?? ''
-        })
+        setSelectedSessionId((cur) =>
+          pickSelectedSession(
+            cur,
+            res.items.map((s) => s.id),
+            new URLSearchParams(window.location.search).get('session') ?? '',
+          ),
+        )
       } catch (err) {
         if (seq !== replayRequestSeq.current) return
         setReplayError(err instanceof Error ? err.message : 'Failed to fetch replay sessions')
@@ -469,6 +481,7 @@ function DashboardInner({
     if (!projectReady) return
     if (!selectedSessionId) {
       setSessionDetail(null)
+      setDetailStatus('idle')
       return
     }
     if (liveCapture && liveCapture.sessionId === selectedSessionId && !liveCapture.uploadedToR2) {
@@ -477,6 +490,7 @@ function DashboardInner({
 
     let cancelled = false
     setDetailLoading(true)
+    setDetailStatus('loading')
     replayApi
       .getSessionDetail(targetPid, selectedSessionId)
       .then((res) => {
@@ -486,6 +500,7 @@ function DashboardInner({
           chunks: res.chunks,
           timelineEvents: res.timeline_events,
         })
+        setDetailStatus('ok')
         setDetailLoading(false)
       })
       .catch(() => {
@@ -497,8 +512,10 @@ function DashboardInner({
             chunks: [],
             timelineEvents: [],
           })
+          setDetailStatus('ok')
         } else {
           setSessionDetail(null)
+          setDetailStatus('not_found')
         }
         setDetailLoading(false)
       })
@@ -569,6 +586,7 @@ function DashboardInner({
           chunks: [],
           timelineEvents: result.timelineEvents,
         })
+        setDetailStatus('ok')
       })
     }, 5000)
   }
@@ -878,7 +896,7 @@ function DashboardInner({
     currentLogPage * logPageSize,
   )
 
-  const goSection = (path: string) => navigate(isDemo ? `${path}?demo=1` : path)
+  const goSection = (path: string) => navigate(isDemo ? `${path}${path.includes('?') ? '&' : '?'}demo=1` : path)
   const openReplay = (sessionId: string) => {
     setSelectedSessionId(sessionId)
     goSection(`/dashboard/replays?session=${encodeURIComponent(sessionId)}`)
@@ -1233,7 +1251,7 @@ function DashboardInner({
                               type="button"
                               className={`dash-session-item${selected ? ' is-selected' : ''}`}
                               onClick={() => {
-                                setSelectedSessionId(s.id)
+                                openReplay(s.id)
                                 // phones: picking a session returns to the player (not persisted)
                                 if (isPhone()) setQueueOpen(false)
                               }}
@@ -1354,7 +1372,11 @@ function DashboardInner({
                           queueOpen={queueVisible}
                           onToggleQueue={toggleQueue}
                         />
-                      ) : replayLoading ? (
+                      ) : selectedSessionId !== '' && detailStatus === 'not_found' ? (
+                        <section className="dash-replay-empty" role="status">
+                          <p className="dash-replay-empty__title">Session not found</p>
+                        </section>
+                      ) : replayLoading || selectedSessionId !== '' ? (
                         <div className="or-theater or-theater--placeholder" role="status" aria-label="Loading session replay">
                           <div className="or-unified-header">
                             <div className="or-unified-header__left">
