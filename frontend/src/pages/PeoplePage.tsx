@@ -23,6 +23,12 @@ function PeopleList({ projectId }: { projectId: number }) {
   const query = search.get('q') ?? ''
   const offset = Math.max(0, Number(search.get('offset') ?? 0) || 0)
   const [draft, setDraft] = useState(query)
+  // The URL changed from outside the box (sidebar link, back button): show that query, don't write the old one back.
+  const [seenQuery, setSeenQuery] = useState(query)
+  if (query !== seenQuery) {
+    setSeenQuery(query)
+    if (draft.trim() !== query) setDraft(query)
+  }
   // Results are tagged with the request they answer; loading = the latest result is for an older request.
   const requestKey = `${projectId}|${query}|${offset}`
   const [result, setResult] = useState<{ key: string; error: string; data: PeopleListResponse | null }>({

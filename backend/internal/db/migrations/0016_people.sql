@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     last_seen       TIMESTAMPTZ NOT NULL,
     last_session_id TEXT        NOT NULL DEFAULT '',
     last_context    JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    -- event time of the newest $identify merged into traits: an older identify (e.g. from an offline device) never
+    -- overwrites newer traits
+    traits_updated_at TIMESTAMPTZ NOT NULL DEFAULT '1970-01-01T00:00:00Z',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (project_id, user_id)
@@ -46,11 +49,23 @@ SELECT DISTINCT ON (project_id, session_id)
 FROM telemetry_events
 WHERE kind = 'session' AND name IN ('session_start', 'session.start') AND session_id <> ''
   AND event_timestamp > now() - interval '30 days'
+  AND received_at > now() - interval '31 days' -- prunes partitions (the table is partitioned by received_at)
   AND project_id IN (SELECT id FROM projects)
 ORDER BY project_id, session_id, event_timestamp
 ON CONFLICT (project_id, session_id) DO UPDATE SET
     context = EXCLUDED.context,
     user_id = CASE WHEN session_contexts.user_id = '' THEN EXCLUDED.user_id ELSE session_contexts.user_id END;
+
+-- Error flag for telemetry-only sessions of the same window.
+UPDATE session_contexts sc SET has_error = true
+FROM (
+    SELECT DISTINCT project_id, session_id
+    FROM telemetry_events
+    WHERE level IN ('error', 'fatal') AND session_id <> ''
+      AND event_timestamp > now() - interval '30 days'
+      AND received_at > now() - interval '31 days'
+) e
+WHERE sc.project_id = e.project_id AND sc.session_id = e.session_id AND NOT sc.has_error;
 
 INSERT INTO user_profiles (project_id, user_id, first_seen, last_seen, last_session_id, last_context)
 SELECT DISTINCT ON (project_id, user_id)

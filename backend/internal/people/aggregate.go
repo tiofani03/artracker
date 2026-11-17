@@ -32,6 +32,7 @@ type ProfileDelta struct {
 	LastSeen      time.Time
 	LastSessionID string
 	Traits        map[string]any // merged in time order; nil value = delete key; nil map if no $identify
+	TraitsAt      time.Time      // event time of the newest $identify in the batch; zero if none
 	LastContext   map[string]any // nil unless a session-start row for this user was seen
 }
 
@@ -120,7 +121,12 @@ func Aggregate(rows []ingest.TelemetryRow) Batch {
 					p.Traits = map[string]any{}
 				}
 				for tk, tv := range SanitizeTraits(r.Attributes) {
-					p.Traits[tk] = tv
+					if _, exists := p.Traits[tk]; exists || len(p.Traits) < MaxTraitKeys {
+						p.Traits[tk] = tv
+					}
+				}
+				if ts.After(p.TraitsAt) {
+					p.TraitsAt = ts
 				}
 			}
 		}

@@ -156,3 +156,17 @@ test('the docs link opens the Identify Users section', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Identify Users (People)' }).first()).toBeVisible()
   await expect(page.getByText('ARTracker.identify(userId: "u_123", traits: ["plan": "pro", "country": "ID"])')).toBeVisible()
 })
+
+test('the sidebar People link clears an active search', async ({ page }) => {
+  await signedInWith(page, {
+    list: (qs) => (qs.get('search') ? { items: [person('u_pro')], total: 1 } : { items: [person('u_a'), person('u_b')], total: 2 }),
+  })
+  await page.goto('/dashboard/people?q=pro')
+  await expect(page.getByRole('searchbox', { name: 'Search people' })).toHaveValue('pro')
+  await page.getByRole('link', { name: 'People' }).first().click()
+  await expect(page).toHaveURL(/\/dashboard\/people$/)
+  await expect(page.getByRole('searchbox', { name: 'Search people' })).toHaveValue('')
+  await page.waitForTimeout(500) // past the search debounce: the old query must not come back
+  await expect(page).toHaveURL(/\/dashboard\/people$/)
+  await expect(page.getByRole('table', { name: 'People' }).getByRole('row')).toHaveCount(3)
+})

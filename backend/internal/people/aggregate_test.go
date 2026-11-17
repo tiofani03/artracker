@@ -1,6 +1,7 @@
 package people
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -95,5 +96,29 @@ func TestAggregateSkipsEmptySession(t *testing.T) {
 	}
 	if len(b.Profiles) != 1 || b.Profiles[0].LastSessionID != "" {
 		t.Fatalf("profile still touched: %+v", b.Profiles)
+	}
+}
+
+func TestAggregateCapsMergedTraitsAndRecordsTime(t *testing.T) {
+	t1 := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+	first, second := map[string]any{}, map[string]any{}
+	for i := 0; i < 40; i++ {
+		first[fmt.Sprintf("a%02d", i)] = i
+		second[fmt.Sprintf("b%02d", i)] = i
+	}
+	second["a00"] = "updated"
+	b := Aggregate([]ingest.TelemetryRow{
+		row("s1", "u1", "event", "$identify", "", t1, string(mustJSON(t, first))),
+		row("s1", "u1", "event", "$identify", "", t1.Add(time.Second), string(mustJSON(t, second))),
+	})
+	p := b.Profiles[0]
+	if len(p.Traits) != MaxTraitKeys {
+		t.Fatalf("merged traits must stop at %d keys, got %d", MaxTraitKeys, len(p.Traits))
+	}
+	if p.Traits["a00"] != "updated" {
+		t.Fatal("existing keys keep updating past the cap")
+	}
+	if !p.TraitsAt.Equal(t1.Add(time.Second)) {
+		t.Fatalf("TraitsAt = %v", p.TraitsAt)
 	}
 }

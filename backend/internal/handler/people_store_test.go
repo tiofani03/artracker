@@ -210,3 +210,62 @@ func TestChunkURLTouchesPeople(t *testing.T) {
 		t.Fatalf("session context not created: %d", n)
 	}
 }
+
+func TestApplyOlderIdentifyDoesNotOverwrite(t *testing.T) {
+	e, pid, st := newPeopleEnv(t)
+	t0 := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	for _, d := range []people.ProfileDelta{
+		{Traits: map[string]any{"plan": "team"}, TraitsAt: t0.Add(time.Hour)},
+		{Traits: map[string]any{"plan": "free", "country": "ID"}, TraitsAt: t0}, // offline device flushing late
+	} {
+		d.ProjectID, d.UserID, d.FirstSeen, d.LastSeen = pid, "u1", t0, t0
+		if err := st.Apply(ctx, people.Batch{Profiles: []people.ProfileDelta{d}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if tr := e.profileTraits(t, pid, "u1"); len(tr) != 1 || tr["plan"] != "team" {
+		t.Fatalf("older identify must be ignored, got %v", tr)
+	}
+}
+
+func TestApplyCapsStoredTraits(t *testing.T) {
+	e, pid, st := newPeopleEnv(t)
+	t0 := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	for batch := 0; batch < 3; batch++ {
+		tr := map[string]any{"k00": batch}
+		for i := 0; i < 30; i++ {
+			tr[fmt.Sprintf("b%d_%02d", batch, i)] = i
+		}
+		at := t0.Add(time.Duration(batch) * time.Minute)
+		if err := st.Apply(ctx, people.Batch{Profiles: []people.ProfileDelta{
+			{ProjectID: pid, UserID: "u1", FirstSeen: at, LastSeen: at, Traits: tr, TraitsAt: at}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tr := e.profileTraits(t, pid, "u1")
+	if len(tr) > people.MaxTraitKeys {
+		t.Fatalf("stored traits must stay <= %d keys, got %d", people.MaxTraitKeys, len(tr))
+	}
+	if tr["k00"] != float64(2) {
+		t.Fatalf("existing key must keep updating past the cap, got %v", tr["k00"])
+	}
+}
+
+func TestTouchFromReplayClampsClientClock(t *testing.T) {
+	e, pid, st := newPeopleEnv(t)
+	future := time.Now().Add(80 * 365 * 24 * time.Hour)
+	past := time.Unix(0, 0)
+	if err := st.TouchFromReplay(context.Background(), pid, "u_clock", "s_clock", past, future); err != nil {
+		t.Fatal(err)
+	}
+	var first, last time.Time
+	if err := e.pool.QueryRow(context.Background(), `SELECT first_seen, last_seen FROM user_profiles WHERE project_id=$1 AND user_id='u_clock'`, pid).
+		Scan(&first, &last); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(first) > time.Minute || time.Until(last) > time.Minute {
+		t.Fatalf("client clock must be clamped to now: first=%v last=%v", first, last)
+	}
+}

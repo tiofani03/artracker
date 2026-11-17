@@ -77,11 +77,21 @@ ON CONFLICT (project_id, session_id) DO UPDATE SET
     context    = CASE WHEN EXCLUDED.context <> '{}'::jsonb THEN EXCLUDED.context ELSE session_contexts.context END,
     updated_at = now()`
 
+// The trait merge only applies when this batch's newest $identify ($9) is not older than the stored one, and a
+// merge that would exceed MaxTraitKeys keeps updating existing keys but adds no new ones.
 const upsertProfileSQL = `
-INSERT INTO user_profiles (project_id, user_id, traits, first_seen, last_seen, last_session_id, last_context)
-VALUES ($1, $2, $3::jsonb - $8::text[], $4, $5, $6, $7::jsonb)
+INSERT INTO user_profiles (project_id, user_id, traits, first_seen, last_seen, last_session_id, last_context, traits_updated_at)
+VALUES ($1, $2, $3::jsonb - $8::text[], $4, $5, $6, $7::jsonb, $9)
 ON CONFLICT (project_id, user_id) DO UPDATE SET
-    traits          = (user_profiles.traits || EXCLUDED.traits) - $8::text[],
+    traits = CASE
+        WHEN $9 < user_profiles.traits_updated_at THEN user_profiles.traits
+        WHEN (SELECT count(*) FROM jsonb_object_keys((user_profiles.traits || EXCLUDED.traits) - $8::text[])) <= $10
+            THEN (user_profiles.traits || EXCLUDED.traits) - $8::text[]
+        ELSE (user_profiles.traits || COALESCE(
+                (SELECT jsonb_object_agg(n.key, n.value) FROM jsonb_each(EXCLUDED.traits) n
+                 WHERE user_profiles.traits ? n.key), '{}'::jsonb)) - $8::text[]
+    END,
+    traits_updated_at = GREATEST(user_profiles.traits_updated_at, $9),
     first_seen      = LEAST(user_profiles.first_seen, EXCLUDED.first_seen),
     last_seen       = GREATEST(user_profiles.last_seen, EXCLUDED.last_seen),
     last_session_id = CASE WHEN EXCLUDED.last_seen >= user_profiles.last_seen AND EXCLUDED.last_session_id <> ''
@@ -126,7 +136,7 @@ func (s *Store) Apply(ctx context.Context, b Batch) error {
 	for _, d := range profiles {
 		set, deleted := splitTraits(d.Traits)
 		if _, err := tx.Exec(ctx, upsertProfileSQL, d.ProjectID, d.UserID, set, d.FirstSeen, d.LastSeen,
-			d.LastSessionID, jsonObject(d.LastContext), deleted); err != nil {
+			d.LastSessionID, jsonObject(d.LastContext), deleted, d.TraitsAt, MaxTraitKeys); err != nil {
 			return fmt.Errorf("upsert user profile: %w", err)
 		}
 	}
@@ -139,6 +149,7 @@ func (s *Store) TouchFromReplay(ctx context.Context, projectID int64, userID, se
 	if sessionID == "" {
 		return nil
 	}
+	start, seen = clampToNow(start, time.Now()), clampToNow(seen, time.Now())
 	if seen.Before(start) {
 		seen = start
 	}
@@ -147,6 +158,17 @@ func (s *Store) TouchFromReplay(ctx context.Context, projectID int64, userID, se
 		b.Profiles = []ProfileDelta{{ProjectID: projectID, UserID: userID, FirstSeen: start, LastSeen: seen, LastSessionID: sessionID}}
 	}
 	return s.Apply(ctx, b)
+}
+
+// maxReplayClockSkew bounds client-sent replay times, which are not skew-corrected like telemetry timestamps:
+// a device clock in 2100 or 1970 must not pin a profile's last_seen / first_seen for good.
+const maxReplayClockSkew = 7 * 24 * time.Hour
+
+func clampToNow(t, now time.Time) time.Time {
+	if t.IsZero() || t.After(now.Add(5*time.Minute)) || t.Before(now.Add(-maxReplayClockSkew)) {
+		return now
+	}
+	return t
 }
 
 // likeEscape escapes LIKE wildcards so user input matches literally (ESCAPE '\').
@@ -162,7 +184,7 @@ LEFT JOIN LATERAL (
     SELECT count(*) AS n, count(*) FILTER (WHERE sc.has_error OR COALESCE(r.has_error, false)) AS e
     FROM session_contexts sc
     LEFT JOIN replay_sessions r ON r.project_id = sc.project_id AND r.id = sc.session_id
-    WHERE sc.project_id = p.project_id AND sc.user_id = p.user_id
+    WHERE sc.project_id = p.project_id AND sc.user_id = p.user_id AND sc.user_id <> ''
 ) c ON true`
 
 func scanPerson(row pgx.Row) (*Person, error) {
@@ -195,8 +217,11 @@ func (s *Store) ListPeople(ctx context.Context, projectID int64, search string, 
 		projectID, search, likeEscape(search)).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.Query(ctx, `SELECT `+personColumns+` WHERE `+peopleSearchWhere+`
-        ORDER BY p.last_seen DESC, p.user_id LIMIT $4 OFFSET $5`,
+	// Page first, then count sessions for the page's rows only.
+	rows, err := s.db.Query(ctx, `SELECT `+strings.Replace(personColumns, "FROM user_profiles p",
+		`FROM (SELECT * FROM user_profiles p WHERE `+peopleSearchWhere+`
+               ORDER BY p.last_seen DESC, p.user_id LIMIT $4 OFFSET $5) p`, 1)+`
+        ORDER BY p.last_seen DESC, p.user_id`,
 		projectID, search, likeEscape(search), limit, offset)
 	if err != nil {
 		return nil, 0, err
@@ -229,7 +254,7 @@ func (s *Store) PersonSessions(ctx context.Context, projectID int64, userID, exc
                sc.has_error OR COALESCE(r.has_error, false), sc.context, COALESCE(r.chunk_count, 0) > 0
         FROM session_contexts sc
         LEFT JOIN replay_sessions r ON r.project_id = sc.project_id AND r.id = sc.session_id
-        WHERE sc.project_id = $1 AND sc.user_id = $2 AND sc.session_id <> $3
+        WHERE sc.project_id = $1 AND sc.user_id = $2 AND sc.user_id <> '' AND sc.session_id <> $3
         ORDER BY sc.last_seen DESC, sc.session_id
         LIMIT $4`, projectID, userID, excludeSessionID, limit)
 	if err != nil {

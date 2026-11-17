@@ -100,6 +100,10 @@ Both tables are written by a row processor that runs after every successful tele
 - `session_contexts.user_id` is set only while it is still `''`, the same rule `replay_sessions` uses.
 - `has_error` becomes true when any row in the session has level `error` or `fatal`.
 - Counts are computed when read, not stored as counters.
+- `user_profiles.traits_updated_at` holds the event time of the newest merged `$identify`. An older identify (e.g. one an offline device flushes late) does not overwrite newer traits.
+- Stored traits are capped at 50 keys: once full, existing keys keep updating but new keys are ignored.
+- Replay `start_time` comes from the client and is not skew-corrected, so it is clamped to `[now − 7 days, now + 5 min]` before it touches a profile.
+- The migration backfills from `replay_sessions` and from the last 30 days of session-start and error telemetry (filtered on `received_at` so only recent partitions are read).
 
 ## Read API (dashboard, Bearer auth, project role ≥ viewer)
 
