@@ -34,6 +34,15 @@ import { getRefreshToken, setRefreshToken } from './auth/appStore'
 
 export const BASE: string = import.meta.env.VITE_API_BASE ?? '/api/v1'
 
+/** A non-2xx API response; `status` is the HTTP status so callers need not parse the message. */
+export class ApiError extends Error {
+  readonly status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+  }
+}
+
 export class UnauthorizedError extends Error {
   constructor() {
     super('unauthorized')
@@ -125,7 +134,7 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
     } catch {
       // non-JSON error body, keep the status text
     }
-    throw new Error(message)
+    throw new ApiError(message, res.status)
   }
 
   if (res.status === 204) return undefined as T

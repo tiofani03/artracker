@@ -21,6 +21,7 @@ import { formatDurationMs, formatSessionId } from '../replay/format'
 import { SessionTimelinePanel } from '../components/replay/SessionTimelinePanel'
 import { normalizeUserQuery } from '../replay/userSearch'
 import {
+  detailStatusForError,
   pickSelectedSession,
   replayEmptyMessage,
   replayViewState,
@@ -88,6 +89,11 @@ const REPLAY_FILTERS: { id: ReplayFilter; label: string; title: string }[] = [
  * Drop `?session=` (replace, no history entry) when the list's filter, search or page changes, so the new list
  * falls back to its first item instead of keeping the previous pick pinned as if it were a deep link.
  */
+/** Logs without a session carry the placeholder 'n/a'; there is no replay to open for them. */
+function hasSessionId(id: string | undefined): id is string {
+  return !!id && id !== 'n/a'
+}
+
 function clearSessionParam() {
   const url = new URL(window.location.href)
   if (!url.searchParams.has('session')) return
@@ -345,6 +351,8 @@ function DashboardInner({
   } | null>(null)
   const [detailLoading, setDetailLoading] = useState<boolean>(false)
   const [detailStatus, setDetailStatus] = useState<ReplayDetailStatus>('idle')
+  // Bumped by the "Retry" button to re-run the session detail fetch.
+  const [detailReload, setDetailReload] = useState(0)
   const [liveCapture, setLiveCapture] = useState<LiveCaptureResult | null>(null)
   const [isCapturingLive, setIsCapturingLive] = useState<boolean>(false)
   const [seedingSessions, setSeedingSessions] = useState<boolean>(false)
@@ -509,7 +517,7 @@ function DashboardInner({
         setDetailStatus('ok')
         setDetailLoading(false)
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         if (cancelled) return
         const fallback = replaySessionsRef.current.find((s) => s.id === selectedSessionId)
         if (fallback) {
@@ -521,7 +529,7 @@ function DashboardInner({
           setDetailStatus('ok')
         } else {
           setSessionDetail(null)
-          setDetailStatus('not_found')
+          setDetailStatus(detailStatusForError(err))
         }
         setDetailLoading(false)
       })
@@ -529,7 +537,7 @@ function DashboardInner({
     return () => {
       cancelled = true
     }
-  }, [projectReady, targetPid, selectedSessionId, liveCapture])
+  }, [projectReady, targetPid, selectedSessionId, liveCapture, detailReload])
 
   // Profiling samples load in parallel with the session detail; any failure just means "no profiling data"
   const [sessionPerf, setSessionPerf] = useState<{ sessionId: string; data: SessionPerfResponse } | null>(null)
@@ -1037,7 +1045,7 @@ function DashboardInner({
                               >
                                 Inspect →
                               </button>
-                            ) : (
+                            ) : hasSessionId(item.sessionId) ? (
                               <button
                                 type="button"
                                 className="dash-btn"
@@ -1045,7 +1053,7 @@ function DashboardInner({
                               >
                                 Replay →
                               </button>
-                            )}
+                            ) : null}
                           </div>
                         ))
                       )}
@@ -1416,6 +1424,13 @@ function DashboardInner({
                         <section className="dash-replay-empty" role="status">
                           <p className="dash-replay-empty__title">Session not found</p>
                         </section>
+                      ) : selectedSessionId !== '' && detailStatus === 'error' ? (
+                        <section className="dash-replay-empty" role="status">
+                          <p className="dash-replay-empty__title">Couldn't load this session</p>
+                          <button type="button" className="dash-btn" onClick={() => setDetailReload((n) => n + 1)}>
+                            Retry
+                          </button>
+                        </section>
                       ) : replayLoading || selectedSessionId !== '' ? (
                         <div className="or-theater or-theater--placeholder" role="status" aria-label="Loading session replay">
                           <div className="or-unified-header">
@@ -1707,7 +1722,7 @@ function DashboardInner({
                               </div>
 
                               <div className="mo-card__col-meta">
-                                {entry.sessionId && entry.sessionId !== 'n/a' ? (
+                                {hasSessionId(entry.sessionId) ? (
                                   <span className="mo-card__session-chip" title={entry.sessionId}>
                                     {entry.sessionId.length > 14
                                       ? `${entry.sessionId.slice(0, 12)}…`
@@ -1732,7 +1747,7 @@ function DashboardInner({
                               </div>
 
                               <div className="mo-card__actions" onClick={(e) => e.stopPropagation()}>
-                                {entry.sessionId && entry.sessionId !== 'n/a' && (
+                                {hasSessionId(entry.sessionId) && (
                                   <button
                                     type="button"
                                     className="dash-btn dash-btn--sm"

@@ -39,7 +39,13 @@ export function replayEmptyMessage(filter: string, loading: boolean, userQuery =
   return `No sessions match “${FILTER_LABEL[filter] ?? filter}”`
 }
 
-export type ReplayDetailStatus = 'idle' | 'loading' | 'ok' | 'not_found'
+export type ReplayDetailStatus = 'idle' | 'loading' | 'ok' | 'not_found' | 'error'
+
+/** Only an HTTP 404 means the session does not exist; any other failure is a load error that can be retried. */
+export function detailStatusForError(err: unknown): 'not_found' | 'error' {
+  const status = typeof err === 'object' && err !== null ? (err as { status?: unknown }).status : undefined
+  return status === 404 ? 'not_found' : 'error'
+}
 
 /**
  * Which session is selected after the list (re)loads. A selection that is on the page stays; a deep-linked one

@@ -161,6 +161,8 @@ async function mockReplayApi(
   page: Page,
   list: MockSession[],
   details: Record<string, { session: MockSession; timeline: unknown[] }>,
+  /** Session ids whose detail answers 500. */
+  failing: string[] = [],
 ) {
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url())
@@ -173,7 +175,9 @@ async function mockReplayApi(
     }
     const detail = /^\/projects\/\d+\/sessions\/([^/]+)$/.exec(path)
     if (detail) {
-      const d = details[decodeURIComponent(detail[1])]
+      const id = decodeURIComponent(detail[1])
+      if (failing.includes(id)) return json({ error: 'internal error' }, 500)
+      const d = details[id]
       if (!d) return json({ error: 'not found' }, 404)
       return json({ session: sessionItem(d.session), chunks: [], timeline_events: d.timeline })
     }
@@ -228,5 +232,17 @@ test.describe('replay page without a replay', () => {
     await page.goto('/dashboard/replays?demo=1&session=ses_far_99')
     await expect(page.locator('.or-unified-header__user')).toHaveText('zoe_far_away')
     await expect(page.locator('.or-unified-header__user', { hasText: 'alice' })).toHaveCount(0)
+  })
+
+  test('a failing detail request for a deep-linked session offers a retry, not "not found" or another session', async ({ page }) => {
+    const first: MockSession = { id: 'ses_first_01', user_id: 'alice', has_replay: true }
+    await mockReplayApi(page, [first], {}, ['ses_far_99'])
+
+    await page.goto('/dashboard/replays?demo=1&session=ses_far_99')
+    await expect(page.getByText("Couldn't load this session")).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible()
+    await expect(page.getByText('Session not found')).toHaveCount(0)
+    await expect(page.locator('.or-transport-bar')).toHaveCount(0)
+    await expect(page.locator('.or-unified-header__user')).toHaveCount(0)
   })
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pickSelectedSession, replayEmptyMessage, replayViewState, resolveActiveSession } from './viewState'
+import { detailStatusForError, pickSelectedSession, replayEmptyMessage, replayViewState, resolveActiveSession } from './viewState'
 
 const s = (loading: boolean, sessionCount: number, filter: string) => replayViewState({ loading, sessionCount, filter })
 
@@ -87,6 +87,20 @@ describe('resolveActiveSession', () => {
   it('never substitutes another session for a selected id', () => {
     expect(resolveActiveSession({ detail: null, detailStatus: 'not_found', selectedId: 'zzz', list: [a, b] })).toBeNull()
     expect(resolveActiveSession({ detail: null, detailStatus: 'loading', selectedId: 'zzz', list: [a, b] })).toBeNull()
+    expect(resolveActiveSession({ detail: null, detailStatus: 'error', selectedId: 'zzz', list: [a, b] })).toBeNull()
   })
   it('defaults to the first item when nothing is selected', () => expect(resolveActiveSession({ detail: null, detailStatus: 'idle', selectedId: '', list: [a, b] })).toBe(a))
+})
+
+describe('detailStatusForError', () => {
+  it('maps only an HTTP 404 to not_found', () => {
+    expect(detailStatusForError({ status: 404 })).toBe('not_found')
+  })
+  it('treats server errors, other statuses and non-HTTP failures as a load error', () => {
+    expect(detailStatusForError({ status: 500 })).toBe('error')
+    expect(detailStatusForError({ status: 403 })).toBe('error')
+    expect(detailStatusForError(new Error('Failed to fetch'))).toBe('error')
+    expect(detailStatusForError('404 not found')).toBe('error')
+    expect(detailStatusForError(null)).toBe('error')
+  })
 })
