@@ -9,7 +9,8 @@ type State =
   | { status: 'error'; message: string }
   | { status: 'ready'; data: SessionContextResponse }
 
-/** Replay side panel "User" tab: who the user is, this session's device, and their other sessions. */
+/** Replay side panel "User" tab: who the user is, this session's device, and their other sessions. Render it with
+ * `key={sessionId}` so switching sessions starts from the loading state. */
 export function UserPanel({
   projectId,
   sessionId,
@@ -24,7 +25,6 @@ export function UserPanel({
 
   useEffect(() => {
     let cancelled = false
-    setState({ status: 'loading' })
     replayApi
       .getSessionContext(projectId, sessionId)
       .then((data) => {
@@ -49,7 +49,14 @@ export function UserPanel({
     return (
       <div className="ppl-panel">
         <p className="ppl-muted">Couldn't load user details: {state.message}</p>
-        <button type="button" className="dash-btn dash-btn--sm" onClick={() => setAttempt((n) => n + 1)}>
+        <button
+          type="button"
+          className="dash-btn dash-btn--sm"
+          onClick={() => {
+            setState({ status: 'loading' })
+            setAttempt((n) => n + 1)
+          }}
+        >
           Retry
         </button>
       </div>

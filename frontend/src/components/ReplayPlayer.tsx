@@ -1213,7 +1213,14 @@ export default function ReplayPlayer({
           onSeek={seekTo}
           tab={sideTab}
           onTabChange={setSideTab}
-          user={<UserPanel projectId={session.project_id} sessionId={session.id} fallbackUserId={session.user_id} />}
+          user={
+            <UserPanel
+              key={session.id}
+              projectId={session.project_id}
+              sessionId={session.id}
+              fallbackUserId={session.user_id}
+            />
+          }
           performance={
             <PerformancePanel
               perf={perf ?? null}

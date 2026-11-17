@@ -319,10 +319,12 @@ function DashboardInner({
   })
   // A link to ?session=… while this page is already open (e.g. the replay User tab's "Other sessions") selects it.
   const search = useSearch()
-  useEffect(() => {
+  const [seenSearch, setSeenSearch] = useState(search)
+  if (search !== seenSearch) {
+    setSeenSearch(search)
     const linked = new URLSearchParams(search).get('session')
-    if (linked) setSelectedSessionId(linked)
-  }, [search])
+    if (linked && linked !== selectedSessionId) setSelectedSessionId(linked)
+  }
   const [replaySessions, setReplaySessions] = useState<ReplaySessionItem[]>([])
   const [replayTotal, setReplayTotal] = useState<number>(0)
   const [replayOffset, setReplayOffset] = useState<number>(0)
