@@ -18,6 +18,8 @@ import {
   type SessionPerfResponse,
   type TelemetryEvent,
 } from '../api'
+import { classifyMarker } from '../replay/classifyMarker'
+import { formatDurationMs, formatSessionId } from '../replay/format'
 import { loadChunkPayloads } from '../utils/replayChunkLoader'
 import { ScreenChunkSource } from '../utils/screenChunkSource'
 import { buildReplayModel } from '../replay/normalize'
@@ -83,77 +85,11 @@ function parseDeviceScreen(raw: unknown): { w: number; h: number } | null {
 /** rrweb-player is a Svelte component; its typings omit the Svelte instance API. */
 type SvelteHandle = { $set?: (props: Record<string, unknown>) => void; $destroy?: () => void }
 
-function formatDurationMs(ms: number): string {
-  const totalSec = Math.max(0, Math.round(ms / 1000))
-  const m = Math.floor(totalSec / 60)
-  const s = totalSec % 60
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-}
-
-function formatSessionId(id: string, maxLen = 16): string {
-  if (!id) return ''
-  if (id.length <= maxLen) return id
-  const half = Math.floor((maxLen - 3) / 2)
-  return `${id.slice(0, half + 2)}…${id.slice(-half)}`
-}
-
 function formatOffsetMs(ms: number): string {
   const totalSec = Math.max(0, Math.floor(ms / 1000))
   const min = Math.floor(totalSec / 60)
   const sec = totalSec % 60
   return `${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
-}
-
-function classifyMarker(ev: TelemetryEvent): {
-  tone: 'error' | 'warn' | 'info'
-  badgeLabel: string
-  category: 'error' | 'network' | 'gesture' | 'other'
-} {
-  const lvl = (ev.level || '').toLowerCase()
-  const name = (ev.name || '').toLowerCase()
-  const msg = (ev.message || '').toLowerCase()
-  const attrs = (ev.attributes || {}) as Record<string, unknown>
-
-  if (
-    lvl === 'error' ||
-    lvl === 'fatal' ||
-    name.includes('error') ||
-    name.includes('exception') ||
-    name.includes('crash') ||
-    msg.includes('error') ||
-    msg.includes('uncaught') ||
-    msg.includes('exception') ||
-    msg.includes('typeerror')
-  ) {
-    if (name.includes('anr') || msg.includes('anr')) {
-      return { tone: 'error', badgeLabel: 'anr', category: 'error' }
-    }
-    if (name.includes('hang') || msg.includes('hang')) {
-      return { tone: 'error', badgeLabel: 'ui hang', category: 'error' }
-    }
-    return { tone: 'error', badgeLabel: 'error', category: 'error' }
-  }
-  if (name === 'rage_tap' || msg.includes('rage tap') || name === 'rage_click' || msg.includes('rage click')) {
-    return { tone: 'warn', badgeLabel: 'rage click', category: 'gesture' }
-  }
-  if (name === 'dead_click' || msg.includes('dead click')) {
-    return { tone: 'warn', badgeLabel: 'dead click', category: 'gesture' }
-  }
-  if (name === 'click' || name === 'touch' || Boolean(attrs.gesture)) {
-    return { tone: 'info', badgeLabel: 'tap', category: 'gesture' }
-  }
-  if (attrs.method || attrs.endpoint || attrs.status_code || name === 'network' || name.startsWith('http')) {
-    const status = typeof attrs.status_code === 'number' ? attrs.status_code : typeof attrs.status === 'number' ? attrs.status : 200
-    return {
-      tone: status >= 400 ? 'error' : 'info',
-      badgeLabel: `${attrs.method || 'HTTP'} ${status}`,
-      category: 'network',
-    }
-  }
-  if (lvl === 'warn' || lvl === 'warning') {
-    return { tone: 'warn', badgeLabel: 'warn', category: 'other' }
-  }
-  return { tone: 'info', badgeLabel: ev.kind === 'event' ? 'event' : 'log', category: 'other' }
 }
 
 export default function ReplayPlayer({

@@ -917,6 +917,11 @@
   color: var(--color-muted);
 }
 
+.badge--muted {
+  background: var(--color-paper-3);
+  color: var(--color-muted);
+}
+
 .badge--role {
   background: var(--color-accent-wash);
   color: var(--color-accent-deep);
@@ -7331,6 +7336,79 @@ select {
 .or-player-col {
   min-width: 0;
   min-height: 0;
+}
+
+/* Session without a replay: header, notice, then its event lines */
+.or-timeline-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.or-timeline-panel__notice {
+  padding: var(--space-md) 16px var(--space-sm);
+}
+
+.or-timeline-panel__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: var(--display-weight);
+  color: var(--color-ink);
+}
+
+.or-timeline-panel__subtitle {
+  margin: var(--space-xs) 0 0;
+  font-size: 0.8125rem;
+  color: var(--color-muted);
+}
+
+.or-timeline-panel__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0 16px var(--space-md);
+  list-style: none;
+}
+
+.or-timeline-panel__row {
+  display: grid;
+  grid-template-columns: 4.5rem 6rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-sm);
+  padding: 6px 0;
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+  font-size: 0.8125rem;
+}
+
+.or-timeline-panel__offset {
+  font-family: var(--font-outlier);
+  font-size: 0.6875rem;
+  color: var(--color-muted);
+}
+
+.or-timeline-panel__label {
+  font-family: var(--font-outlier);
+  font-size: 0.6875rem;
+  color: var(--color-ink-2);
+}
+
+.or-timeline-panel__row--error .or-timeline-panel__label {
+  color: var(--color-error);
+}
+
+.or-timeline-panel__text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-ink);
+}
+
+.or-timeline-panel__empty {
+  padding: var(--space-md) 16px;
+  margin: 0;
+  color: var(--color-muted);
 }
 
 /* Header ⋯ menu (device mode, recording mode, resolution) */

@@ -68,6 +68,9 @@ func TestOpenAPIDocumentsScreenshotReplay(t *testing.T) {
 	if get(parsed, "components", "schemas", "ReplayChunkURLRequest", "properties", "format") == nil {
 		t.Error("ReplayChunkURLRequest should document the optional format field")
 	}
+	if get(parsed, "components", "schemas", "ReplaySessionItem", "properties", "has_replay") == nil {
+		t.Error("ReplaySessionItem should document has_replay")
+	}
 	if get(parsed, "paths", "/replay/chunk-url", "post", "responses", "403") == nil {
 		t.Error("chunk-url should document 403 screenshot_disabled")
 	}

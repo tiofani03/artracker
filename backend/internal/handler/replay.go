@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net/url"
 	"regexp"
@@ -77,6 +78,9 @@ type ReplaySessionItem struct {
 	StoragePrefix  string     `json:"storage_prefix"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
+	// HasReplay is true only when a replay row exists with at least one uploaded chunk. Sessions listed from
+	// telemetry alone have no replay.
+	HasReplay bool `json:"has_replay"`
 }
 
 type ReplayChunkDetail struct {
@@ -491,77 +495,33 @@ func (h *Handler) ListProjectSessions(c *fiber.Ctx) error {
 		})
 	}
 
-	query := `
-		SELECT
-			id, project_id, user_id, environment, start_time, end_time,
-			duration_ms, chunk_count, event_count, total_size_bytes,
-			has_error, has_rage_click, has_dead_click, storage_prefix, created_at, updated_at,
-			COUNT(*) OVER() AS full_count
-		FROM replay_sessions
-		WHERE project_id = $1`
-
-	args := []any{projectID}
-	argIdx := 2
-
-	if hasErrorParam != "" {
-		hasErrorBool := hasErrorParam == "true" || hasErrorParam == "1"
-		query += fmt.Sprintf(" AND has_error = $%d", argIdx)
-		args = append(args, hasErrorBool)
-		argIdx++
+	filter := sessionListFilter{
+		UserID:      userIDParam,
+		UserPrefix:  userPrefixParam,
+		Environment: envParam,
 	}
-
-	if hasRageParam != "" {
-		hasRageBool := hasRageParam == "true" || hasRageParam == "1"
-		query += fmt.Sprintf(" AND has_rage_click = $%d", argIdx)
-		args = append(args, hasRageBool)
-		argIdx++
+	boolParam := func(raw string) *bool {
+		if raw == "" {
+			return nil
+		}
+		v := raw == "true" || raw == "1"
+		return &v
 	}
-
-	if hasDeadParam != "" {
-		hasDeadBool := hasDeadParam == "true" || hasDeadParam == "1"
-		query += fmt.Sprintf(" AND has_dead_click = $%d", argIdx)
-		args = append(args, hasDeadBool)
-		argIdx++
-	}
-
-	if userIDParam != "" {
-		query += fmt.Sprintf(" AND user_id = $%d", argIdx)
-		args = append(args, userIDParam)
-		argIdx++
-	}
-
-	// Case-insensitive "starts with". starts_with() takes the prefix literally, so '%' and '_' typed by the
-	// user are not LIKE wildcards.
-	if userPrefixParam != "" {
-		query += fmt.Sprintf(" AND starts_with(lower(user_id), lower($%d))", argIdx)
-		args = append(args, userPrefixParam)
-		argIdx++
-	}
-
-	if envParam != "" {
-		query += fmt.Sprintf(" AND environment = $%d", argIdx)
-		args = append(args, envParam)
-		argIdx++
-	}
-
+	filter.HasError = boolParam(hasErrorParam)
+	filter.HasRage = boolParam(hasRageParam)
+	filter.HasDead = boolParam(hasDeadParam)
 	if fromParam != "" {
 		if t, err := time.Parse(time.RFC3339, fromParam); err == nil {
-			query += fmt.Sprintf(" AND start_time >= $%d", argIdx)
-			args = append(args, t)
-			argIdx++
+			filter.From = &t
 		}
 	}
-
 	if toParam != "" {
 		if t, err := time.Parse(time.RFC3339, toParam); err == nil {
-			query += fmt.Sprintf(" AND start_time <= $%d", argIdx)
-			args = append(args, t)
-			argIdx++
+			filter.To = &t
 		}
 	}
 
-	query += fmt.Sprintf(" ORDER BY start_time DESC LIMIT $%d OFFSET $%d", argIdx, argIdx+1)
-	args = append(args, limit, offset)
+	query, args := buildSessionListQuery(projectID, filter, time.Now(), limit, offset)
 
 	rows, err := h.db.Query(ctx, query, args...)
 	if err != nil {
@@ -580,7 +540,7 @@ func (h *Handler) ListProjectSessions(c *fiber.Ctx) error {
 			&item.ID, &item.ProjectID, &item.UserID, &item.Environment,
 			&item.StartTime, &item.EndTime, &item.DurationMs, &item.ChunkCount,
 			&item.EventCount, &item.TotalSizeBytes, &item.HasError, &item.HasRageClick, &item.HasDeadClick,
-			&item.StoragePrefix, &item.CreatedAt, &item.UpdatedAt, &fullCount,
+			&item.StoragePrefix, &item.CreatedAt, &item.UpdatedAt, &item.HasReplay, &fullCount,
 		); err != nil {
 			return fmt.Errorf("scan replay session: %w", err)
 		}
@@ -622,70 +582,41 @@ func (h *Handler) GetProjectSession(c *fiber.Ctx) error {
 		SELECT
 			id, project_id, user_id, environment, start_time, end_time,
 			duration_ms, chunk_count, event_count, total_size_bytes,
-			has_error, has_rage_click, has_dead_click, storage_prefix, created_at, updated_at
+			has_error, has_rage_click, has_dead_click, storage_prefix, created_at, updated_at,
+			chunk_count > 0
 		FROM replay_sessions
 		WHERE project_id = $1 AND id = $2`, projectID, sessionID).Scan(
 		&session.ID, &session.ProjectID, &session.UserID, &session.Environment,
 		&session.StartTime, &session.EndTime, &session.DurationMs, &session.ChunkCount,
 		&session.EventCount, &session.TotalSizeBytes, &session.HasError, &session.HasRageClick, &session.HasDeadClick,
-		&session.StoragePrefix, &session.CreatedAt, &session.UpdatedAt,
+		&session.StoragePrefix, &session.CreatedAt, &session.UpdatedAt, &session.HasReplay,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return fiber.NewError(fiber.StatusNotFound, "session not found")
-	}
-	if err != nil {
+	chunks := make([]ReplayChunkDetail, 0)
+	switch {
+	case err == nil:
+		var cerr error
+		if chunks, cerr = h.sessionChunks(c, ctx, projectID, sessionID); cerr != nil {
+			return cerr
+		}
+	case errors.Is(err, pgx.ErrNoRows):
+		// No replay row: the session may still exist as telemetry/crash events from an SDK with replay off.
+		derived, found, derr := h.telemetrySessionItem(ctx, projectID, sessionID)
+		if derr != nil {
+			return derr
+		}
+		if !found {
+			return fiber.NewError(fiber.StatusNotFound, "session not found")
+		}
+		session = derived
+	default:
 		return fmt.Errorf("query session: %w", err)
 	}
 
-	// Fetch chunks
-	chunkRows, err := h.db.Query(ctx, `
-		SELECT chunk_seq, object_key, size_bytes, event_count, created_at
-		FROM replay_chunks
-		WHERE project_id = $1 AND session_id = $2
-		ORDER BY chunk_seq ASC`, projectID, sessionID)
+	// A timeline failure must not hide replay chunks: log it and answer with an empty timeline.
+	timelineEvents, err := h.sessionTimeline(ctx, projectID, sessionID)
 	if err != nil {
-		return fmt.Errorf("query replay chunks: %w", err)
-	}
-	defer chunkRows.Close()
-
-	chunks := make([]ReplayChunkDetail, 0)
-	for chunkRows.Next() {
-		var chunk ReplayChunkDetail
-		if err := chunkRows.Scan(&chunk.ChunkSeq, &chunk.ObjectKey, &chunk.SizeBytes, &chunk.EventCount, &chunk.CreatedAt); err != nil {
-			return fmt.Errorf("scan replay chunk: %w", err)
-		}
-
-		chunk.URL = h.chunkDownloadURL(c, ctx, chunk.ObjectKey)
-
-		chunks = append(chunks, chunk)
-	}
-	if err := chunkRows.Err(); err != nil {
-		return fmt.Errorf("chunk rows: %w", err)
-	}
-
-	// Fetch correlated telemetry events for player timeline markers
-	eventRows, err := h.db.Query(ctx, `
-		SELECT id, kind, name, level, message, session_id, user_id, environment, release_version, event_timestamp, attributes
-		FROM telemetry_events
-		WHERE project_id = $1 AND session_id = $2
-		ORDER BY event_timestamp ASC
-		LIMIT 200`, projectID, sessionID)
-
-	timelineEvents := make([]TelemetryEventItem, 0)
-	if err == nil {
-		defer eventRows.Close()
-		for eventRows.Next() {
-			var ev TelemetryEventItem
-			var rawID any
-			if err := eventRows.Scan(
-				&rawID, &ev.Kind, &ev.Name, &ev.Level, &ev.Message,
-				&ev.SessionID, &ev.UserID, &ev.Environment, &ev.ReleaseVersion,
-				&ev.EventTimestamp, &ev.Attributes,
-			); err == nil {
-				ev.ID = fmt.Sprintf("%v", rawID)
-				timelineEvents = append(timelineEvents, ev)
-			}
-		}
+		slog.Error("session timeline failed", "err", err, "project_id", projectID, "session_id", sessionID)
+		timelineEvents = make([]TelemetryEventItem, 0)
 	}
 
 	return c.JSON(ReplaySessionDetailResponse{
@@ -693,6 +624,84 @@ func (h *Handler) GetProjectSession(c *fiber.Ctx) error {
 		Chunks:         chunks,
 		TimelineEvents: timelineEvents,
 	})
+}
+
+// Caps for the correlated events of one session. Telemetry and crash rows are capped separately so a long session
+// cannot push its (few, usually last) crashes out of the timeline.
+const (
+	maxTimelineTelemetryRows = 200
+	maxTimelineCrashRows     = 200
+)
+
+// sessionTimeline returns the correlated events for the player timeline, oldest first: up to
+// maxTimelineTelemetryRows telemetry rows (replay chunk uploads are bookkeeping, not events) plus up to
+// maxTimelineCrashRows crash rows (same 'ie_' id prefix as ListProjectEvents).
+func (h *Handler) sessionTimeline(ctx context.Context, projectID int64, sessionID string) ([]TelemetryEventItem, error) {
+	rows, err := h.db.Query(ctx, `
+		SELECT id, kind, name, level, message, session_id, user_id, environment, release_version, event_timestamp, attributes
+		FROM (
+			(SELECT id::text AS id, kind, name, level, message, session_id, user_id, environment, release_version, event_timestamp, attributes
+			FROM telemetry_events
+			WHERE project_id = $1 AND session_id = $2 AND name <> 'replay_chunk'
+			ORDER BY event_timestamp ASC
+			LIMIT $3)
+			UNION ALL
+			(SELECT 'ie_' || ie.id::text, 'crash', i.type, 'fatal', COALESCE(NULLIF(ie.message, ''), i.title),
+				ie.session_id, ie.user_id, COALESCE(NULLIF(ie.environment, ''), 'production'), ie.release_version, ie.created_at, '{}'::jsonb
+			FROM issue_events ie JOIN issues i ON i.id = ie.issue_id
+			WHERE i.project_id = $1 AND ie.session_id = $2
+			ORDER BY ie.created_at ASC
+			LIMIT $4)
+		) timeline
+		ORDER BY event_timestamp ASC, id`, projectID, sessionID, maxTimelineTelemetryRows, maxTimelineCrashRows)
+	if err != nil {
+		return nil, fmt.Errorf("query session timeline: %w", err)
+	}
+	defer rows.Close()
+
+	events := make([]TelemetryEventItem, 0)
+	for rows.Next() {
+		var ev TelemetryEventItem
+		if err := rows.Scan(
+			&ev.ID, &ev.Kind, &ev.Name, &ev.Level, &ev.Message,
+			&ev.SessionID, &ev.UserID, &ev.Environment, &ev.ReleaseVersion,
+			&ev.EventTimestamp, &ev.Attributes,
+		); err != nil {
+			return nil, fmt.Errorf("scan timeline event: %w", err)
+		}
+		events = append(events, ev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timeline rows: %w", err)
+	}
+	return events, nil
+}
+
+// sessionChunks lists a replay session's chunks, in order, with download URLs.
+func (h *Handler) sessionChunks(c *fiber.Ctx, ctx context.Context, projectID int64, sessionID string) ([]ReplayChunkDetail, error) {
+	rows, err := h.db.Query(ctx, `
+		SELECT chunk_seq, object_key, size_bytes, event_count, created_at
+		FROM replay_chunks
+		WHERE project_id = $1 AND session_id = $2
+		ORDER BY chunk_seq ASC`, projectID, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("query replay chunks: %w", err)
+	}
+	defer rows.Close()
+
+	chunks := make([]ReplayChunkDetail, 0)
+	for rows.Next() {
+		var chunk ReplayChunkDetail
+		if err := rows.Scan(&chunk.ChunkSeq, &chunk.ObjectKey, &chunk.SizeBytes, &chunk.EventCount, &chunk.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan replay chunk: %w", err)
+		}
+		chunk.URL = h.chunkDownloadURL(c, ctx, chunk.ObjectKey)
+		chunks = append(chunks, chunk)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("chunk rows: %w", err)
+	}
+	return chunks, nil
 }
 
 // chunkDownloadURL returns a signed URL the browser can GET the chunk from: a presigned object-store URL when

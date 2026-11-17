@@ -17,8 +17,17 @@ import {
 import DashboardShell from '../components/DashboardShell'
 import ReplayPlayer, { type DeviceMode } from '../components/ReplayPlayer'
 import { useFillHeight } from '../replay/useFillHeight'
+import { formatDurationMs, formatSessionId } from '../replay/format'
+import { SessionTimelinePanel } from '../components/replay/SessionTimelinePanel'
 import { normalizeUserQuery } from '../replay/userSearch'
-import { replayEmptyMessage, replayViewState } from '../replay/viewState'
+import {
+  detailStatusForError,
+  pickSelectedSession,
+  replayEmptyMessage,
+  replayViewState,
+  resolveActiveSession,
+  type ReplayDetailStatus,
+} from '../replay/viewState'
 import { browserStorage, defaultQueueOpen, readBool, writeBool } from '../replay/prefs'
 import GrowthAnalyticsView from '../components/analytics/GrowthAnalyticsView'
 import CampaignsView from '../components/campaigns/CampaignsView'
@@ -76,18 +85,20 @@ const REPLAY_FILTERS: { id: ReplayFilter; label: string; title: string }[] = [
   { id: 'dead', label: 'Dead', title: 'Dead clicks: a click that triggered no response' },
 ]
 
-function formatDurationMs(ms: number): string {
-  const totalSec = Math.max(0, Math.round(ms / 1000))
-  const m = Math.floor(totalSec / 60)
-  const s = totalSec % 60
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+/**
+ * Drop `?session=` (replace, no history entry) when the list's filter, search or page changes, so the new list
+ * falls back to its first item instead of keeping the previous pick pinned as if it were a deep link.
+ */
+/** Logs without a session carry the placeholder 'n/a'; there is no replay to open for them. */
+function hasSessionId(id: string | undefined): id is string {
+  return !!id && id !== 'n/a'
 }
 
-function formatSessionId(id: string, maxLen = 16): string {
-  if (!id) return ''
-  if (id.length <= maxLen) return id
-  const half = Math.floor((maxLen - 3) / 2)
-  return `${id.slice(0, half + 2)}…${id.slice(-half)}`
+function clearSessionParam() {
+  const url = new URL(window.location.href)
+  if (!url.searchParams.has('session')) return
+  url.searchParams.delete('session')
+  navigate(url.pathname + url.search, true)
 }
 
 function formatExactTime(timestamp?: string | number | Date): string {
@@ -339,6 +350,9 @@ function DashboardInner({
     timelineEvents: TelemetryEvent[]
   } | null>(null)
   const [detailLoading, setDetailLoading] = useState<boolean>(false)
+  const [detailStatus, setDetailStatus] = useState<ReplayDetailStatus>('idle')
+  // Bumped by the "Retry" button to re-run the session detail fetch.
+  const [detailReload, setDetailReload] = useState(0)
   const [liveCapture, setLiveCapture] = useState<LiveCaptureResult | null>(null)
   const [isCapturingLive, setIsCapturingLive] = useState<boolean>(false)
   const [seedingSessions, setSeedingSessions] = useState<boolean>(false)
@@ -359,21 +373,29 @@ function DashboardInner({
   })
   const [expandedLogIds, setExpandedLogIds] = useState<Set<string>>(new Set())
 
-  const activeReplaySession = useMemo(() => {
-    if (sessionDetail?.session) return sessionDetail.session
-    if (selectedSessionId) {
-      const found = replaySessions.find((s) => s.id === selectedSessionId)
-      if (found) return found
-    }
-    return replaySessions[0] ?? null
-  }, [sessionDetail, selectedSessionId, replaySessions])
+  const activeReplaySession = useMemo(
+    () =>
+      resolveActiveSession({
+        detail: sessionDetail?.session ?? null,
+        detailStatus,
+        selectedId: selectedSessionId,
+        list: replaySessions,
+      }),
+    [sessionDetail, detailStatus, selectedSessionId, replaySessions],
+  )
   // Never hide the queue while nothing is selected, or the user would have no way to pick a session
+  // Sessions the SDK sent only telemetry for (replay off or sampled out) show an event timeline, not a player.
+  // A live capture of the same session is a real recording, so it keeps the player.
+  const showTimelinePanel =
+    activeReplaySession?.has_replay === false && liveCapture?.sessionId !== activeReplaySession.id
+  const selectedHasNoReplay = showTimelinePanel
   const queueVisible = queueOpen || !activeReplaySession || replaySessions.length === 0
   const replayView = replayViewState({
     loading: replayLoading,
     sessionCount: replaySessions.length,
     filter: replayFilter,
     userQuery,
+    selectedId: selectedSessionId,
   })
 
   const handleLogPageSizeChange = (size: number) => {
@@ -428,10 +450,13 @@ function DashboardInner({
         if (seq !== replayRequestSeq.current) return
         setReplaySessions(res.items)
         setReplayTotal(res.total)
-        setSelectedSessionId((cur) => {
-          if (cur && res.items.some((s) => s.id === cur)) return cur
-          return res.items[0]?.id ?? ''
-        })
+        setSelectedSessionId((cur) =>
+          pickSelectedSession(
+            cur,
+            res.items.map((s) => s.id),
+            new URLSearchParams(window.location.search).get('session') ?? '',
+          ),
+        )
       } catch (err) {
         if (seq !== replayRequestSeq.current) return
         setReplayError(err instanceof Error ? err.message : 'Failed to fetch replay sessions')
@@ -453,6 +478,7 @@ function DashboardInner({
     const next = normalizeUserQuery(userDraft)
     if (next === userQuery) return
     const timer = setTimeout(() => {
+      clearSessionParam()
       setUserQuery(next)
       setReplayOffset(0)
     }, 300)
@@ -469,6 +495,7 @@ function DashboardInner({
     if (!projectReady) return
     if (!selectedSessionId) {
       setSessionDetail(null)
+      setDetailStatus('idle')
       return
     }
     if (liveCapture && liveCapture.sessionId === selectedSessionId && !liveCapture.uploadedToR2) {
@@ -477,6 +504,7 @@ function DashboardInner({
 
     let cancelled = false
     setDetailLoading(true)
+    setDetailStatus('loading')
     replayApi
       .getSessionDetail(targetPid, selectedSessionId)
       .then((res) => {
@@ -486,9 +514,10 @@ function DashboardInner({
           chunks: res.chunks,
           timelineEvents: res.timeline_events,
         })
+        setDetailStatus('ok')
         setDetailLoading(false)
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         if (cancelled) return
         const fallback = replaySessionsRef.current.find((s) => s.id === selectedSessionId)
         if (fallback) {
@@ -497,8 +526,10 @@ function DashboardInner({
             chunks: [],
             timelineEvents: [],
           })
+          setDetailStatus('ok')
         } else {
           setSessionDetail(null)
+          setDetailStatus(detailStatusForError(err))
         }
         setDetailLoading(false)
       })
@@ -506,12 +537,12 @@ function DashboardInner({
     return () => {
       cancelled = true
     }
-  }, [projectReady, targetPid, selectedSessionId, liveCapture])
+  }, [projectReady, targetPid, selectedSessionId, liveCapture, detailReload])
 
   // Profiling samples load in parallel with the session detail; any failure just means "no profiling data"
   const [sessionPerf, setSessionPerf] = useState<{ sessionId: string; data: SessionPerfResponse } | null>(null)
   useEffect(() => {
-    if (!projectReady || !selectedSessionId) {
+    if (!projectReady || !selectedSessionId || selectedHasNoReplay) {
       setSessionPerf(null)
       return
     }
@@ -527,7 +558,7 @@ function DashboardInner({
     return () => {
       cancelled = true
     }
-  }, [projectReady, targetPid, selectedSessionId])
+  }, [projectReady, targetPid, selectedSessionId, selectedHasNoReplay])
 
   const handleStartLiveCapture = () => {
     if (isCapturingLive) return
@@ -557,6 +588,7 @@ function DashboardInner({
           has_error: result.hasError,
           has_rage_click: result.hasRageClick,
           has_dead_click: result.hasDeadClick,
+          has_replay: true,
           storage_prefix: `projects/${targetPid}/sessions/${result.sessionId}/`,
           created_at: nowIso,
           updated_at: nowIso,
@@ -569,6 +601,7 @@ function DashboardInner({
           chunks: [],
           timelineEvents: result.timelineEvents,
         })
+        setDetailStatus('ok')
       })
     }, 5000)
   }
@@ -878,10 +911,12 @@ function DashboardInner({
     currentLogPage * logPageSize,
   )
 
-  const goSection = (path: string) => navigate(isDemo ? `${path}?demo=1` : path)
-  const openReplay = (sessionId: string) => {
+  const goSection = (path: string, replace = false) =>
+    navigate(isDemo ? `${path}${path.includes('?') ? '&' : '?'}demo=1` : path, replace)
+  /** `replace` keeps picks inside the replay queue out of the history stack; links from other pages push. */
+  const openReplay = (sessionId: string, replace = false) => {
     setSelectedSessionId(sessionId)
-    goSection(`/dashboard/replays?session=${encodeURIComponent(sessionId)}`)
+    goSection(`/dashboard/replays?session=${encodeURIComponent(sessionId)}`, replace)
   }
 
   return (
@@ -1010,7 +1045,7 @@ function DashboardInner({
                               >
                                 Inspect →
                               </button>
-                            ) : (
+                            ) : hasSessionId(item.sessionId) ? (
                               <button
                                 type="button"
                                 className="dash-btn"
@@ -1018,7 +1053,7 @@ function DashboardInner({
                               >
                                 Replay →
                               </button>
-                            )}
+                            ) : null}
                           </div>
                         ))
                       )}
@@ -1117,7 +1152,7 @@ function DashboardInner({
                       <p className="dash-card__desc" style={{ marginBottom: '1.5rem' }}>
                         {replayFilter !== 'all'
                           ? `No recorded sessions match the "${replayFilter}" filter in PostgreSQL.`
-                          : 'No session replays ingested yet. Record a live DOM interaction or seed mock sessions.'}
+                          : 'No sessions yet. Events with a session id will appear here once the SDK sends them.'}
                       </p>
                       <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
                         <button
@@ -1177,6 +1212,7 @@ function DashboardInner({
                           onChange={(e) => setUserDraft(e.target.value)}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
+                              clearSessionParam()
                               setUserQuery(normalizeUserQuery(userDraft))
                               setReplayOffset(0)
                             }
@@ -1188,6 +1224,7 @@ function DashboardInner({
                             className="dash-user-search__clear"
                             aria-label="Clear user search"
                             onClick={() => {
+                              clearSessionParam()
                               setUserDraft('')
                               setUserQuery('')
                               setReplayOffset(0)
@@ -1206,6 +1243,7 @@ function DashboardInner({
                             aria-pressed={replayFilter === f.id}
                             title={f.title}
                             onClick={() => {
+                              clearSessionParam()
                               setReplayFilter(f.id)
                               setReplayOffset(0)
                             }}
@@ -1233,7 +1271,7 @@ function DashboardInner({
                               type="button"
                               className={`dash-session-item${selected ? ' is-selected' : ''}`}
                               onClick={() => {
-                                setSelectedSessionId(s.id)
+                                openReplay(s.id, true)
                                 // phones: picking a session returns to the player (not persisted)
                                 if (isPhone()) setQueueOpen(false)
                               }}
@@ -1249,6 +1287,7 @@ function DashboardInner({
                                   <span className="dash-session-item__platform">
                                     {plat.label}
                                   </span>
+                                  {!s.has_replay && <span className="badge badge--muted">no replay</span>}
                                   {hasErr && <span className="badge badge--exception">error</span>}
                                   {s.has_rage_click && <span className="badge badge--console">rage</span>}
                                   {s.has_dead_click && <span className="badge badge--console">dead</span>}
@@ -1267,10 +1306,14 @@ function DashboardInner({
 
                               <div className="dash-session-item__row-3">
                                 <span>{durFormatted} duration</span>
-                                <span>
-                                  {s.event_count || s.chunk_count} events · {s.chunk_count} chunk
-                                  {s.chunk_count === 1 ? '' : 's'}
-                                </span>
+                                {s.has_replay ? (
+                                  <span>
+                                    {s.event_count || s.chunk_count} events · {s.chunk_count} chunk
+                                    {s.chunk_count === 1 ? '' : 's'}
+                                  </span>
+                                ) : (
+                                  <span>{s.event_count} events</span>
+                                )}
                               </div>
                             </button>
                           )
@@ -1284,7 +1327,10 @@ function DashboardInner({
                             type="button"
                             className="dash-btn"
                             disabled={replayOffset === 0 || replayLoading}
-                            onClick={() => setReplayOffset((prev) => Math.max(0, prev - REPLAY_PAGE_SIZE))}
+                            onClick={() => {
+                              clearSessionParam()
+                              setReplayOffset((prev) => Math.max(0, prev - REPLAY_PAGE_SIZE))
+                            }}
                           >
                             ← Prev
                           </button>
@@ -1295,7 +1341,10 @@ function DashboardInner({
                             type="button"
                             className="dash-btn"
                             disabled={replayOffset + REPLAY_PAGE_SIZE >= replayTotal || replayLoading}
-                            onClick={() => setReplayOffset((prev) => prev + REPLAY_PAGE_SIZE)}
+                            onClick={() => {
+                              clearSessionParam()
+                              setReplayOffset((prev) => prev + REPLAY_PAGE_SIZE)
+                            }}
                           >
                             Next →
                           </button>
@@ -1306,7 +1355,7 @@ function DashboardInner({
 
                     {/* Right Column: OpenReplay Unified Studio Theater */}
                     <div className="or-player-col" aria-label="Session player">
-                      {replaySessions.length === 0 ? (
+                      {replaySessions.length === 0 && selectedSessionId === '' ? (
                         <section className="dash-replay-empty" role="status">
                           <p className="dash-replay-empty__title">{replayEmptyMessage(replayFilter, replayLoading, userQuery)}</p>
                           {!replayLoading && (replayFilter !== 'all' || userQuery) && (
@@ -1314,6 +1363,7 @@ function DashboardInner({
                               type="button"
                               className="dash-btn"
                               onClick={() => {
+                                clearSessionParam()
                                 setReplayFilter('all')
                                 setUserDraft('')
                                 setUserQuery('')
@@ -1324,6 +1374,22 @@ function DashboardInner({
                             </button>
                           )}
                         </section>
+                      ) : activeReplaySession && showTimelinePanel ? (
+                        <SessionTimelinePanel
+                          session={activeReplaySession}
+                          events={
+                            sessionDetail && sessionDetail.session.id === activeReplaySession.id
+                              ? sessionDetail.timelineEvents
+                              : []
+                          }
+                          loading={
+                            detailLoading ||
+                            !sessionDetail ||
+                            sessionDetail.session.id !== activeReplaySession.id
+                          }
+                          queueOpen={queueVisible}
+                          onToggleQueue={toggleQueue}
+                        />
                       ) : activeReplaySession ? (
                         <ReplayPlayer
                           session={activeReplaySession}
@@ -1354,7 +1420,18 @@ function DashboardInner({
                           queueOpen={queueVisible}
                           onToggleQueue={toggleQueue}
                         />
-                      ) : replayLoading ? (
+                      ) : selectedSessionId !== '' && detailStatus === 'not_found' ? (
+                        <section className="dash-replay-empty" role="status">
+                          <p className="dash-replay-empty__title">Session not found</p>
+                        </section>
+                      ) : selectedSessionId !== '' && detailStatus === 'error' ? (
+                        <section className="dash-replay-empty" role="status">
+                          <p className="dash-replay-empty__title">Couldn't load this session</p>
+                          <button type="button" className="dash-btn" onClick={() => setDetailReload((n) => n + 1)}>
+                            Retry
+                          </button>
+                        </section>
+                      ) : replayLoading || selectedSessionId !== '' ? (
                         <div className="or-theater or-theater--placeholder" role="status" aria-label="Loading session replay">
                           <div className="or-unified-header">
                             <div className="or-unified-header__left">
@@ -1645,7 +1722,7 @@ function DashboardInner({
                               </div>
 
                               <div className="mo-card__col-meta">
-                                {entry.sessionId && entry.sessionId !== 'n/a' ? (
+                                {hasSessionId(entry.sessionId) ? (
                                   <span className="mo-card__session-chip" title={entry.sessionId}>
                                     {entry.sessionId.length > 14
                                       ? `${entry.sessionId.slice(0, 12)}…`
@@ -1670,7 +1747,7 @@ function DashboardInner({
                               </div>
 
                               <div className="mo-card__actions" onClick={(e) => e.stopPropagation()}>
-                                {entry.sessionId && entry.sessionId !== 'n/a' && (
+                                {hasSessionId(entry.sessionId) && (
                                   <button
                                     type="button"
                                     className="dash-btn dash-btn--sm"

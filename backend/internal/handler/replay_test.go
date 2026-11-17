@@ -21,8 +21,8 @@ import (
 )
 
 type mockReplayStore struct {
-	putFn func(ctx context.Context, objectKey string, sizeBytes int64, expires time.Duration) (string, error)
-	getFn func(ctx context.Context, objectKey string, expires time.Duration) (string, error)
+	putFn  func(ctx context.Context, objectKey string, sizeBytes int64, expires time.Duration) (string, error)
+	getFn  func(ctx context.Context, objectKey string, expires time.Duration) (string, error)
 	bucket string
 }
 
@@ -482,5 +482,228 @@ func TestReplayChunkURLFallsBackToProxyWithoutPresign(t *testing.T) {
 	body, _ := io.ReadAll(getResp.Body)
 	if string(body) != "hello" {
 		t.Fatalf("round trip body = %q", body)
+	}
+}
+
+type sessionDetailBody struct {
+	Session struct {
+		ID          string `json:"id"`
+		HasReplay   bool   `json:"has_replay"`
+		HasError    bool   `json:"has_error"`
+		UserID      string `json:"user_id"`
+		Environment string `json:"environment"`
+		EventCount  int64  `json:"event_count"`
+	} `json:"session"`
+	Chunks         []map[string]any `json:"chunks"`
+	TimelineEvents []struct {
+		ID          string    `json:"id"`
+		Kind        string    `json:"kind"`
+		Name        string    `json:"name"`
+		Level       string    `json:"level"`
+		Msg         string    `json:"message"`
+		Environment string    `json:"environment"`
+		TS          time.Time `json:"event_timestamp"`
+	} `json:"timeline_events"`
+}
+
+func (s *sessionListEnv) detail(t *testing.T, pid int64, id string) (int, sessionDetailBody) {
+	t.Helper()
+	resp := s.do(t, "GET", fmt.Sprintf("/api/v1/projects/%d/sessions/%s", pid, id), nil, s.hdr)
+	var body sessionDetailBody
+	if resp.StatusCode == 200 {
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return resp.StatusCode, body
+}
+
+func (s *sessionListEnv) addCrashAt(t *testing.T, pid int64, session string, ts time.Time) int64 {
+	t.Helper()
+	issue := s.mcpAddIssue(t, pid, "java.lang.NullPointerException: boom", "fatal_crash", "open", 1)
+	var id int64
+	if err := s.pool.QueryRow(context.Background(), `
+		INSERT INTO issue_events(issue_id, session_id, user_id, message, created_at)
+		VALUES ($1, $2, 'budi', 'npe at Foo.bar', $3) RETURNING id`, issue, session, ts).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestGetSessionTelemetryOnly(t *testing.T) {
+	s := newSessionListEnv(t, "dt")
+	now := time.Now()
+	s.addTelemetryAt(t, s.pid, "ses_tel_0002", "budi", "screen_view", "", now.Add(-3*time.Minute))
+	s.addTelemetryAt(t, s.pid, "ses_tel_0002", "", "tap", "", now.Add(-1*time.Minute))
+	crashID := s.addCrashAt(t, s.pid, "ses_tel_0002", now.Add(-2*time.Minute))
+
+	status, body := s.detail(t, s.pid, "ses_tel_0002")
+	if status != 200 {
+		t.Fatalf("status %d", status)
+	}
+	if body.Session.ID != "ses_tel_0002" || body.Session.HasReplay || !body.Session.HasError || body.Session.UserID != "budi" {
+		t.Fatalf("unexpected session: %+v", body.Session)
+	}
+	if body.Chunks == nil || len(body.Chunks) != 0 {
+		t.Fatalf("chunks should be an empty array, got %v", body.Chunks)
+	}
+	if len(body.TimelineEvents) != 3 {
+		t.Fatalf("want 3 timeline events, got %+v", body.TimelineEvents)
+	}
+	crash := body.TimelineEvents[1] // ordered by timestamp: tel, crash, tel
+	if crash.Kind != "crash" || crash.Level != "fatal" || crash.ID != fmt.Sprintf("ie_%d", crashID) ||
+		crash.Name != "fatal_crash" || crash.Msg != "npe at Foo.bar" {
+		t.Fatalf("unexpected crash row: %+v", crash)
+	}
+}
+
+func TestGetSessionOutsideListWindow(t *testing.T) {
+	s := newSessionListEnv(t, "dw")
+	s.addTelemetryAt(t, s.pid, "ses_old_0001", "budi", "tap", "", time.Now().Add(-30*24*time.Hour))
+	if status, _ := s.detail(t, s.pid, "ses_old_0001"); status != 200 {
+		t.Fatalf("deep link to an old telemetry-only session should open, got %d", status)
+	}
+}
+
+func TestGetSessionReplayIncludesCrash(t *testing.T) {
+	s := newSessionListEnv(t, "dr")
+	s.addSessionForUser(t, s.pid, "ses_rep_0010", "budi", false)
+	if _, err := s.pool.Exec(context.Background(), `UPDATE replay_sessions SET chunk_count = 2 WHERE id = 'ses_rep_0010'`); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	s.addTelemetryAt(t, s.pid, "ses_rep_0010", "budi", "tap", "", now.Add(-2*time.Minute))
+	s.addTelemetryAt(t, s.pid, "ses_rep_0010", "budi", "replay_chunk", "", now.Add(-90*time.Second))
+	s.addCrashAt(t, s.pid, "ses_rep_0010", now.Add(-1*time.Minute))
+
+	status, body := s.detail(t, s.pid, "ses_rep_0010")
+	if status != 200 || !body.Session.HasReplay {
+		t.Fatalf("status %d session %+v", status, body.Session)
+	}
+	if len(body.TimelineEvents) != 2 {
+		t.Fatalf("want tap + crash (replay_chunk excluded), got %+v", body.TimelineEvents)
+	}
+	if last := body.TimelineEvents[1]; last.Kind != "crash" || !strings.HasPrefix(last.ID, "ie_") {
+		t.Fatalf("crash missing from timeline: %+v", body.TimelineEvents)
+	}
+}
+
+func TestGetSessionHasReplayFlag(t *testing.T) {
+	s := newSessionListEnv(t, "df")
+	s.addSessionForUser(t, s.pid, "ses_rep_0020", "budi", false) // chunk_count defaults to 0
+	s.addSessionForUser(t, s.pid, "ses_rep_0021", "budi", false)
+	if _, err := s.pool.Exec(context.Background(), `UPDATE replay_sessions SET chunk_count = 3 WHERE id = 'ses_rep_0021'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, body := s.detail(t, s.pid, "ses_rep_0020"); body.Session.HasReplay {
+		t.Fatal("chunk_count 0 must report has_replay=false")
+	}
+	if _, body := s.detail(t, s.pid, "ses_rep_0021"); !body.Session.HasReplay {
+		t.Fatal("chunk_count > 0 must report has_replay=true")
+	}
+}
+
+func TestGetSessionUnknown404(t *testing.T) {
+	s := newSessionListEnv(t, "du")
+	if status, _ := s.detail(t, s.pid, "ses_nope_0001"); status != 404 {
+		t.Fatalf("want 404, got %d", status)
+	}
+}
+
+func TestGetSessionOtherProjectTelemetry404(t *testing.T) {
+	s := newSessionListEnv(t, "do")
+	s.addTelemetryAt(t, s.other, "ses_oth_0001", "budi", "tap", "", time.Now())
+	if status, _ := s.detail(t, s.pid, "ses_oth_0001"); status != 404 {
+		t.Fatalf("telemetry of another project must not resolve, got %d", status)
+	}
+}
+
+// The 200-row cap applies to telemetry only: a crash that comes after more than 200 events must still be listed.
+func TestGetSessionTimelineKeepsCrashBeyondTelemetryCap(t *testing.T) {
+	s := newSessionListEnv(t, "dcap")
+	base := time.Now().Add(-time.Hour)
+	if _, err := s.pool.Exec(context.Background(), `
+		INSERT INTO telemetry_events(id, project_id, kind, name, level, session_id, user_id, event_timestamp)
+		SELECT gen_random_uuid(), $1, 'event', 'tap', '', 'ses_cap_0001', 'budi', $2::timestamptz + make_interval(secs => g)
+		FROM generate_series(1, 250) g`, s.pid, base); err != nil {
+		t.Fatal(err)
+	}
+	crashID := s.addCrashAt(t, s.pid, "ses_cap_0001", base.Add(time.Hour/2))
+
+	status, body := s.detail(t, s.pid, "ses_cap_0001")
+	if status != 200 {
+		t.Fatalf("status %d", status)
+	}
+	tel, crashes := 0, 0
+	for i, ev := range body.TimelineEvents {
+		if ev.Kind == "crash" {
+			crashes++
+			if ev.ID != fmt.Sprintf("ie_%d", crashID) {
+				t.Fatalf("unexpected crash id %s", ev.ID)
+			}
+		} else {
+			tel++
+		}
+		if i > 0 && body.TimelineEvents[i-1].TS.After(ev.TS) {
+			t.Fatalf("timeline not sorted at %d", i)
+		}
+	}
+	if tel != 200 || crashes != 1 {
+		t.Fatalf("want 200 telemetry + 1 crash, got %d + %d", tel, crashes)
+	}
+	if body.Session.EventCount != 251 {
+		t.Fatalf("session event_count = %d, want 251", body.Session.EventCount)
+	}
+	if last := body.TimelineEvents[len(body.TimelineEvents)-1]; last.Kind != "crash" {
+		t.Fatalf("crash happens after every telemetry row, so it must be last: %+v", last)
+	}
+}
+
+// Crash rows use the environment recorded on the issue event.
+func TestGetSessionCrashEnvironment(t *testing.T) {
+	s := newSessionListEnv(t, "denv")
+	s.addCrashAt(t, s.pid, "ses_env_0001", time.Now().Add(-time.Minute))
+	if _, err := s.pool.Exec(context.Background(), `UPDATE issue_events SET environment = 'staging' WHERE session_id = 'ses_env_0001'`); err != nil {
+		t.Fatal(err)
+	}
+	status, body := s.detail(t, s.pid, "ses_env_0001")
+	if status != 200 || len(body.TimelineEvents) != 1 || body.TimelineEvents[0].Environment != "staging" {
+		t.Fatalf("status %d timeline %+v", status, body.TimelineEvents)
+	}
+	if body.Session.Environment != "staging" {
+		t.Fatalf("session environment = %q", body.Session.Environment)
+	}
+	// Events without a recorded environment fall back to production.
+	issue2 := s.mcpAddIssue(t, s.pid, "OOM", "fatal_crash", "open", 1)
+	s.mcpAddEvent(t, issue2, mcpTestEvent{session: "ses_env_0002", ageMins: 1})
+	if _, body := s.detail(t, s.pid, "ses_env_0002"); body.TimelineEvents[0].Environment != "production" {
+		t.Fatalf("want production fallback, got %+v", body.TimelineEvents)
+	}
+}
+
+// A timeline failure must not hide the replay chunks: the detail still answers, with an empty timeline.
+func TestGetSessionTimelineErrorKeepsSessionAndChunks(t *testing.T) {
+	s := newSessionListEnv(t, "derr")
+	s.addSessionForUser(t, s.pid, "ses_rep_0030", "budi", false)
+	if _, err := s.pool.Exec(context.Background(), `UPDATE replay_sessions SET chunk_count = 1 WHERE id = 'ses_rep_0030'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(context.Background(), `
+		INSERT INTO replay_chunks(project_id, session_id, chunk_seq, object_key, size_bytes, event_count)
+		VALUES ($1, 'ses_rep_0030', 0, 'k/0', 1, 1)`, s.pid); err != nil {
+		t.Fatal(err)
+	}
+	// An infinite timestamp cannot be scanned into time.Time, so the timeline query's scan fails.
+	if _, err := s.pool.Exec(context.Background(), `
+		INSERT INTO telemetry_events(id, project_id, kind, name, session_id, event_timestamp)
+		VALUES (gen_random_uuid(), $1, 'event', 'tap', 'ses_rep_0030', 'infinity')`, s.pid); err != nil {
+		t.Fatal(err)
+	}
+	status, body := s.detail(t, s.pid, "ses_rep_0030")
+	if status != 200 || !body.Session.HasReplay || len(body.Chunks) != 1 {
+		t.Fatalf("status %d session %+v chunks %v", status, body.Session, body.Chunks)
+	}
+	if body.TimelineEvents == nil || len(body.TimelineEvents) != 0 {
+		t.Fatalf("timeline should be an empty array, got %+v", body.TimelineEvents)
 	}
 }

@@ -460,7 +460,7 @@ var openAPISpecBytes = []byte(`{
     "/projects/{projectID}/sessions": {
       "get": {
         "summary": "List Project Replay Sessions",
-        "description": "Retrieves recorded browser sessions with filters for errors, rage clicks, user ID, environment, and time range.",
+        "description": "Retrieves recorded sessions, including sessions without replay that are derived from telemetry and crash events (has_replay false; looked up in the last 7 days unless from is given), with filters for errors, rage clicks, user ID, environment, and time range. List counts (event_count, has_error and the other flags) cover only that window; the session detail covers the whole session.",
         "operationId": "listProjectSessions",
         "tags": ["Session Replay"],
         "security": [{ "BearerAuth": [] }],
@@ -500,7 +500,7 @@ var openAPISpecBytes = []byte(`{
     "/projects/{projectID}/sessions/{sessionID}": {
       "get": {
         "summary": "Get Replay Session with Chunks and Timeline Events",
-        "description": "Returns session metadata, ordered chunk list with presigned GET download URLs (15-min TTL), and correlated telemetry errors.",
+        "description": "Returns session metadata, ordered chunk list with presigned GET download URLs (15-min TTL), and the correlated timeline events (telemetry plus crashes). A session whose SDK has replay off has no replay row: it is derived from its telemetry and crash events, with has_replay false and an empty chunks list. Crashes appear in timeline_events with kind \"crash\" and an ie_ id prefix.",
         "operationId": "getProjectSession",
         "tags": ["Session Replay"],
         "security": [{ "BearerAuth": [] }],
@@ -1290,6 +1290,7 @@ var openAPISpecBytes = []byte(`{
           "has_error": { "type": "boolean", "example": true },
           "has_rage_click": { "type": "boolean", "example": false },
           "has_dead_click": { "type": "boolean", "example": false },
+          "has_replay": { "type": "boolean", "example": true, "description": "True when replay chunks were recorded. False for sessions derived from telemetry and crash events only (SDK replay off or sampled out)." },
           "storage_prefix": { "type": "string", "example": "projects/1/sessions/sess_01j8xyz9abc123/" },
           "created_at": { "type": "string", "format": "date-time" },
           "updated_at": { "type": "string", "format": "date-time" }
@@ -1320,7 +1321,7 @@ var openAPISpecBytes = []byte(`{
               "type": "object",
               "properties": {
                 "id": { "type": "string" },
-                "kind": { "type": "string", "example": "log" },
+                "kind": { "type": "string", "enum": ["event", "log", "session", "crash"], "example": "log" },
                 "name": { "type": "string", "example": "TypeError: Cannot read properties of undefined" },
                 "level": { "type": "string", "example": "error" },
                 "message": { "type": "string" },
