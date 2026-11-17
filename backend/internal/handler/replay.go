@@ -77,6 +77,9 @@ type ReplaySessionItem struct {
 	StoragePrefix  string     `json:"storage_prefix"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
+	// HasReplay is true only when a replay row exists with at least one uploaded chunk. Sessions listed from
+	// telemetry alone have no replay.
+	HasReplay bool `json:"has_replay"`
 }
 
 type ReplayChunkDetail struct {
@@ -491,77 +494,33 @@ func (h *Handler) ListProjectSessions(c *fiber.Ctx) error {
 		})
 	}
 
-	query := `
-		SELECT
-			id, project_id, user_id, environment, start_time, end_time,
-			duration_ms, chunk_count, event_count, total_size_bytes,
-			has_error, has_rage_click, has_dead_click, storage_prefix, created_at, updated_at,
-			COUNT(*) OVER() AS full_count
-		FROM replay_sessions
-		WHERE project_id = $1`
-
-	args := []any{projectID}
-	argIdx := 2
-
-	if hasErrorParam != "" {
-		hasErrorBool := hasErrorParam == "true" || hasErrorParam == "1"
-		query += fmt.Sprintf(" AND has_error = $%d", argIdx)
-		args = append(args, hasErrorBool)
-		argIdx++
+	filter := sessionListFilter{
+		UserID:      userIDParam,
+		UserPrefix:  userPrefixParam,
+		Environment: envParam,
 	}
-
-	if hasRageParam != "" {
-		hasRageBool := hasRageParam == "true" || hasRageParam == "1"
-		query += fmt.Sprintf(" AND has_rage_click = $%d", argIdx)
-		args = append(args, hasRageBool)
-		argIdx++
+	boolParam := func(raw string) *bool {
+		if raw == "" {
+			return nil
+		}
+		v := raw == "true" || raw == "1"
+		return &v
 	}
-
-	if hasDeadParam != "" {
-		hasDeadBool := hasDeadParam == "true" || hasDeadParam == "1"
-		query += fmt.Sprintf(" AND has_dead_click = $%d", argIdx)
-		args = append(args, hasDeadBool)
-		argIdx++
-	}
-
-	if userIDParam != "" {
-		query += fmt.Sprintf(" AND user_id = $%d", argIdx)
-		args = append(args, userIDParam)
-		argIdx++
-	}
-
-	// Case-insensitive "starts with". starts_with() takes the prefix literally, so '%' and '_' typed by the
-	// user are not LIKE wildcards.
-	if userPrefixParam != "" {
-		query += fmt.Sprintf(" AND starts_with(lower(user_id), lower($%d))", argIdx)
-		args = append(args, userPrefixParam)
-		argIdx++
-	}
-
-	if envParam != "" {
-		query += fmt.Sprintf(" AND environment = $%d", argIdx)
-		args = append(args, envParam)
-		argIdx++
-	}
-
+	filter.HasError = boolParam(hasErrorParam)
+	filter.HasRage = boolParam(hasRageParam)
+	filter.HasDead = boolParam(hasDeadParam)
 	if fromParam != "" {
 		if t, err := time.Parse(time.RFC3339, fromParam); err == nil {
-			query += fmt.Sprintf(" AND start_time >= $%d", argIdx)
-			args = append(args, t)
-			argIdx++
+			filter.From = &t
 		}
 	}
-
 	if toParam != "" {
 		if t, err := time.Parse(time.RFC3339, toParam); err == nil {
-			query += fmt.Sprintf(" AND start_time <= $%d", argIdx)
-			args = append(args, t)
-			argIdx++
+			filter.To = &t
 		}
 	}
 
-	query += fmt.Sprintf(" ORDER BY start_time DESC LIMIT $%d OFFSET $%d", argIdx, argIdx+1)
-	args = append(args, limit, offset)
+	query, args := buildSessionListQuery(projectID, filter, time.Now(), limit, offset)
 
 	rows, err := h.db.Query(ctx, query, args...)
 	if err != nil {
@@ -580,7 +539,7 @@ func (h *Handler) ListProjectSessions(c *fiber.Ctx) error {
 			&item.ID, &item.ProjectID, &item.UserID, &item.Environment,
 			&item.StartTime, &item.EndTime, &item.DurationMs, &item.ChunkCount,
 			&item.EventCount, &item.TotalSizeBytes, &item.HasError, &item.HasRageClick, &item.HasDeadClick,
-			&item.StoragePrefix, &item.CreatedAt, &item.UpdatedAt, &fullCount,
+			&item.StoragePrefix, &item.CreatedAt, &item.UpdatedAt, &item.HasReplay, &fullCount,
 		); err != nil {
 			return fmt.Errorf("scan replay session: %w", err)
 		}
@@ -622,13 +581,14 @@ func (h *Handler) GetProjectSession(c *fiber.Ctx) error {
 		SELECT
 			id, project_id, user_id, environment, start_time, end_time,
 			duration_ms, chunk_count, event_count, total_size_bytes,
-			has_error, has_rage_click, has_dead_click, storage_prefix, created_at, updated_at
+			has_error, has_rage_click, has_dead_click, storage_prefix, created_at, updated_at,
+			chunk_count > 0
 		FROM replay_sessions
 		WHERE project_id = $1 AND id = $2`, projectID, sessionID).Scan(
 		&session.ID, &session.ProjectID, &session.UserID, &session.Environment,
 		&session.StartTime, &session.EndTime, &session.DurationMs, &session.ChunkCount,
 		&session.EventCount, &session.TotalSizeBytes, &session.HasError, &session.HasRageClick, &session.HasDeadClick,
-		&session.StoragePrefix, &session.CreatedAt, &session.UpdatedAt,
+		&session.StoragePrefix, &session.CreatedAt, &session.UpdatedAt, &session.HasReplay,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fiber.NewError(fiber.StatusNotFound, "session not found")
