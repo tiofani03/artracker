@@ -108,3 +108,16 @@ export function peopleLink(userId: string): string {
 export function sessionReplayLink(sessionId: string): string {
   return `/dashboard/replays?session=${encodeURIComponent(sessionId)}`
 }
+
+/** "17 Nov 2026, 10:05" in the viewer's locale; empty for an invalid date. */
+export function formatDateTime(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+/** Milliseconds between two ISO timestamps (0 when either is invalid or the order is reversed). */
+export function spanMs(fromIso: string, toIso: string): number {
+  const ms = new Date(toIso).getTime() - new Date(fromIso).getTime()
+  return Number.isFinite(ms) && ms > 0 ? ms : 0
+}

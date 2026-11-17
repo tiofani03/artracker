@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { contextRows, deviceSummary, peopleLink, sessionReplayLink, traitEntries } from './format'
+import { contextRows, deviceSummary, peopleLink, sessionReplayLink, spanMs, traitEntries } from './format'
 
 describe('contextRows', () => {
   it('maps the Android session_start keys in a fixed order', () => {
@@ -72,5 +72,13 @@ describe('links', () => {
   it('encodes user and session ids', () => {
     expect(peopleLink('a/b c@x.id')).toBe('/dashboard/people?user=a%2Fb%20c%40x.id')
     expect(sessionReplayLink('ses_1 2')).toBe('/dashboard/replays?session=ses_1%202')
+  })
+})
+
+describe('spanMs', () => {
+  it('handles valid, reversed and invalid ranges', () => {
+    expect(spanMs('2026-11-17T10:00:00Z', '2026-11-17T10:01:30Z')).toBe(90_000)
+    expect(spanMs('2026-11-17T10:01:30Z', '2026-11-17T10:00:00Z')).toBe(0)
+    expect(spanMs('nope', '2026-11-17T10:00:00Z')).toBe(0)
   })
 })

@@ -33,7 +33,7 @@ import GrowthAnalyticsView from '../components/analytics/GrowthAnalyticsView'
 import CampaignsView from '../components/campaigns/CampaignsView'
 import AlertsView from '../components/alerts/AlertsView'
 import { countActiveChannels, normalizeChannelsResponse } from '../components/alerts/alertFormat'
-import { navigate } from '../router'
+import { navigate, useSearch } from '../router'
 import { startInteractiveCapture, type LiveCaptureResult } from '../utils/liveReplayCapture'
 import { detectSessionPlatform } from '../utils/platformDetector'
 import '../dashboard.css'
@@ -317,6 +317,12 @@ function DashboardInner({
     }
     return ''
   })
+  // A link to ?session=… while this page is already open (e.g. the replay User tab's "Other sessions") selects it.
+  const search = useSearch()
+  useEffect(() => {
+    const linked = new URLSearchParams(search).get('session')
+    if (linked) setSelectedSessionId(linked)
+  }, [search])
   const [replaySessions, setReplaySessions] = useState<ReplaySessionItem[]>([])
   const [replayTotal, setReplayTotal] = useState<number>(0)
   const [replayOffset, setReplayOffset] = useState<number>(0)

@@ -163,6 +163,8 @@ async function mockReplayApi(
   details: Record<string, { session: MockSession; timeline: unknown[] }>,
   /** Session ids whose detail answers 500. */
   failing: string[] = [],
+  /** Session id to the body of GET …/sessions/:id/context (the replay User tab). */
+  contexts: Record<string, unknown> = {},
 ) {
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url())
@@ -182,6 +184,11 @@ async function mockReplayApi(
       return json({ session: sessionItem(d.session), chunks: [], timeline_events: d.timeline })
     }
     if (/\/sessions\/[^/]+\/perf$/.test(path)) return json({ metrics: [], samples: [], downsampled: false })
+    const ctx = /\/sessions\/([^/]+)\/context$/.exec(path)
+    if (ctx) {
+      const id = decodeURIComponent(ctx[1])
+      return json(contexts[id] ?? { session_id: id, user_id: '', context: {}, person: null, other_sessions: [] })
+    }
     return json({ items: [] })
   })
 }
@@ -244,5 +251,102 @@ test.describe('replay page without a replay', () => {
     await expect(page.getByText('Session not found')).toHaveCount(0)
     await expect(page.locator('.or-transport-bar')).toHaveCount(0)
     await expect(page.locator('.or-unified-header__user')).toHaveCount(0)
+  })
+})
+
+test.describe('replay User tab', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 })
+  })
+
+  const current: MockSession = { id: 'ses_user_now', user_id: 'u_42', has_replay: true }
+  const older: MockSession = { id: 'ses_user_old', user_id: 'u_42', has_replay: false }
+  const userContext = {
+    session_id: current.id,
+    user_id: 'u_42',
+    context: { platform: 'android', model: 'Pixel 8', manufacturer: 'Google', os_version: '14', app_version: '2.3.1' },
+    person: {
+      user_id: 'u_42',
+      traits: { plan: 'pro', country: 'ID' },
+      first_seen: '2026-11-01T08:00:00Z',
+      last_seen: '2026-11-17T10:00:05Z',
+      session_count: 2,
+      error_session_count: 1,
+      last_context: {},
+    },
+    other_sessions: [
+      {
+        session_id: older.id,
+        first_seen: '2026-11-16T09:00:00Z',
+        last_seen: '2026-11-16T09:02:00Z',
+        has_error: true,
+        has_replay: false,
+        context: {},
+      },
+    ],
+  }
+
+  test('shows traits, device context and other sessions, and links onward', async ({ page }) => {
+    await mockReplayApi(
+      page,
+      [current],
+      {
+        [current.id]: { session: current, timeline: [] },
+        [older.id]: { session: older, timeline: crashTimeline },
+      },
+      [],
+      { [current.id]: userContext },
+    )
+    await page.goto(`/dashboard/replays?demo=1&session=${current.id}`)
+    await page.getByRole('tab', { name: 'User' }).click()
+
+    const panel = page.locator('.ppl-panel')
+    await expect(panel.locator('.ppl-identity__id')).toHaveText('u_42')
+    await expect(panel.locator('.ppl-kv__row', { hasText: 'plan' })).toContainText('pro')
+    await expect(panel.locator('.ppl-kv__row', { hasText: 'OS' })).toContainText('Android 14')
+    await expect(panel.locator('.ppl-kv__row', { hasText: 'Device' })).toContainText('Google Pixel 8')
+    await expect(panel).toContainText('2 sessions · 1 with errors')
+    const row = panel.locator('.ppl-session')
+    await expect(row).toHaveCount(1)
+    await expect(row.locator('.badge--exception')).toHaveText('Error')
+
+    await expect(panel.getByRole('link', { name: 'View profile →' })).toHaveAttribute('href', '/dashboard/people?user=u_42')
+    await row.click()
+    await expect(page).toHaveURL(/session=ses_user_old/)
+    await expect(page.locator('.or-unified-header__user')).toHaveText('u_42')
+    await expect(page.getByText('Replay not recorded for this session')).toBeVisible()
+
+    // The header user id links to the People profile (outside demo mode, so only the target is checked here).
+    await expect(page.locator('.or-unified-header__user a')).toHaveAttribute('href', '/dashboard/people?user=u_42')
+  })
+
+  test('an anonymous session shows its device and how to identify users', async ({ page }) => {
+    const anon: MockSession = { id: 'ses_anon_01', user_id: '', has_replay: true }
+    await mockReplayApi(page, [anon], { [anon.id]: { session: anon, timeline: [] } }, [], {
+      [anon.id]: { session_id: anon.id, user_id: '', context: { platform: 'ios', os_version: '17.4.1' }, person: null, other_sessions: [] },
+    })
+    await page.goto(`/dashboard/replays?demo=1&session=${anon.id}`)
+    await page.getByRole('tab', { name: 'User' }).click()
+    const panel = page.locator('.ppl-panel')
+    await expect(panel).toContainText('This session is anonymous')
+    await expect(panel.locator('.ppl-kv__row', { hasText: 'OS' })).toContainText('iOS 17.4.1')
+    await expect(panel).toContainText('ARTracker.identify(userId: "u_123"')
+    await expect(page.locator('.or-unified-header__user a')).toHaveCount(0)
+  })
+
+  test('a failing context request offers a retry', async ({ page }) => {
+    // Fails until Retry is clicked (React StrictMode may fetch twice on mount, so no call counting).
+    let failing = true
+    await mockReplayApi(page, [current], { [current.id]: { session: current, timeline: [] } })
+    await page.route('**/sessions/*/context', async (route) => {
+      if (failing) return route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"boom"}' })
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(userContext) })
+    })
+    await page.goto(`/dashboard/replays?demo=1&session=${current.id}`)
+    await page.getByRole('tab', { name: 'User' }).click()
+    await expect(page.locator('.ppl-panel')).toContainText("Couldn't load user details")
+    failing = false
+    await page.getByRole('button', { name: 'Retry' }).click()
+    await expect(page.locator('.ppl-identity__id')).toHaveText('u_42')
   })
 })
