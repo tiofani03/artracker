@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { MobileFrame, ReplayModel } from './model'
 import {
+  screenEndMs,
   activeFrameAt,
   activeTouchAt,
   deviceClock,
@@ -116,5 +117,38 @@ describe('replayModeLabel', () => {
   })
   it('has no label when there is nothing visual', () => {
     expect(replayModeLabel({ kind: 'none', reason: 'no-chunks' })).toBeNull()
+  })
+})
+
+describe('screenEndMs', () => {
+  const START = 1_700_000_000_000
+  // 326 chunks acknowledged every 10 s: a 54-minute session whose SDK reported duration_ms per chunk (~10 s)
+  const acks = Array.from({ length: 326 }, (_, i) => START + 10_000 + i * 10_000)
+  const ackSpan = acks[acks.length - 1] - acks[0]
+
+  it('uses the chunk acknowledgement span while the scan runs, so the total does not creep up', () => {
+    const early = screenEndMs({ startMs: START, scannedEndMs: START + 30_000, durationMs: 10_082, chunkAckMs: acks, scanning: true })
+    const later = screenEndMs({ startMs: START, scannedEndMs: START + 900_000, durationMs: 10_082, chunkAckMs: acks, scanning: true })
+    expect(early).toBe(START + ackSpan)
+    expect(later).toBe(START + ackSpan)
+  })
+
+  it('trusts the scanned frames once the scan has finished', () => {
+    const end = START + 3_260_500
+    expect(screenEndMs({ startMs: START, scannedEndMs: end, durationMs: 10_082, chunkAckMs: acks, scanning: false })).toBe(end)
+  })
+
+  it('does not keep an inflated ack span after the scan (chunks uploaded long after recording)', () => {
+    const lateAcks = [START + 10_000, START + 86_400_000] // second chunk uploaded a day later
+    expect(screenEndMs({ startMs: START, scannedEndMs: START + 20_000, durationMs: 20_000, chunkAckMs: lateAcks, scanning: false })).toBe(START + 20_000)
+  })
+
+  it('keeps the acknowledged duration as a floor', () => {
+    expect(screenEndMs({ startMs: START, scannedEndMs: START + 5_000, durationMs: 60_000, chunkAckMs: [], scanning: true })).toBe(START + 60_000)
+    expect(screenEndMs({ startMs: START, scannedEndMs: START + 5_000, durationMs: 60_000, chunkAckMs: [], scanning: false })).toBe(START + 60_000)
+  })
+
+  it('ignores invalid or single acknowledgement times', () => {
+    expect(screenEndMs({ startMs: START, scannedEndMs: START + 5_000, durationMs: 0, chunkAckMs: [NaN, START], scanning: true })).toBe(START + 5_000)
   })
 })

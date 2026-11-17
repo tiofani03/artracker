@@ -74,3 +74,25 @@ export function replayModeLabel(model: ReplayModel): 'Screenshot' | 'Wireframe' 
       return null
   }
 }
+
+/**
+ * End (epoch ms) of a screenshot session's timeline. The acknowledged `duration_ms` is always a floor. While the
+ * chunk scan is still running, the span between the first and last chunk acknowledgement is a floor too: some
+ * SDKs report `duration_ms` per chunk instead of for the whole session, and without this the total would creep up
+ * chunk by chunk as the scan advances. Once the scan has finished, the frames are authoritative, so an ack span
+ * inflated by late uploads does not stick.
+ */
+export function screenEndMs(a: {
+  startMs: number
+  scannedEndMs: number
+  durationMs: number
+  chunkAckMs: number[]
+  scanning: boolean
+}): number {
+  let end = Math.max(a.scannedEndMs, a.startMs + Math.max(0, a.durationMs || 0))
+  if (a.scanning) {
+    const acks = a.chunkAckMs.filter(Number.isFinite)
+    if (acks.length >= 2) end = Math.max(end, a.startMs + (Math.max(...acks) - Math.min(...acks)))
+  }
+  return end
+}
