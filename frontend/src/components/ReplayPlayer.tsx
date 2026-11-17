@@ -30,6 +30,7 @@ import {
   fallbackNotice,
   replayModeLabel,
   routeStrip,
+  screenEndMs,
 } from '../replay/playback'
 import { activeScreenFrameAt } from '../replay/screen'
 import { fitScale } from '../replay/fit'
@@ -224,6 +225,9 @@ export default function ReplayPlayer({
   )
   const screenVersion = useSyncExternalStore(subscribeScreen, () => (screenSession ? screenSession.version : 0))
 
+  // When each chunk was acknowledged: while a screen scan runs, their span estimates the session length
+  const chunkAckMs = useMemo(() => chunks.map((c) => Date.parse(c.created_at)), [chunks])
+
   // Single source of truth for what can be rendered
   const model: ReplayModel = useMemo(() => {
     if (screenSession && !hasOverride) {
@@ -235,8 +239,14 @@ export default function ReplayPlayer({
           kind: 'screen',
           platform: idx.platform ?? projectMobile ?? 'android',
           startMs: idx.startMs,
-          // the scan may not have reached the last chunk yet: the acknowledged session duration is the floor
-          endMs: Math.max(idx.endMs, idx.startMs + session.duration_ms),
+          // the scan may not have reached the last chunk yet: see screenEndMs for the floors used meanwhile
+          endMs: screenEndMs({
+            startMs: idx.startMs,
+            scannedEndMs: idx.endMs,
+            durationMs: session.duration_ms,
+            chunkAckMs,
+            scanning: screenScanning,
+          }),
           session: screenSession,
         }
       }
@@ -268,6 +278,8 @@ export default function ReplayPlayer({
     screenSession,
     screenVersion,
     session.duration_ms,
+    chunkAckMs,
+    screenScanning,
   ])
 
   const webEvents = model.kind === 'web' ? model.events : null
