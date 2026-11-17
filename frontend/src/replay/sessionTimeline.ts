@@ -26,3 +26,14 @@ export function buildTimelineRows(events: TelemetryEvent[]): TimelineRow[] {
     return { key: ev.id, offsetLabel, label: badgeLabel, text, tone: category }
   })
 }
+
+/**
+ * The line shown when the server capped the telemetry rows of a session (it always sends the crashes on top).
+ * `eventCount` is the session total, which counts crash events too, so they are taken out before comparing.
+ */
+export function timelineTruncationNotice(events: TelemetryEvent[], eventCount: number): string | null {
+  const crashes = events.filter((e) => e.kind === 'crash').length
+  const shown = events.length - crashes
+  const total = eventCount - crashes
+  return total > shown ? `Showing the first ${shown} of ${total} events.` : null
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { TelemetryEvent } from '../api'
-import { buildTimelineRows } from './sessionTimeline'
+import { buildTimelineRows, timelineTruncationNotice } from './sessionTimeline'
 
 function ev(over: Partial<TelemetryEvent>): TelemetryEvent {
   return {
@@ -53,5 +53,25 @@ describe('buildTimelineRows', () => {
   it('falls back to the name when the message is empty', () => {
     const [row] = buildTimelineRows([ev({ name: 'app_start', message: '' })])
     expect(row.text).toBe('app_start')
+  })
+})
+
+describe('timelineTruncationNotice', () => {
+  const tel = (n: number) => Array.from({ length: n }, (_, i) => ev({ id: `t${i}` }))
+  const crash = ev({ id: 'ie_1', kind: 'crash', level: 'fatal' })
+
+  it('is null when every event is shown', () => {
+    expect(timelineTruncationNotice(tel(3), 3)).toBeNull()
+    expect(timelineTruncationNotice([...tel(3), crash], 4)).toBeNull()
+    expect(timelineTruncationNotice([], 0)).toBeNull()
+  })
+
+  it('reports the telemetry rows shown out of the session total', () => {
+    expect(timelineTruncationNotice([...tel(200), crash], 251)).toBe('Showing the first 200 of 250 events.')
+    expect(timelineTruncationNotice(tel(200), 300)).toBe('Showing the first 200 of 300 events.')
+  })
+
+  it('does not count a shown crash as a missing event', () => {
+    expect(timelineTruncationNotice([...tel(2), crash], 3)).toBeNull()
   })
 })
