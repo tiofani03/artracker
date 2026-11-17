@@ -1,9 +1,13 @@
 package handler
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // sessionTelemetryWindow bounds how far back telemetry-derived sessions (sessions with no replay row) are looked up
@@ -12,17 +16,26 @@ const sessionTelemetryWindow = 7 * 24 * time.Hour
 
 // sessionTelemetryCTE defines two CTEs, src and tel. tel has one row per session id seen in telemetry_events
 // (excluding replay chunk uploads) or issue_events inside the window, with the same columns as replay_sessions.
-// Placeholders: $1 = project id, $2 = window start. It is a shared fragment so a single-session lookup can
-// derive the same aggregates.
-const sessionTelemetryCTE = `
+// Placeholders: $1 = project id, $2 = window start (list) or session id (single-session lookup, no window).
+// It is a shared fragment so a single-session lookup derives the same aggregates; the source rows are filtered
+// before aggregating, so a lookup never scans the whole project.
+func sessionTelemetryCTE(single bool) string {
+	telCond, issueCond := "event_timestamp >= $2", "ie.created_at >= $2"
+	if single {
+		telCond, issueCond = "session_id = $2", "ie.session_id = $2"
+	}
+	return fmt.Sprintf(sessionTelemetryCTEFmt, telCond, issueCond)
+}
+
+const sessionTelemetryCTEFmt = `
 src AS (
 	SELECT session_id, user_id, environment, event_timestamp AS ts, level, name, false AS crash
 	FROM telemetry_events
-	WHERE project_id = $1 AND session_id <> '' AND name <> 'replay_chunk' AND event_timestamp >= $2
+	WHERE project_id = $1 AND session_id <> '' AND name <> 'replay_chunk' AND %s
 	UNION ALL
 	SELECT ie.session_id, ie.user_id, NULL::text, ie.created_at, 'fatal'::text, ''::text, true
 	FROM issue_events ie JOIN issues i ON i.id = ie.issue_id
-	WHERE i.project_id = $1 AND ie.session_id <> '' AND ie.created_at >= $2
+	WHERE i.project_id = $1 AND ie.session_id <> '' AND %s
 ), tel AS (
 	SELECT
 		session_id AS id,
@@ -63,7 +76,7 @@ func buildSessionListQuery(projectID int64, f sessionListFilter, now time.Time, 
 	args := []any{projectID, win}
 
 	var q strings.Builder
-	q.WriteString("WITH" + sessionTelemetryCTE + `, merged AS (
+	q.WriteString("WITH" + sessionTelemetryCTE(false) + `, merged AS (
 	SELECT
 		id, project_id, user_id, environment, start_time, end_time,
 		duration_ms, chunk_count, event_count, total_size_bytes,
@@ -122,4 +135,30 @@ WHERE true`)
 	args = append(args, limit, offset)
 	fmt.Fprintf(&q, " ORDER BY start_time DESC, id LIMIT $%d OFFSET $%d", len(args)-1, len(args))
 	return q.String(), args
+}
+
+// telemetrySessionItem derives a session that has no replay row from its telemetry and crash events. Unlike the
+// list it has no window, so a deep link to an old session still opens. It returns false when the session has no
+// telemetry or crash rows.
+func (h *Handler) telemetrySessionItem(ctx context.Context, projectID int64, sessionID string) (ReplaySessionItem, bool, error) {
+	var it ReplaySessionItem
+	err := h.db.QueryRow(ctx, "WITH"+sessionTelemetryCTE(true)+`
+SELECT
+	id, project_id, user_id, environment, start_time, end_time,
+	duration_ms, chunk_count, event_count, total_size_bytes,
+	has_error, has_rage_click, has_dead_click, storage_prefix, created_at, updated_at
+FROM tel`, projectID, sessionID).Scan(
+		&it.ID, &it.ProjectID, &it.UserID, &it.Environment,
+		&it.StartTime, &it.EndTime, &it.DurationMs, &it.ChunkCount,
+		&it.EventCount, &it.TotalSizeBytes, &it.HasError, &it.HasRageClick, &it.HasDeadClick,
+		&it.StoragePrefix, &it.CreatedAt, &it.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReplaySessionItem{}, false, nil
+	}
+	if err != nil {
+		return ReplaySessionItem{}, false, fmt.Errorf("query telemetry session: %w", err)
+	}
+	it.HasReplay = false
+	return it, true, nil
 }
