@@ -17,6 +17,8 @@ import {
 import DashboardShell from '../components/DashboardShell'
 import ReplayPlayer, { type DeviceMode } from '../components/ReplayPlayer'
 import { useFillHeight } from '../replay/useFillHeight'
+import { formatDurationMs, formatSessionId } from '../replay/format'
+import { SessionTimelinePanel } from '../components/replay/SessionTimelinePanel'
 import { normalizeUserQuery } from '../replay/userSearch'
 import {
   pickSelectedSession,
@@ -91,20 +93,6 @@ function clearSessionParam() {
   if (!url.searchParams.has('session')) return
   url.searchParams.delete('session')
   navigate(url.pathname + url.search, true)
-}
-
-function formatDurationMs(ms: number): string {
-  const totalSec = Math.max(0, Math.round(ms / 1000))
-  const m = Math.floor(totalSec / 60)
-  const s = totalSec % 60
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-}
-
-function formatSessionId(id: string, maxLen = 16): string {
-  if (!id) return ''
-  if (id.length <= maxLen) return id
-  const half = Math.floor((maxLen - 3) / 2)
-  return `${id.slice(0, half + 2)}…${id.slice(-half)}`
 }
 
 function formatExactTime(timestamp?: string | number | Date): string {
@@ -388,6 +376,11 @@ function DashboardInner({
     [sessionDetail, detailStatus, selectedSessionId, replaySessions],
   )
   // Never hide the queue while nothing is selected, or the user would have no way to pick a session
+  // Sessions the SDK sent only telemetry for (replay off or sampled out) show an event timeline, not a player.
+  // A live capture of the same session is a real recording, so it keeps the player.
+  const showTimelinePanel =
+    activeReplaySession?.has_replay === false && liveCapture?.sessionId !== activeReplaySession.id
+  const selectedHasNoReplay = showTimelinePanel
   const queueVisible = queueOpen || !activeReplaySession || replaySessions.length === 0
   const replayView = replayViewState({
     loading: replayLoading,
@@ -541,7 +534,7 @@ function DashboardInner({
   // Profiling samples load in parallel with the session detail; any failure just means "no profiling data"
   const [sessionPerf, setSessionPerf] = useState<{ sessionId: string; data: SessionPerfResponse } | null>(null)
   useEffect(() => {
-    if (!projectReady || !selectedSessionId) {
+    if (!projectReady || !selectedSessionId || selectedHasNoReplay) {
       setSessionPerf(null)
       return
     }
@@ -557,7 +550,7 @@ function DashboardInner({
     return () => {
       cancelled = true
     }
-  }, [projectReady, targetPid, selectedSessionId])
+  }, [projectReady, targetPid, selectedSessionId, selectedHasNoReplay])
 
   const handleStartLiveCapture = () => {
     if (isCapturingLive) return
@@ -587,6 +580,7 @@ function DashboardInner({
           has_error: result.hasError,
           has_rage_click: result.hasRageClick,
           has_dead_click: result.hasDeadClick,
+          has_replay: true,
           storage_prefix: `projects/${targetPid}/sessions/${result.sessionId}/`,
           created_at: nowIso,
           updated_at: nowIso,
@@ -1150,7 +1144,7 @@ function DashboardInner({
                       <p className="dash-card__desc" style={{ marginBottom: '1.5rem' }}>
                         {replayFilter !== 'all'
                           ? `No recorded sessions match the "${replayFilter}" filter in PostgreSQL.`
-                          : 'No session replays ingested yet. Record a live DOM interaction or seed mock sessions.'}
+                          : 'No sessions yet. Events with a session id will appear here once the SDK sends them.'}
                       </p>
                       <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
                         <button
@@ -1285,6 +1279,7 @@ function DashboardInner({
                                   <span className="dash-session-item__platform">
                                     {plat.label}
                                   </span>
+                                  {!s.has_replay && <span className="badge badge--muted">no replay</span>}
                                   {hasErr && <span className="badge badge--exception">error</span>}
                                   {s.has_rage_click && <span className="badge badge--console">rage</span>}
                                   {s.has_dead_click && <span className="badge badge--console">dead</span>}
@@ -1303,10 +1298,14 @@ function DashboardInner({
 
                               <div className="dash-session-item__row-3">
                                 <span>{durFormatted} duration</span>
-                                <span>
-                                  {s.event_count || s.chunk_count} events · {s.chunk_count} chunk
-                                  {s.chunk_count === 1 ? '' : 's'}
-                                </span>
+                                {s.has_replay ? (
+                                  <span>
+                                    {s.event_count || s.chunk_count} events · {s.chunk_count} chunk
+                                    {s.chunk_count === 1 ? '' : 's'}
+                                  </span>
+                                ) : (
+                                  <span>{s.event_count} events</span>
+                                )}
                               </div>
                             </button>
                           )
@@ -1367,6 +1366,22 @@ function DashboardInner({
                             </button>
                           )}
                         </section>
+                      ) : activeReplaySession && showTimelinePanel ? (
+                        <SessionTimelinePanel
+                          session={activeReplaySession}
+                          events={
+                            sessionDetail && sessionDetail.session.id === activeReplaySession.id
+                              ? sessionDetail.timelineEvents
+                              : []
+                          }
+                          loading={
+                            detailLoading ||
+                            !sessionDetail ||
+                            sessionDetail.session.id !== activeReplaySession.id
+                          }
+                          queueOpen={queueVisible}
+                          onToggleQueue={toggleQueue}
+                        />
                       ) : activeReplaySession ? (
                         <ReplayPlayer
                           session={activeReplaySession}

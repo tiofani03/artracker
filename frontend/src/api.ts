@@ -356,7 +356,7 @@ export type ProjectStats = {
 
 export type TelemetryEvent = {
   id: string
-  kind: 'event' | 'log' | 'session'
+  kind: 'event' | 'log' | 'session' | 'crash'
   name: string
   level: string
   message: string
@@ -613,6 +613,8 @@ export type ReplaySessionItem = {
   has_error: boolean
   has_rage_click: boolean
   has_dead_click: boolean
+  /** False for sessions derived from telemetry only (SDK replay off or sampled out): they have no chunks to play. */
+  has_replay: boolean
   storage_prefix: string
   created_at: string
   updated_at: string
