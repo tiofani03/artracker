@@ -5,23 +5,24 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type WorkerPool struct {
-	queue          chan BatchJob
-	sink           StorageSink
-	perfSink       PerfSink
-	sanitizer      *Sanitizer
-	metrics        *Metrics
-	issueProcessor IssueProcessor
-	batchSize      int
-	flushInterval  time.Duration
-	numWorkers     int
-	wg             sync.WaitGroup
-	stopOnce       sync.Once
-	closed         bool
-	mu             sync.Mutex
+	queue         chan BatchJob
+	sink          StorageSink
+	perfSink      PerfSink
+	sanitizer     *Sanitizer
+	metrics       *Metrics
+	processors    atomic.Pointer[[]RowProcessor]
+	batchSize     int
+	flushInterval time.Duration
+	numWorkers    int
+	wg            sync.WaitGroup
+	stopOnce      sync.Once
+	closed        bool
+	mu            sync.Mutex
 }
 
 func NewWorkerPool(
@@ -54,12 +55,42 @@ func NewWorkerPool(
 		flushInterval: time.Duration(flushIntervalMs) * time.Millisecond,
 		numWorkers:    numWorkers,
 	}
-	if len(processors) > 0 {
-		wp.issueProcessor = processors[0]
+	for _, p := range processors {
+		wp.AddRowProcessor(p)
 	}
 
 	wp.start()
 	return wp
+}
+
+// AddRowProcessor registers a processor that runs after every successful flush. Safe while workers run.
+func (wp *WorkerPool) AddRowProcessor(p RowProcessor) {
+	if p == nil {
+		return
+	}
+	wp.mu.Lock()
+	defer wp.mu.Unlock()
+	var next []RowProcessor
+	if cur := wp.processors.Load(); cur != nil {
+		next = append(next, (*cur)...)
+	}
+	next = append(next, p)
+	wp.processors.Store(&next)
+}
+
+// runProcessors gives each processor its own timeout so one slow or failing processor cannot starve the others.
+func (wp *WorkerPool) runProcessors(workerID int, rows []TelemetryRow) {
+	procs := wp.processors.Load()
+	if procs == nil {
+		return
+	}
+	for i, p := range *procs {
+		pctx, pcancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := p.ProcessRows(pctx, rows); err != nil {
+			slog.Error("row processor failed", "worker", workerID, "processor", i, "err", err)
+		}
+		pcancel()
+	}
 }
 
 func (wp *WorkerPool) start() {
@@ -111,13 +142,7 @@ func (wp *WorkerPool) workerLoop(workerID int) {
 		} else {
 			wp.metrics.AddEventsFlushed(len(rows))
 			wp.metrics.IncBatchesFlushed()
-			if wp.issueProcessor != nil {
-				pctx, pcancel := context.WithTimeout(context.Background(), 5*time.Second)
-				if perr := wp.issueProcessor.ProcessRows(pctx, rows); perr != nil {
-					slog.Error("issue grouping failed", "worker", workerID, "err", perr)
-				}
-				pcancel()
-			}
+			wp.runProcessors(workerID, rows)
 		}
 
 		rows = rows[:0]

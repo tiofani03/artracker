@@ -103,8 +103,13 @@ func (s *Service) Sink() StorageSink {
 // so flushed batches are grouped into issues. Returns the service for chaining.
 func (s *Service) WithIssueProcessor(p IssueProcessor) *Service {
 	s.issueProcessor = p
+	return s.AddRowProcessor(p)
+}
+
+// AddRowProcessor attaches another processor that runs after every successful flush. Returns the service.
+func (s *Service) AddRowProcessor(p RowProcessor) *Service {
 	if s.workerPool != nil {
-		s.workerPool.issueProcessor = p
+		s.workerPool.AddRowProcessor(p)
 	}
 	return s
 }

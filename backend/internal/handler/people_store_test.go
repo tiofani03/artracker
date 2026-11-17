@@ -132,7 +132,7 @@ func TestTouchFromReplay(t *testing.T) {
 	e, pid, st := newPeopleEnv(t)
 	ts := time.Now().UTC()
 	for i := 0; i < 2; i++ {
-		if err := st.TouchFromReplay(context.Background(), pid, "u9", "s9", ts); err != nil {
+		if err := st.TouchFromReplay(context.Background(), pid, "u9", "s9", ts, ts); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -186,5 +186,27 @@ func TestPeopleMigrationBackfill(t *testing.T) {
 	}
 	if n := e.count(t, fmt.Sprintf(`SELECT count(*) FROM user_profiles WHERE project_id=%d`, pid)); n != 2 {
 		t.Fatalf("want 2 profiles (u1, u2), got %d", n)
+	}
+}
+
+func TestChunkURLTouchesPeople(t *testing.T) {
+	e := newTestEnv(t)
+	e.h.WithReplayStore(&mockReplayStore{})
+	uid, authHdr := e.addUser(t, "peopleadmin")
+	orgID := e.addOrg(t, "acme-people")
+	e.addMember(t, orgID, uid, "owner")
+	pid := e.addProject(t, orgID, "people-replay")
+	key := e.createKey(t, pid, "public_client", authHdr)
+	resp := e.post(t, "/api/v1/replay/chunk-url",
+		`{"session_id":"sess_people_1","chunk_seq":0,"size_bytes":2048,"user_id":"u9"}`,
+		map[string]string{"X-Artracker-Key": key.Secret, "Content-Type": "application/json"})
+	if resp.StatusCode != 200 {
+		t.Fatalf("chunk-url status = %d", resp.StatusCode)
+	}
+	if n := e.count(t, fmt.Sprintf(`SELECT count(*) FROM user_profiles WHERE project_id=%d AND user_id='u9' AND last_session_id='sess_people_1'`, pid)); n != 1 {
+		t.Fatalf("profile not created: %d", n)
+	}
+	if n := e.count(t, fmt.Sprintf(`SELECT count(*) FROM session_contexts WHERE project_id=%d AND session_id='sess_people_1' AND user_id='u9'`, pid)); n != 1 {
+		t.Fatalf("session context not created: %d", n)
 	}
 }

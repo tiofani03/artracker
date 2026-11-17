@@ -133,14 +133,18 @@ func (s *Store) Apply(ctx context.Context, b Batch) error {
 	return tx.Commit(ctx)
 }
 
-// TouchFromReplay records a session (and its user, when known) seen through a replay chunk upload.
-func (s *Store) TouchFromReplay(ctx context.Context, projectID int64, userID, sessionID string, at time.Time) error {
+// TouchFromReplay records a session (and its user, when known) seen through a replay chunk upload: the session
+// started at start and was still active at seen.
+func (s *Store) TouchFromReplay(ctx context.Context, projectID int64, userID, sessionID string, start, seen time.Time) error {
 	if sessionID == "" {
 		return nil
 	}
-	b := Batch{Sessions: []SessionDelta{{ProjectID: projectID, SessionID: sessionID, UserID: userID, FirstSeen: at, LastSeen: at}}}
+	if seen.Before(start) {
+		seen = start
+	}
+	b := Batch{Sessions: []SessionDelta{{ProjectID: projectID, SessionID: sessionID, UserID: userID, FirstSeen: start, LastSeen: seen}}}
 	if userID != "" {
-		b.Profiles = []ProfileDelta{{ProjectID: projectID, UserID: userID, FirstSeen: at, LastSeen: at, LastSessionID: sessionID}}
+		b.Profiles = []ProfileDelta{{ProjectID: projectID, UserID: userID, FirstSeen: start, LastSeen: seen, LastSessionID: sessionID}}
 	}
 	return s.Apply(ctx, b)
 }
@@ -155,8 +159,9 @@ const personColumns = `
     COALESCE(c.n, 0), COALESCE(c.e, 0)
 FROM user_profiles p
 LEFT JOIN LATERAL (
-    SELECT count(*) AS n, count(*) FILTER (WHERE sc.has_error) AS e
+    SELECT count(*) AS n, count(*) FILTER (WHERE sc.has_error OR COALESCE(r.has_error, false)) AS e
     FROM session_contexts sc
+    LEFT JOIN replay_sessions r ON r.project_id = sc.project_id AND r.id = sc.session_id
     WHERE sc.project_id = p.project_id AND sc.user_id = p.user_id
 ) c ON true`
 
@@ -220,10 +225,10 @@ func (s *Store) GetPerson(ctx context.Context, projectID int64, userID string) (
 // PersonSessions lists a user's sessions, newest first, leaving out excludeSessionID.
 func (s *Store) PersonSessions(ctx context.Context, projectID int64, userID, excludeSessionID string, limit int) ([]PersonSession, error) {
 	rows, err := s.db.Query(ctx, `
-        SELECT sc.session_id, sc.first_seen, sc.last_seen, sc.has_error, sc.context,
-               EXISTS (SELECT 1 FROM replay_sessions r
-                       WHERE r.project_id = sc.project_id AND r.id = sc.session_id AND r.chunk_count > 0)
+        SELECT sc.session_id, sc.first_seen, sc.last_seen,
+               sc.has_error OR COALESCE(r.has_error, false), sc.context, COALESCE(r.chunk_count, 0) > 0
         FROM session_contexts sc
+        LEFT JOIN replay_sessions r ON r.project_id = sc.project_id AND r.id = sc.session_id
         WHERE sc.project_id = $1 AND sc.user_id = $2 AND sc.session_id <> $3
         ORDER BY sc.last_seen DESC, sc.session_id
         LIMIT $4`, projectID, userID, excludeSessionID, limit)
