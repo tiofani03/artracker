@@ -82,6 +82,17 @@ const REPLAY_FILTERS: { id: ReplayFilter; label: string; title: string }[] = [
   { id: 'dead', label: 'Dead', title: 'Dead clicks: a click that triggered no response' },
 ]
 
+/**
+ * Drop `?session=` (replace, no history entry) when the list's filter, search or page changes, so the new list
+ * falls back to its first item instead of keeping the previous pick pinned as if it were a deep link.
+ */
+function clearSessionParam() {
+  const url = new URL(window.location.href)
+  if (!url.searchParams.has('session')) return
+  url.searchParams.delete('session')
+  navigate(url.pathname + url.search, true)
+}
+
 function formatDurationMs(ms: number): string {
   const totalSec = Math.max(0, Math.round(ms / 1000))
   const m = Math.floor(totalSec / 60)
@@ -383,6 +394,7 @@ function DashboardInner({
     sessionCount: replaySessions.length,
     filter: replayFilter,
     userQuery,
+    selectedId: selectedSessionId,
   })
 
   const handleLogPageSizeChange = (size: number) => {
@@ -465,6 +477,7 @@ function DashboardInner({
     const next = normalizeUserQuery(userDraft)
     if (next === userQuery) return
     const timer = setTimeout(() => {
+      clearSessionParam()
       setUserQuery(next)
       setReplayOffset(0)
     }, 300)
@@ -896,10 +909,12 @@ function DashboardInner({
     currentLogPage * logPageSize,
   )
 
-  const goSection = (path: string) => navigate(isDemo ? `${path}${path.includes('?') ? '&' : '?'}demo=1` : path)
-  const openReplay = (sessionId: string) => {
+  const goSection = (path: string, replace = false) =>
+    navigate(isDemo ? `${path}${path.includes('?') ? '&' : '?'}demo=1` : path, replace)
+  /** `replace` keeps picks inside the replay queue out of the history stack; links from other pages push. */
+  const openReplay = (sessionId: string, replace = false) => {
     setSelectedSessionId(sessionId)
-    goSection(`/dashboard/replays?session=${encodeURIComponent(sessionId)}`)
+    goSection(`/dashboard/replays?session=${encodeURIComponent(sessionId)}`, replace)
   }
 
   return (
@@ -1195,6 +1210,7 @@ function DashboardInner({
                           onChange={(e) => setUserDraft(e.target.value)}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
+                              clearSessionParam()
                               setUserQuery(normalizeUserQuery(userDraft))
                               setReplayOffset(0)
                             }
@@ -1206,6 +1222,7 @@ function DashboardInner({
                             className="dash-user-search__clear"
                             aria-label="Clear user search"
                             onClick={() => {
+                              clearSessionParam()
                               setUserDraft('')
                               setUserQuery('')
                               setReplayOffset(0)
@@ -1224,6 +1241,7 @@ function DashboardInner({
                             aria-pressed={replayFilter === f.id}
                             title={f.title}
                             onClick={() => {
+                              clearSessionParam()
                               setReplayFilter(f.id)
                               setReplayOffset(0)
                             }}
@@ -1251,7 +1269,7 @@ function DashboardInner({
                               type="button"
                               className={`dash-session-item${selected ? ' is-selected' : ''}`}
                               onClick={() => {
-                                openReplay(s.id)
+                                openReplay(s.id, true)
                                 // phones: picking a session returns to the player (not persisted)
                                 if (isPhone()) setQueueOpen(false)
                               }}
@@ -1302,7 +1320,10 @@ function DashboardInner({
                             type="button"
                             className="dash-btn"
                             disabled={replayOffset === 0 || replayLoading}
-                            onClick={() => setReplayOffset((prev) => Math.max(0, prev - REPLAY_PAGE_SIZE))}
+                            onClick={() => {
+                              clearSessionParam()
+                              setReplayOffset((prev) => Math.max(0, prev - REPLAY_PAGE_SIZE))
+                            }}
                           >
                             ← Prev
                           </button>
@@ -1313,7 +1334,10 @@ function DashboardInner({
                             type="button"
                             className="dash-btn"
                             disabled={replayOffset + REPLAY_PAGE_SIZE >= replayTotal || replayLoading}
-                            onClick={() => setReplayOffset((prev) => prev + REPLAY_PAGE_SIZE)}
+                            onClick={() => {
+                              clearSessionParam()
+                              setReplayOffset((prev) => prev + REPLAY_PAGE_SIZE)
+                            }}
                           >
                             Next →
                           </button>
@@ -1324,7 +1348,7 @@ function DashboardInner({
 
                     {/* Right Column: OpenReplay Unified Studio Theater */}
                     <div className="or-player-col" aria-label="Session player">
-                      {replaySessions.length === 0 ? (
+                      {replaySessions.length === 0 && selectedSessionId === '' ? (
                         <section className="dash-replay-empty" role="status">
                           <p className="dash-replay-empty__title">{replayEmptyMessage(replayFilter, replayLoading, userQuery)}</p>
                           {!replayLoading && (replayFilter !== 'all' || userQuery) && (
@@ -1332,6 +1356,7 @@ function DashboardInner({
                               type="button"
                               className="dash-btn"
                               onClick={() => {
+                                clearSessionParam()
                                 setReplayFilter('all')
                                 setUserDraft('')
                                 setUserQuery('')

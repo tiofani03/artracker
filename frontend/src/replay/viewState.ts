@@ -11,8 +11,11 @@ export function replayViewState(a: {
   filter: string
   /** Active user search; like a filter, it must keep the list and its search box on screen. */
   userQuery?: string
+  /** A requested session (deep link) keeps the workspace on screen so the player can resolve it, even with an empty list. */
+  selectedId?: string
 }): ReplayViewState {
   if (a.sessionCount > 0) return 'workspace'
+  if (a.selectedId) return 'workspace'
   if (a.filter !== 'all' || a.userQuery) return 'workspace'
   return a.loading ? 'skeleton' : 'onboarding'
 }

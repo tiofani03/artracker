@@ -19,6 +19,12 @@ describe('replayViewState', () => {
     expect(s(true, 0, 'dead')).toBe('workspace')
   })
 
+  it('keeps the workspace for a requested session even when the list is empty', () => {
+    expect(replayViewState({ loading: false, sessionCount: 0, filter: 'all', selectedId: 'x' })).toBe('workspace')
+    expect(replayViewState({ loading: true, sessionCount: 0, filter: 'all', selectedId: 'x' })).toBe('workspace')
+    expect(replayViewState({ loading: false, sessionCount: 0, filter: 'all', selectedId: '' })).toBe('onboarding')
+  })
+
   it('shows the skeleton only for the first load with no filter', () => {
     expect(s(true, 0, 'all')).toBe('skeleton')
   })
