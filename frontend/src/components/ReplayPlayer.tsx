@@ -36,6 +36,8 @@ import { activeScreenFrameAt } from '../replay/screen'
 import { fitScale } from '../replay/fit'
 import { filterMarkers, type MarkerFilter } from '../replay/markerFilter'
 import { ReplaySidePanel, type SidePanelTab } from './replay/ReplaySidePanel'
+import { HeaderUser } from './replay/HeaderUser'
+import { UserPanel } from './replay/UserPanel'
 import { PerformancePanel } from './replay/PerformancePanel'
 import { TimelineTracks } from './replay/TimelineTracks'
 import { describeBreach, detectBreaches, memTrackMax, perfValueAt, toSeries } from '../replay/perf'
@@ -1012,9 +1014,7 @@ export default function ReplayPlayer({
                 ≡ Sessions
               </button>
             )}
-            <strong className="or-unified-header__user" title={session.user_id || 'anonymous_user'}>
-              {session.user_id || 'anonymous_user'}
-            </strong>
+            <HeaderUser userId={session.user_id} />
             <span className="or-unified-header__id" title={session.id}>
               {formatSessionId(session.id, 14)}
             </span>
@@ -1213,6 +1213,14 @@ export default function ReplayPlayer({
           onSeek={seekTo}
           tab={sideTab}
           onTabChange={setSideTab}
+          user={
+            <UserPanel
+              key={session.id}
+              projectId={session.project_id}
+              sessionId={session.id}
+              fallbackUserId={session.user_id}
+            />
+          }
           performance={
             <PerformancePanel
               perf={perf ?? null}

@@ -521,6 +521,88 @@ var openAPISpecBytes = []byte(`{
         }
       }
     },
+    "/projects/{projectID}/sessions/{sessionID}/context": {
+      "get": {
+        "summary": "Get Session User and Device Context",
+        "description": "Returns the user id and device/app context recorded for one session (from its session_start telemetry), the user's People profile, and up to 10 of the user's other sessions, newest first. Anonymous or unknown sessions answer 200 with person null and an empty other_sessions list.",
+        "operationId": "getSessionContext",
+        "tags": ["People"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "sessionID", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session context",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionContextResponse" } } }
+          }
+        }
+      }
+    },
+    "/projects/{projectID}/people": {
+      "get": {
+        "summary": "List People (End Users)",
+        "description": "Lists identified end users of the project, most recently seen first. Profiles are built from $identify telemetry (traits), session_start telemetry (device context) and replay uploads. search is a case-insensitive prefix match on user_id or a substring match on any trait value.",
+        "operationId": "listPeople",
+        "tags": ["People"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "search", "in": "query", "required": false, "schema": { "type": "string", "maxLength": 128 } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 25, "maximum": 100 } },
+          { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer", "default": 0 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of people",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": { "type": "array", "items": { "$ref": "#/components/schemas/Person" } },
+                    "total": { "type": "integer" },
+                    "limit": { "type": "integer" },
+                    "offset": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{projectID}/people/{userID}": {
+      "get": {
+        "summary": "Get Person",
+        "description": "Returns one end user's profile and their latest 50 sessions. userID must be URL path-encoded.",
+        "operationId": "getPerson",
+        "tags": ["People"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "userID", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Person and sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "person": { "$ref": "#/components/schemas/Person" },
+                    "sessions": { "type": "array", "items": { "$ref": "#/components/schemas/PersonSession" } }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "description": "No profile for this user" }
+        }
+      }
+    },
     "/projects/{projectID}/analytics/catalog": {
       "get": {
         "summary": "Get Event and Attribute Catalog",
@@ -1305,6 +1387,39 @@ var openAPISpecBytes = []byte(`{
           "event_count": { "type": "integer", "example": 128 },
           "created_at": { "type": "string", "format": "date-time" },
           "url": { "type": "string", "example": "https://artracker-storage.r2.cloudflarestorage.com/projects/1/sessions/.../chunk_0.gz?X-Amz-Signature=..." }
+        }
+      },
+      "Person": {
+        "type": "object",
+        "properties": {
+          "user_id": { "type": "string", "example": "u_123" },
+          "traits": { "type": "object", "additionalProperties": true, "example": { "plan": "pro", "country": "ID" } },
+          "first_seen": { "type": "string", "format": "date-time" },
+          "last_seen": { "type": "string", "format": "date-time" },
+          "session_count": { "type": "integer", "example": 12 },
+          "error_session_count": { "type": "integer", "example": 2 },
+          "last_context": { "type": "object", "additionalProperties": true, "example": { "platform": "android", "model": "Pixel 8", "os_version": "14", "app_version": "2.3.1" } }
+        }
+      },
+      "PersonSession": {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" },
+          "first_seen": { "type": "string", "format": "date-time" },
+          "last_seen": { "type": "string", "format": "date-time" },
+          "has_error": { "type": "boolean" },
+          "has_replay": { "type": "boolean" },
+          "context": { "type": "object", "additionalProperties": true }
+        }
+      },
+      "SessionContextResponse": {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" },
+          "user_id": { "type": "string", "description": "Empty for anonymous sessions" },
+          "context": { "type": "object", "additionalProperties": true },
+          "person": { "nullable": true, "allOf": [{ "$ref": "#/components/schemas/Person" }] },
+          "other_sessions": { "type": "array", "items": { "$ref": "#/components/schemas/PersonSession" } }
         }
       },
       "ReplaySessionDetail": {

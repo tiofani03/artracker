@@ -4,7 +4,7 @@ import { countByFilter, filterMarkers, selectableFilters, type MarkerFilter } fr
 import type { TimelineMarker } from '../ReplayPlayer'
 
 export type { MarkerFilter }
-export type SidePanelTab = 'events' | 'network' | 'performance'
+export type SidePanelTab = 'events' | 'network' | 'performance' | 'user'
 
 export type ReplaySidePanelProps = {
   markers: TimelineMarker[]
@@ -18,6 +18,8 @@ export type ReplaySidePanelProps = {
   onTabChange(t: SidePanelTab): void
   /** Content of the Performance tab; an empty state is shown when absent. */
   performance?: ReactNode
+  /** Content of the User tab (who the user is, device context, other sessions). */
+  user?: ReactNode
 }
 
 type Snap = 'peek' | 'half' | 'full'
@@ -27,6 +29,7 @@ const TABS: { id: SidePanelTab; label: string }[] = [
   { id: 'events', label: 'Events' },
   { id: 'network', label: 'Network' },
   { id: 'performance', label: 'Performance' },
+  { id: 'user', label: 'User' },
 ]
 
 const FILTERS: { id: MarkerFilter; label: string; modifier?: string }[] = [
@@ -119,6 +122,7 @@ export function ReplaySidePanel({
   tab,
   onTabChange,
   performance,
+  user,
 }: ReplaySidePanelProps) {
   const [snap, setSnap] = useState<Snap>(() =>
     typeof window !== 'undefined' && window.matchMedia?.('(max-width: 1100px)').matches ? 'peek' : 'half',
@@ -134,7 +138,7 @@ export function ReplaySidePanel({
 
   // Follow Playhead: scroll ONLY this list (never the page) so the active event stays visible.
   useEffect(() => {
-    if (!followPlayhead || tab === 'performance') return
+    if (!followPlayhead || tab === 'performance' || tab === 'user') return
     const list = listRef.current
     const item = activeItemRef.current
     if (!list || !item) return
@@ -142,7 +146,7 @@ export function ReplaySidePanel({
     if (top !== null) list.scrollTop = top
   }, [activeMarkerId, followPlayhead, tab, activeFilter])
 
-  const showList = tab !== 'performance'
+  const showList = tab !== 'performance' && tab !== 'user'
 
   return (
     <aside className="or-side-panel" data-snap={snap} aria-label="Session activity">
@@ -203,7 +207,11 @@ export function ReplaySidePanel({
         </div>
       )}
 
-      {tab === 'performance' ? (
+      {tab === 'user' ? (
+        <div className="or-side-panel__body">
+          {user ?? <p className="dash-empty" style={{ padding: '1.5rem 1rem', margin: 0 }}>No user details for this session.</p>}
+        </div>
+      ) : tab === 'performance' ? (
         <div className="or-side-panel__body">
           {performance ?? (
             <p className="dash-empty" style={{ padding: '1.5rem 1rem', margin: 0 }}>

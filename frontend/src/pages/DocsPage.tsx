@@ -255,6 +255,69 @@ Authorization: Bearer eyJhbGciOiJIUzI1Ni...
 \`\`\``,
   },
   {
+    id: 'identify-users',
+    title: 'Identify Users (People)',
+    category: 'GETTING STARTED',
+    isGuide: true,
+    description:
+      'Tell the SDK who the signed-in user is so every session, replay and crash is attributed to them, and their traits and devices appear under People and in the replay User tab.',
+    callouts: [
+      {
+        type: 'info',
+        title: 'One session, one user',
+        content:
+          'identify() with a different user than the current one ends the session and starts a new one, and reset() on logout starts an anonymous session. A session never spans two users.',
+      },
+      {
+        type: 'warning',
+        title: 'Do not send secrets as traits',
+        content:
+          'Traits are shown to everyone on the project. Keys that look like credentials or identity numbers (password, token, api_key, card, cvv, pin, nik, ssn, …) are dropped by the server.',
+      },
+    ],
+    guideContent: `### Android
+
+\`\`\`kotlin
+// after login
+ARTracker.identify("u_123", mapOf("plan" to "pro", "country" to "ID"))
+// on logout
+ARTracker.reset()
+\`\`\`
+
+### iOS
+
+\`\`\`swift
+// after login
+ARTracker.identify(userId: "u_123", traits: ["plan": "pro", "country": "ID"])
+// on logout
+ARTracker.reset()
+\`\`\`
+
+### What is sent
+
+\`identify\` sends a telemetry item named \`$identify\` to \`POST /api/v1/ingest\`, with the traits as its flat \`attributes\`. The device context (model, OS, app version, locale, network, SDK version) rides the session-start item. No extra endpoint is needed.
+
+### Trait limits
+
+- At most **50** keys per call; keys 1–**64** characters.
+- Values are strings (cut at **256** characters), numbers, booleans or \`null\`. Nested objects and arrays are dropped.
+- A \`null\` value removes that trait from the profile; other traits are kept (last write wins per key).
+
+### User switch semantics
+
+| Call | Session | Effect |
+|---|---|---|
+| identify(A) while anonymous | kept | The current session becomes A's |
+| identify(A) while A | kept | Sent again only if the traits changed |
+| identify(B) while A | new session | The old session stays A's, the new one is B's |
+| reset() | new session | The new session is anonymous |
+
+### Where it shows up
+
+- **People** in the dashboard sidebar: search users by id or trait value, see their traits, last device and sessions.
+- **Session Replay → User tab**: who the user is, this session's device, and their other sessions.`,
+  },
+  {
     id: 'ingest-batch',
     title: 'Batch Telemetry Ingest',
     category: 'CORE INGESTION API',
@@ -1574,7 +1637,11 @@ function DocsView({
   onTogglePlayground: () => void
   onSelect?: () => void
 }) {
-  const [selectedId, setSelectedId] = useState<string>('ingest-batch')
+  // A #section-id in the URL (e.g. /docs#identify-users) opens that section.
+  const [selectedId, setSelectedId] = useState<string>(() => {
+    const hash = typeof window !== 'undefined' ? window.location.hash.slice(1) : ''
+    return SECTIONS.some((s) => s.id === hash) ? hash : 'ingest-batch'
+  })
   const [navOpen, setNavOpen] = useState(false)
   const [projectKeys, setProjectKeys] = useState<ApiKey[]>([])
   const [activeKey, setActiveKey] = useState<string>('')

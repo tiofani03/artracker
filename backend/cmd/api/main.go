@@ -22,6 +22,7 @@ import (
 	"github.com/tiofani03/artracker/backend/internal/db"
 	"github.com/tiofani03/artracker/backend/internal/handler"
 	"github.com/tiofani03/artracker/backend/internal/ingest"
+	"github.com/tiofani03/artracker/backend/internal/people"
 	"github.com/tiofani03/artracker/backend/internal/storage"
 )
 
@@ -178,6 +179,9 @@ func main() {
 		}
 	}
 	ingestSvc.WithIssueProcessor(h.IssueService())
+	if peopleStore := h.PeopleStore(); peopleStore != nil {
+		ingestSvc.AddRowProcessor(people.NewProcessor(peopleStore))
+	}
 	app.Get("/healthz", h.Health)
 	app.Get("/auth/callback/:provider", h.OAuthCallback)
 	h.Routes(app.Group("/api/v1"))

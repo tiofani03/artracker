@@ -1,5 +1,6 @@
 import type { ReplaySessionItem, TelemetryEvent } from '../../api'
 import { formatDurationMs, formatSessionId } from '../../replay/format'
+import { HeaderUser } from './HeaderUser'
 import { buildTimelineRows, timelineTruncationNotice } from '../../replay/sessionTimeline'
 
 /** Stands in for the player on a session whose SDK sent no replay: the same header, then its events as a list. */
@@ -18,7 +19,6 @@ export function SessionTimelinePanel({
 }) {
   const rows = buildTimelineRows(events)
   const truncated = loading ? null : timelineTruncationNotice(events, session.event_count)
-  const user = session.user_id || 'anonymous_user'
 
   return (
     <div className="replay-player-shell">
@@ -34,9 +34,7 @@ export function SessionTimelinePanel({
             >
               ≡ Sessions
             </button>
-            <strong className="or-unified-header__user" title={user}>
-              {user}
-            </strong>
+            <HeaderUser userId={session.user_id} />
             <span className="or-unified-header__id" title={session.id}>
               {formatSessionId(session.id, 14)}
             </span>

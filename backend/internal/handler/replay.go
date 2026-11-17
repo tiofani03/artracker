@@ -178,6 +178,10 @@ func (h *Handler) GenerateChunkUploadURL(c *fiber.Ctx) error {
 		if err != nil {
 			return fmt.Errorf("upsert replay session: %w", err)
 		}
+		// People: best effort, a failure here must never block the upload.
+		if perr := h.PeopleStore().TouchFromReplay(ctx, projectID, strings.TrimSpace(req.UserID), req.SessionID, startTime, time.Now()); perr != nil {
+			slog.Warn("people: touch from replay failed", "project", projectID, "err", perr)
+		}
 	}
 
 	expires := 5 * time.Minute

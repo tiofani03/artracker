@@ -724,6 +724,53 @@ export const replayApi = {
     request<{ chunks: ReplayChunkDetail[] }>(
       `/projects/${projectId}/sessions/${encodeURIComponent(sessionId)}/chunks?from_seq=${fromSeq}&to_seq=${toSeq}`,
     ),
+  /** Who the session's user is, the device/app context of this session and the user's other sessions. */
+  getSessionContext: (projectId: number, sessionId: string) =>
+    request<SessionContextResponse>(`/projects/${projectId}/sessions/${encodeURIComponent(sessionId)}/context`),
+}
+
+/** An end user of the instrumented app (not a team member). */
+export type Person = {
+  user_id: string
+  traits: Record<string, string | number | boolean>
+  first_seen: string
+  last_seen: string
+  session_count: number
+  error_session_count: number
+  last_context: Record<string, unknown>
+}
+
+export type PersonSession = {
+  session_id: string
+  first_seen: string
+  last_seen: string
+  has_error: boolean
+  has_replay: boolean
+  context: Record<string, unknown>
+}
+
+export type SessionContextResponse = {
+  session_id: string
+  user_id: string
+  context: Record<string, unknown>
+  person: Person | null
+  other_sessions: PersonSession[]
+}
+
+export type PeopleListResponse = { items: Person[]; total: number; limit: number; offset: number }
+export type PersonDetailResponse = { person: Person; sessions: PersonSession[] }
+
+export const peopleApi = {
+  list: (projectId: number, params: { search?: string; limit?: number; offset?: number } = {}) => {
+    const qs = new URLSearchParams()
+    if (params.search) qs.set('search', params.search)
+    if (params.limit !== undefined) qs.set('limit', String(params.limit))
+    if (params.offset !== undefined) qs.set('offset', String(params.offset))
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return request<PeopleListResponse>(`/projects/${projectId}/people${suffix}`)
+  },
+  get: (projectId: number, userId: string) =>
+    request<PersonDetailResponse>(`/projects/${projectId}/people/${encodeURIComponent(userId)}`),
 }
 
 export type OrganizationMember = {
