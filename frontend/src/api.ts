@@ -773,6 +773,51 @@ export const peopleApi = {
     request<PersonDetailResponse>(`/projects/${projectId}/people/${encodeURIComponent(userId)}`),
 }
 
+export type HeatmapScreen = { screen: string; platform: string; sessions: number; taps: number }
+export type HeatmapScreensResponse = { screens: HeatmapScreen[]; unrecognized_taps: number }
+export type HeatmapCell = { c: number; r: number; sessions: number; taps: number }
+export type HeatmapResponse = {
+  cols: number
+  rows: number
+  cells: HeatmapCell[]
+  rage: { x: number; y: number }[]
+  screen_sessions: number
+  aspect: number
+  aspects: { aspect: number; sessions: number }[]
+  background: { url: string; frame_index: number; vw: number; vh: number; app_version: string } | null
+}
+export type HeatmapSettings = { excluded_screens: string[]; sensitive_rule: string }
+
+export type HeatmapParams = {
+  from?: string
+  to?: string
+  platform?: string
+  app_version?: string
+}
+export type HeatmapGetParams = HeatmapParams & { screen: string; orientation?: string; aspect?: number }
+
+function heatmapQuery(params: Record<string, string | number | undefined>): string {
+  const qs = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== '') qs.set(k, String(v))
+  }
+  const s = qs.toString()
+  return s ? `?${s}` : ''
+}
+
+export const heatmapApi = {
+  screens: (projectId: number, params: HeatmapParams = {}) =>
+    request<HeatmapScreensResponse>(`/projects/${projectId}/heatmap/screens${heatmapQuery(params)}`),
+  get: (projectId: number, params: HeatmapGetParams) =>
+    request<HeatmapResponse>(`/projects/${projectId}/heatmap${heatmapQuery(params)}`),
+  settings: (projectId: number) => request<HeatmapSettings>(`/projects/${projectId}/heatmap-settings`),
+  saveSettings: (projectId: number, excluded: string[]) =>
+    request<HeatmapSettings>(`/projects/${projectId}/heatmap-settings`, {
+      method: 'PATCH',
+      body: JSON.stringify({ excluded_screens: excluded }),
+    }),
+}
+
 export type OrganizationMember = {
   user_id: number
   email: string
