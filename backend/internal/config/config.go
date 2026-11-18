@@ -63,6 +63,8 @@ type Config struct {
 	TelegramBotToken string
 	TelegramAPIBase  string
 	AlertsWorker     bool
+	// HeatmapWorker gates the tap heatmap extraction worker; run it on exactly one instance.
+	HeatmapWorker bool
 	// AlertsBotMode is "tenant" (each organisation connects its own bot, the
 	// default) or "shared" (one operator bot from TELEGRAM_BOT_TOKEN).
 	AlertsBotMode string
@@ -131,6 +133,13 @@ func Load() Config {
 	cfg.AlertsWorker, workerRecognised = parseAlertsWorker(rawWorker)
 	if !workerRecognised {
 		slog.Warn("unrecognised ALERTS_WORKER value, keeping the alerts worker enabled", "value_length", len(rawWorker))
+	}
+
+	rawHeatmap := env("HEATMAP_WORKER", "")
+	var heatmapRecognised bool
+	cfg.HeatmapWorker, heatmapRecognised = parseAlertsWorker(rawHeatmap)
+	if !heatmapRecognised {
+		slog.Warn("unrecognised HEATMAP_WORKER value, keeping the heatmap worker enabled", "value_length", len(rawHeatmap))
 	}
 
 	cfg.AlertsBotMode = loadAlertsBotMode()
