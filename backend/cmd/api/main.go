@@ -21,6 +21,7 @@ import (
 	"github.com/tiofani03/artracker/backend/internal/config"
 	"github.com/tiofani03/artracker/backend/internal/db"
 	"github.com/tiofani03/artracker/backend/internal/handler"
+	"github.com/tiofani03/artracker/backend/internal/heatmap"
 	"github.com/tiofani03/artracker/backend/internal/ingest"
 	"github.com/tiofani03/artracker/backend/internal/people"
 	"github.com/tiofani03/artracker/backend/internal/storage"
@@ -183,6 +184,25 @@ func main() {
 			log.Info("ALERTS_WORKER=false: this instance does not poll Telegram or evaluate alerts")
 		}
 	}
+	heatmapCtx, stopHeatmap := context.WithCancel(context.Background())
+	defer stopHeatmap()
+	var heatmapWG sync.WaitGroup
+	switch {
+	case pool == nil:
+		log.Info("heatmap worker disabled", "reason", "no database")
+	case replayStore == nil:
+		log.Info("heatmap worker disabled", "reason", "replay storage not configured")
+	case !cfg.HeatmapWorker:
+		log.Info("heatmap worker disabled", "reason", "HEATMAP_WORKER=false")
+	default:
+		hw := heatmap.NewWorker(pool, replayStore, log)
+		heatmapWG.Add(1)
+		go func() {
+			defer heatmapWG.Done()
+			hw.Run(heatmapCtx)
+		}()
+		log.Info("heatmap worker started")
+	}
 	ingestSvc.WithIssueProcessor(h.IssueService())
 	if peopleStore := h.PeopleStore(); peopleStore != nil {
 		ingestSvc.AddRowProcessor(people.NewProcessor(peopleStore))
@@ -215,5 +235,7 @@ func main() {
 	}
 	stopAlerts()
 	alertsWG.Wait()
+	stopHeatmap()
+	heatmapWG.Wait()
 	log.Info("bye")
 }
