@@ -152,3 +152,15 @@ func TestTelegramConfigFromEnv(t *testing.T) {
 		t.Errorf("cfg = %q %q", cfg.TelegramBotToken, cfg.TelegramAPIBase)
 	}
 }
+
+func TestHeatmapWorkerFlag(t *testing.T) {
+	cases := map[string]bool{"": true, "false": false, "0": false}
+	for v, want := range cases {
+		t.Run(v, func(t *testing.T) {
+			t.Setenv("HEATMAP_WORKER", v)
+			if got := Load().HeatmapWorker; got != want {
+				t.Errorf("HEATMAP_WORKER=%q -> %v, want %v", v, got, want)
+			}
+		})
+	}
+}

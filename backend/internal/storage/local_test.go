@@ -67,3 +67,13 @@ func TestLocalStorePresignUnsupported(t *testing.T) {
 		t.Fatalf("get presign err = %v", err)
 	}
 }
+
+func TestLocalStoreGetObjectNotFound(t *testing.T) {
+	s, err := NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := s.GetObject(context.Background(), "projects/1/missing.gz"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}

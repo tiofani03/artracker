@@ -99,6 +99,12 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
         demoAllowed: true,
       },
       {
+        to: '/dashboard/heatmap',
+        label: 'Heatmap',
+        icon: 'M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Z',
+        demoAllowed: false,
+      },
+      {
         to: '/dashboard/people',
         label: 'People',
         icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm13 10v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',

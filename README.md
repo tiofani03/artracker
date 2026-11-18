@@ -36,6 +36,10 @@ artracker/
   ProGuard / R8 mappings (Android) or dSYMs (iOS).
 - **Session replay**: DOM replay for web and screenshot-mode replay for mobile (switch per project
   in Settings), with a performance profile per session.
+- **Heatmap**: per-screen tap heatmaps for mobile projects (taps, rage taps and screen visits over a
+  screenshot of the screen). It is derived from screenshot-mode session replay, so it appears about 10
+  minutes after a session ends, and sensitive screens (login, payment and the like, plus any you add in
+  Settings) are excluded.
 - **Analytics**: event log, funnels (including saved funnels) and retention.
 - **Alerts**: per-project rules for new issues, regressions and issue spikes, delivered to Telegram
   (see [Alerts](#alerts-telegram)).
@@ -240,6 +244,17 @@ Production `.env` needs the following. Compose refuses to run without `POSTGRES_
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` to sign in
 - `ALERTS_MASTER_KEY`, or `ALERTS_BOT_MODE=shared` (see [Alerts](#alerts-telegram))
 - the `R2_*` variables if you want session replay (`REPLAY_LOCAL_DIR` keeps chunks on the container's own disk and is meant for development)
+- `HEATMAP_WORKER` (default `true`): runs the tap-heatmap worker, which reads finished screenshot replays and writes the tap data. With more than one API instance, set `HEATMAP_WORKER=false` on every instance except one
+
+To reprocess a project's heatmap data (for example after removing a screen from the exclusion list, or after
+a storage outage that made sessions fail), reset its sessions and the worker re-extracts them on its next ticks:
+
+```sql
+UPDATE replay_sessions SET taps_processed_at = NULL, taps_attempts = 0, taps_retry_at = NULL WHERE project_id = <id>;
+```
+
+The worker backs a failing session off (1 minute doubling up to 6 hours) and gives up after 8 attempts; this
+reset also clears that.
 
 Pin a build with `TAG=<sha>` in `.env`. Migrations are embedded in the API
 binary and run at boot, so there is no separate migrate step.

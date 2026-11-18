@@ -21,10 +21,17 @@ func TestMigrateCreatesAuthTables(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	for _, table := range []string{"users", "organizations", "organization_members", "projects", "api_keys", "refresh_tokens", "telemetry_events", "issues", "issue_events", "source_maps"} {
+	for _, table := range []string{"users", "organizations", "organization_members", "projects", "api_keys", "refresh_tokens", "telemetry_events", "issues", "issue_events", "source_maps", "screen_taps", "screen_visits", "screen_backgrounds"} {
 		var ok bool
 		if err := pool.QueryRow(ctx, `SELECT to_regclass('public.`+table+`') IS NOT NULL`).Scan(&ok); err != nil || !ok {
 			t.Errorf("table %s missing (err=%v)", table, err)
+		}
+	}
+
+	for _, col := range [][2]string{{"replay_sessions", "taps_processed_at"}, {"projects", "heatmap_excluded_screens"}} {
+		var ok bool
+		if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name=$2)`, col[0], col[1]).Scan(&ok); err != nil || !ok {
+			t.Errorf("column %s.%s missing (err=%v)", col[0], col[1], err)
 		}
 	}
 

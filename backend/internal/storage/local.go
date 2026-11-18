@@ -11,6 +11,9 @@ import (
 	"time"
 )
 
+// ErrNotFound is returned (wrapped) by GetObject when the object does not exist.
+var ErrNotFound = errors.New("storage: object not found")
+
 // ErrPresignUnsupported is returned by stores that cannot issue presigned URLs; callers must
 // use the API's signed upload/download proxy instead.
 var ErrPresignUnsupported = errors.New("presigned URLs are not supported by this replay store")
@@ -87,6 +90,9 @@ func (s *LocalStore) GetObject(_ context.Context, objectKey string) (io.ReadClos
 	}
 	f, err := os.Open(p)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, 0, "", fmt.Errorf("open object: %w", ErrNotFound)
+		}
 		return nil, 0, "", fmt.Errorf("open object: %w", err)
 	}
 	info, err := f.Stat()

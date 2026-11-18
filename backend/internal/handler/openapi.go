@@ -540,6 +540,93 @@ var openAPISpecBytes = []byte(`{
         }
       }
     },
+    "/projects/{projectID}/heatmap/screens": {
+      "get": {
+        "summary": "List Heatmap Screens",
+        "description": "Screens with tap data in the range, sorted by number of sessions that opened them, plus the count of taps on unrecognized screens.",
+        "operationId": "listHeatmapScreens",
+        "tags": ["Heatmap"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "from", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default 7 days ago" },
+          { "name": "to", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default now" },
+          { "name": "platform", "in": "query", "schema": { "type": "string" } },
+          { "name": "app_version", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "{screens:[{screen,platform,sessions,taps}], unrecognized_taps, app_versions:[string] (distinct non-empty versions in range and platform filter, sorted descending, max 50)}" },
+          "400": { "description": "Invalid date range" }
+        }
+      }
+    },
+    "/projects/{projectID}/heatmap": {
+      "get": {
+        "summary": "Get Tap Heatmap",
+        "description": "Tap grid (non-empty cells only), rage tap points, available aspect buckets and the newest matching background frame for one screen.",
+        "operationId": "getHeatmap",
+        "tags": ["Heatmap"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "screen", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "platform", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "orientation", "in": "query", "required": true, "schema": { "type": "string", "enum": ["portrait", "landscape"] } },
+          { "name": "aspect", "in": "query", "schema": { "type": "number" } },
+          { "name": "app_version", "in": "query", "schema": { "type": "string" } },
+          { "name": "from", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default 7 days ago" },
+          { "name": "to", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default now" },
+          { "name": "cols", "in": "query", "schema": { "type": "integer" } },
+          { "name": "rows", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "{cols,rows,cells:[{c,r,sessions,taps}],rage:[{x,y}],screen_sessions,aspect,aspects:[{aspect,sessions}],background:{url,frame_index,vw,vh,app_version}|null}" },
+          "400": { "description": "Missing or invalid parameters" }
+        }
+      }
+    },
+    "/projects/{projectID}/heatmap-settings": {
+      "get": {
+        "summary": "Get Heatmap Settings",
+        "description": "Screens excluded from heatmaps and the built-in sensitive-screen rule.",
+        "operationId": "getHeatmapSettings",
+        "tags": ["Heatmap"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "{excluded_screens:[string], sensitive_rule:string}" }
+        }
+      },
+      "patch": {
+        "summary": "Update Heatmap Settings",
+        "description": "Admin-only. Replaces the excluded screens list; data of newly excluded screens (taps, visits, backgrounds) is deleted immediately.",
+        "operationId": "updateHeatmapSettings",
+        "tags": ["Heatmap"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["excluded_screens"],
+                "properties": { "excluded_screens": { "type": "array", "maxItems": 200, "items": { "type": "string", "maxLength": 200 } } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "{excluded_screens, sensitive_rule}" },
+          "400": { "description": "More than 200 entries or an entry longer than 200 characters" },
+          "403": { "description": "Requires the admin role" }
+        }
+      }
+    },
     "/projects/{projectID}/people": {
       "get": {
         "summary": "List People (End Users)",
