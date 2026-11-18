@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { heatmapApi, type Project } from '../api'
-import { MAX_EXCLUDED, MAX_NAME_LEN, normalizeExcluded } from '../heatmap/excluded'
+import { addedScreens, MAX_EXCLUDED, MAX_NAME_LEN, normalizeExcluded, sameExcluded } from '../heatmap/excluded'
 import { useToast } from './Toast'
 
 type Props = { project: Project; canManage: boolean }
@@ -10,6 +10,7 @@ export default function HeatmapSettingsPanel({ project, canManage }: Props) {
   const toast = useToast()
   const [rule, setRule] = useState('')
   const [screens, setScreens] = useState<string[]>([])
+  const [saved, setSaved] = useState<string[]>([])
   const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -23,6 +24,7 @@ export default function HeatmapSettingsPanel({ project, canManage }: Props) {
         if (!alive) return
         setRule(s.sensitive_rule)
         setScreens(s.excluded_screens)
+        setSaved(s.excluded_screens)
       })
       .catch((err) => alive && setLoadError(err instanceof Error ? err.message : 'Failed to load heatmap settings'))
       .finally(() => alive && setLoading(false))
@@ -35,6 +37,10 @@ export default function HeatmapSettingsPanel({ project, canManage }: Props) {
     const name = draft.trim()
     if (!name) return
     if (name.length > MAX_NAME_LEN) return toast(`Screen names are limited to ${MAX_NAME_LEN} characters`, 'error')
+    if (screens.includes(name)) {
+      setDraft('')
+      return toast(`"${name}" is already in the list`, 'error')
+    }
     const next = normalizeExcluded([...screens, name])
     if (next.length > MAX_EXCLUDED) return toast(`At most ${MAX_EXCLUDED} screens can be excluded`, 'error')
     setScreens(next)
@@ -43,11 +49,25 @@ export default function HeatmapSettingsPanel({ project, canManage }: Props) {
 
   const save = async () => {
     if (!canManage || busy) return
+    const list = normalizeExcluded(screens)
+    const added = addedScreens(saved, list)
+    if (
+      added.length > 0 &&
+      !window.confirm(
+        `Adding these screens permanently deletes their existing heatmap data:\n\n${added.join('\n')}\n\nContinue?`,
+      )
+    )
+      return
     setBusy(true)
     try {
-      const s = await heatmapApi.saveSettings(project.id, normalizeExcluded(screens))
+      const s = await heatmapApi.saveSettings(project.id, list)
       setScreens(s.excluded_screens)
-      toast('Excluded screens saved. Their heatmap data was removed.')
+      setSaved(s.excluded_screens)
+      toast(
+        added.length > 0
+          ? `Excluded screens saved. Heatmap data for ${added.length} newly excluded screen${added.length === 1 ? '' : 's'} was removed.`
+          : 'Excluded screens saved.',
+      )
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed to save heatmap settings', 'error')
     } finally {
@@ -79,6 +99,9 @@ export default function HeatmapSettingsPanel({ project, canManage }: Props) {
               Always excluded: <code>{rule}</code>
               <br />
               Screens matching this are never collected.
+            </p>
+            <p className="dash-list__sub" style={{ lineHeight: 1.6 }}>
+              Adding a screen permanently deletes its existing heatmap data. Removing one only affects future collection.
             </p>
 
             {canManage && (
@@ -126,7 +149,7 @@ export default function HeatmapSettingsPanel({ project, canManage }: Props) {
             )}
 
             {canManage ? (
-              <button type="button" className="dash-btn dash-btn--primary" style={{ marginTop: 'var(--space-xs)' }} disabled={busy} onClick={() => void save()}>
+              <button type="button" className="dash-btn dash-btn--primary" style={{ marginTop: 'var(--space-xs)' }} disabled={busy || sameExcluded(screens, saved)} onClick={() => void save()}>
                 {busy ? 'Saving…' : 'Save'}
               </button>
             ) : (

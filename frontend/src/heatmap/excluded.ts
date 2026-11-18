@@ -13,3 +13,15 @@ export function normalizeExcluded(list: string[]): string[] {
   }
   return out
 }
+
+/** Names in `next` (normalized) that are not in `saved`: adding these deletes existing heatmap data. */
+export function addedScreens(saved: string[], next: string[]): string[] {
+  return normalizeExcluded(next).filter((s) => !saved.includes(s))
+}
+
+/** True when both lists hold the same names after normalization, ignoring order. */
+export function sameExcluded(a: string[], b: string[]): boolean {
+  const x = normalizeExcluded(a)
+  const y = normalizeExcluded(b)
+  return x.length === y.length && x.every((s) => y.includes(s))
+}
