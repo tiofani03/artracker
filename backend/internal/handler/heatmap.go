@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -107,13 +108,36 @@ func (h *Handler) ListHeatmapScreens(c *fiber.Ctx) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	versions := []string{}
+	vrows, err := h.db.Query(ctx, `
+		SELECT DISTINCT app_version FROM screen_visits
+		 WHERE project_id = $1 AND ts >= $2 AND ts < $3 AND app_version <> '' AND ($4 = '' OR platform = $4)
+		 LIMIT 500`, projectID, from, to, platform)
+	if err != nil {
+		return err
+	}
+	defer vrows.Close()
+	for vrows.Next() {
+		var v string
+		if err := vrows.Scan(&v); err != nil {
+			return err
+		}
+		versions = append(versions, v)
+	}
+	if err := vrows.Err(); err != nil {
+		return err
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(versions))) // byte order, independent of DB collation
+	if len(versions) > 50 {
+		versions = versions[:50]
+	}
 	var unrec int
 	if err := h.db.QueryRow(ctx,
 		`SELECT COALESCE(sum(taps_unrecognized), 0)::int FROM replay_sessions
 		  WHERE project_id = $1 AND start_time >= $2 AND start_time < $3`, projectID, from, to).Scan(&unrec); err != nil {
 		return err
 	}
-	return c.JSON(fiber.Map{"screens": screens, "unrecognized_taps": unrec})
+	return c.JSON(fiber.Map{"screens": screens, "unrecognized_taps": unrec, "app_versions": versions})
 }
 
 type heatmapCell struct {

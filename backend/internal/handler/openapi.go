@@ -555,7 +555,7 @@ var openAPISpecBytes = []byte(`{
           { "name": "app_version", "in": "query", "schema": { "type": "string" } }
         ],
         "responses": {
-          "200": { "description": "{screens:[{screen,platform,sessions,taps}], unrecognized_taps}" },
+          "200": { "description": "{screens:[{screen,platform,sessions,taps}], unrecognized_taps, app_versions:[string] (distinct non-empty versions in range and platform filter, sorted descending, max 50)}" },
           "400": { "description": "Invalid date range" }
         }
       }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -50,6 +51,11 @@ func TestHeatmapScreensList(t *testing.T) {
 	e.addVisit(t, pid, "s2", "Home", "android", 2.2)
 	e.addVisit(t, pid, "s3", "Cart", "ios", 2.2)
 	e.addTap(t, pid, "s1", "Home", "android", 2.2, 0.5, 0.5, false)
+	for sid, v := range map[string]string{"s1": "4.57.0", "s2": "4.58.0", "s3": "4570001"} {
+		if _, err := e.pool.Exec(context.Background(), `UPDATE screen_visits SET app_version=$3 WHERE project_id=$1 AND session_id=$2`, pid, sid, v); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, err := e.pool.Exec(context.Background(), `UPDATE replay_sessions SET taps_unrecognized = 4 WHERE project_id=$1 AND id='s1'`, pid); err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +67,8 @@ func TestHeatmapScreensList(t *testing.T) {
 			Sessions int    `json:"sessions"`
 			Taps     int    `json:"taps"`
 		} `json:"screens"`
-		Unrecognized int `json:"unrecognized_taps"`
+		Unrecognized int      `json:"unrecognized_taps"`
+		AppVersions  []string `json:"app_versions"`
 	}
 	base := fmt.Sprintf("/api/v1/projects/%d/heatmap/screens", pid)
 	if st := hmGet(t, e, hdr, base, &got); st != 200 {
@@ -73,10 +80,16 @@ func TestHeatmapScreensList(t *testing.T) {
 	if got.Unrecognized != 4 {
 		t.Errorf("unrecognized = %d, want 4", got.Unrecognized)
 	}
-	got.Screens = nil
+	if want := []string{"4570001", "4.58.0", "4.57.0"}; !reflect.DeepEqual(got.AppVersions, want) {
+		t.Errorf("app_versions = %v, want %v", got.AppVersions, want)
+	}
+	got.Screens, got.AppVersions = nil, nil
 	hmGet(t, e, hdr, base+"?platform=ios", &got)
 	if len(got.Screens) != 1 || got.Screens[0].Screen != "Cart" {
 		t.Fatalf("platform filter: %+v", got.Screens)
+	}
+	if len(got.AppVersions) != 1 || got.AppVersions[0] != "4570001" {
+		t.Errorf("platform-filtered app_versions = %v", got.AppVersions)
 	}
 	if st := hmGet(t, e, hdr, base+"?from=garbage", nil); st != 400 {
 		t.Errorf("bad from = %d, want 400", st)
