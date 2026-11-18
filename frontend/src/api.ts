@@ -774,7 +774,7 @@ export const peopleApi = {
 }
 
 export type HeatmapScreen = { screen: string; platform: string; sessions: number; taps: number }
-export type HeatmapScreensResponse = { screens: HeatmapScreen[]; unrecognized_taps: number }
+export type HeatmapScreensResponse = { screens: HeatmapScreen[]; unrecognized_taps: number; app_versions: string[] }
 export type HeatmapCell = { c: number; r: number; sessions: number; taps: number }
 export type HeatmapResponse = {
   cols: number

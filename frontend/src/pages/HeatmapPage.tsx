@@ -40,7 +40,6 @@ function HeatmapView({ projectId }: { projectId: number }) {
   const [search, setSearch] = useState(SEARCH_ALL)
   const [selected, setSelected] = useState<HeatmapScreen | null>(null)
   const [showRage, setShowRage] = useState(false)
-  const [seenVersions, setSeenVersions] = useState<string[]>([])
   const [hover, setHover] = useState<{ cell: HeatmapCell; x: number; y: number } | null>(null)
 
   // The window is anchored when the range changes, so requests stay stable between renders.
@@ -50,6 +49,14 @@ function HeatmapView({ projectId }: { projectId: number }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days, projectId])
 
+  const changeDays = (v: number) => {
+    setDays(v)
+    setAspect('')
+  }
+  const changeVersion = (v: string) => {
+    setAppVersion(v)
+    setAspect('')
+  }
   const listKey = `${projectId}|${days}|${platform}|${appVersion}`
   const [list, setList] = useState<Tagged<HeatmapScreensResponse>>({ key: '', error: '', data: null })
   useEffect(() => {
@@ -87,8 +94,8 @@ function HeatmapView({ projectId }: { projectId: number }) {
       .then((data) => {
         if (cancelled) return
         setHeat({ key: heatKey, error: '', data })
-        const v = data.background?.app_version
-        if (v) setSeenVersions((prev) => (prev.includes(v) ? prev : [...prev, v].sort()))
+        // A remembered size that no longer exists would hide the dropdown: fall back to the default.
+        if (aspect !== '' && !data.aspects.some((a) => a.aspect === aspect)) setAspect('')
       })
       .catch((e: unknown) => !cancelled && setHeat({ key: heatKey, error: e instanceof Error ? e.message : 'Request failed', data: null }))
     return () => {
@@ -98,7 +105,8 @@ function HeatmapView({ projectId }: { projectId: number }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heatKey, projectId, range])
   const heatLoading = !!selected && heat.key !== heatKey
-  const res = !heatLoading && heat.key === heatKey ? heat.data : null
+  // Keep showing the previous result while a new one loads.
+  const res = heat.data
 
   // Background image: chunk -> frame -> data URL. Failure leaves null (neutral frame).
   const bgUrl = res?.background?.url ?? null
@@ -120,10 +128,10 @@ function HeatmapView({ projectId }: { projectId: number }) {
   const bgSrc = bgUrl && bg?.url === bgUrl ? bg.src : null
 
   const versionOptions = useMemo(() => {
-    const vs = new Set(seenVersions)
+    const vs = new Set(list.data?.app_versions ?? [])
     if (appVersion) vs.add(appVersion)
-    return [{ value: '', label: 'All versions' }, ...[...vs].sort().map((v) => ({ value: v, label: v }))]
-  }, [seenVersions, appVersion])
+    return [{ value: '', label: 'All versions' }, ...[...vs].map((v) => ({ value: v, label: v }))]
+  }, [list.data, appVersion])
 
   const aspectOptions = useMemo(() => {
     const opts = (res?.aspects ?? []).map((a) => ({
@@ -133,8 +141,11 @@ function HeatmapView({ projectId }: { projectId: number }) {
     return opts
   }, [res])
 
-  const vw = res?.background?.vw || 9
-  const vh = res?.background?.vh || (res ? 9 / (res.aspect || 9 / 16) : 16)
+  // res.aspect is long side / short side (>= 1); without a screenshot, build a frame in the chosen orientation.
+  const longShort = res && res.aspect >= 1 ? res.aspect : 16 / 9
+  const vw = res?.background?.vw || (orientation === 'landscape' ? longShort : 1)
+  const vh = res?.background?.vh || (orientation === 'landscape' ? 1 : longShort)
+  const bgFailed = !!bgUrl && bg?.url === bgUrl && bg.src === null
   const hasTaps = !!res && res.cells.length > 0
   const hoverText = hover && res
     ? `${shareLabel(cellShare(hover.cell, res.screen_sessions))} of sessions · ${hover.cell.taps} ${hover.cell.taps === 1 ? 'tap' : 'taps'}`
@@ -152,7 +163,7 @@ function HeatmapView({ projectId }: { projectId: number }) {
           onChange={(e) => setSearch(e.target.value)}
         />
         <div className="hm-filters">
-          <CustomSelect size="sm" ariaLabel="Date range" options={RANGE_OPTIONS} value={days} onChange={setDays} />
+          <CustomSelect size="sm" ariaLabel="Date range" options={RANGE_OPTIONS} value={days} onChange={changeDays} />
           <CustomSelect
             size="sm"
             ariaLabel="Platform"
@@ -161,6 +172,7 @@ function HeatmapView({ projectId }: { projectId: number }) {
             onChange={(v) => {
               setPlatform(v)
               setSelected(null)
+              setAspect('')
             }}
           />
           <CustomSelect
@@ -168,7 +180,7 @@ function HeatmapView({ projectId }: { projectId: number }) {
             ariaLabel="App version"
             options={versionOptions}
             value={appVersion}
-            onChange={setAppVersion}
+            onChange={changeVersion}
           />
           <CustomSelect
             size="sm"
@@ -208,6 +220,7 @@ function HeatmapView({ projectId }: { projectId: number }) {
                     onClick={() => {
                       setSelected(s)
                       setAspect('')
+                      if (!selected || screenKey(selected) !== screenKey(s)) setHeat({ key: '', error: '', data: null })
                       setHover(null)
                     }}
                   >
@@ -215,7 +228,7 @@ function HeatmapView({ projectId }: { projectId: number }) {
                       {s.screen}
                     </span>
                     <span className="hm-screen__meta">
-                      {s.platform} · {s.sessions} sess · {s.taps} taps
+                      {s.platform} · {s.sessions} {s.sessions === 1 ? 'session' : 'sessions'} · {s.taps} {s.taps === 1 ? 'tap' : 'taps'}
                     </span>
                   </button>
                 </li>
@@ -238,7 +251,7 @@ function HeatmapView({ projectId }: { projectId: number }) {
           </div>
         ) : heat.key === heatKey && heat.error ? (
           <p className="ppl-muted ppl-pad">Couldn't load the heatmap: {heat.error}</p>
-        ) : heatLoading || !res ? (
+        ) : !res ? (
           <p className="ppl-muted ppl-pad">Loading…</p>
         ) : (
           <>
@@ -246,6 +259,7 @@ function HeatmapView({ projectId }: { projectId: number }) {
               <h2 className="dash-card__title hm-toolbar__title" title={selected.screen}>
                 {selected.screen}
               </h2>
+              {heatLoading && <span className="ppl-muted">Loading…</span>}
               {aspectOptions.length > 0 && (
                 <CustomSelect
                   size="sm"
@@ -266,11 +280,11 @@ function HeatmapView({ projectId }: { projectId: number }) {
               </p>
             )}
             {!hasTaps && <p className="ppl-muted ppl-pad">No taps recorded on this screen for these filters.</p>}
-            {!res.background && (
+            {(!res.background || bgFailed) && (
               <p className="hm-note">Screenshot unavailable: the overlay is drawn on a neutral frame.</p>
             )}
-            <div className="hm-stage">
-              <div className="hm-canvas-wrap">
+            <div className={`hm-stage${heatLoading ? ' is-loading' : ''}`}>
+              <div className="hm-canvas-wrap" style={{ ['--hm-aspect' as string]: String(vw / vh) }}>
                 <HeatCanvas
                   background={bgSrc}
                   vw={vw}
@@ -291,7 +305,10 @@ function HeatmapView({ projectId }: { projectId: number }) {
                   <span>Fewer</span>
                   <span>More</span>
                 </div>
-                <p className="ppl-muted">% of sessions that opened this screen and tapped here</p>
+                <p className="ppl-muted">
+                  Colour is relative to the busiest area. Hover for the % of sessions that opened this screen and tapped
+                  there.
+                </p>
                 <p className="ppl-muted">Positions follow the screen, not scrolled content.</p>
                 <p className="ppl-muted">Updated about 10 minutes after a session ends.</p>
               </div>

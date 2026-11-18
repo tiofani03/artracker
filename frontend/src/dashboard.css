@@ -9889,12 +9889,14 @@ select {
 }
 .hm-canvas-wrap {
   position: relative;
-  width: min(100%, 360px);
+  width: min(100%, 360px, calc(72vh * var(--hm-aspect, 0.5625)));
+}
+.hm-stage.is-loading {
+  opacity: 0.6;
 }
 .hm-canvas {
   position: relative;
   width: 100%;
-  max-height: 72vh;
   border: 1px solid var(--color-rule);
   border-radius: 14px;
   overflow: hidden;
