@@ -59,3 +59,40 @@ func TestDecodeChunk(t *testing.T) {
 		t.Fatal("bad gzip: want error")
 	}
 }
+
+func TestDecodeChunkNonObjectIsSkipped(t *testing.T) {
+	for _, body := range []string{`[{"type":2,"timestamp":1}]`, `"text"`, `null`, `42`} {
+		if _, ok, err := DecodeChunk(0, gz(t, body)); ok || err != nil {
+			t.Fatalf("%s: ok=%v err=%v", body, ok, err)
+		}
+	}
+}
+
+func TestDecodeChunkDropsWrongTypedItems(t *testing.T) {
+	const body = `{"format":"artracker-screen-v1","platform":"ios",
+	 "frames":[
+	  {"ts":"x","screen":"Bad","w":1,"h":1,"vw":1,"vh":1,"mime":"image/jpeg","data":"A"},
+	  {"ts":1,"screen":5,"w":1,"h":1,"vw":1,"vh":1,"mime":"image/jpeg","data":"A"},
+	  null,
+	  {"ts":2,"screen":"Good","w":1,"h":1,"vw":4,"vh":8,"mime":"image/jpeg","data":"A"}],
+	 "touches":[{"ts":1,"x":"5","y":6,"kind":"down"},7,{"ts":2,"x":5,"y":6,"kind":"up"}]}`
+	c, ok, err := DecodeChunk(0, []byte(body))
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	if len(c.Frames) != 1 || c.Frames[0].Screen != "Good" || c.Frames[0].Index != 3 {
+		t.Fatalf("frames = %+v", c.Frames)
+	}
+	if len(c.Touches) != 1 || c.Touches[0].Kind != "up" {
+		t.Fatalf("touches = %+v", c.Touches)
+	}
+}
+
+func TestDecodeChunkSizeLimit(t *testing.T) {
+	old := maxDecompressed
+	maxDecompressed = 16
+	defer func() { maxDecompressed = old }()
+	if _, _, err := DecodeChunk(0, gz(t, `{"format":"artracker-screen-v1","frames":[]}`)); err == nil {
+		t.Fatal("oversized chunk: want error")
+	}
+}

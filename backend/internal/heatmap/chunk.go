@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 )
@@ -36,27 +37,27 @@ type Chunk struct {
 	Touches  []Touch
 }
 
-type rawChunk struct {
-	Format   string `json:"format"`
-	Platform string `json:"platform"`
-	Frames   []struct {
-		TS     *float64 `json:"ts"`
-		Screen string   `json:"screen"`
-		W      float64  `json:"w"`
-		H      float64  `json:"h"`
-		VW     float64  `json:"vw"`
-		VH     float64  `json:"vh"`
-		Mime   string   `json:"mime"`
-		Masked float64  `json:"masked"`
-		Data   string   `json:"data"`
-	} `json:"frames"`
-	Touches []struct {
-		TS   *float64 `json:"ts"`
-		X    *float64 `json:"x"`
-		Y    *float64 `json:"y"`
-		Kind string   `json:"kind"`
-	} `json:"touches"`
+type rawFrame struct {
+	TS     *float64 `json:"ts"`
+	Screen string   `json:"screen"`
+	W      float64  `json:"w"`
+	H      float64  `json:"h"`
+	VW     float64  `json:"vw"`
+	VH     float64  `json:"vh"`
+	Mime   string   `json:"mime"`
+	Masked float64  `json:"masked"`
+	Data   string   `json:"data"`
 }
+
+type rawTouch struct {
+	TS   *float64 `json:"ts"`
+	X    *float64 `json:"x"`
+	Y    *float64 `json:"y"`
+	Kind string   `json:"kind"`
+}
+
+// maxDecompressed caps the size of one decompressed chunk. A variable so tests can lower it.
+var maxDecompressed int64 = 64 << 20
 
 func positive(v float64) bool { return v > 0 && !math.IsInf(v, 0) && !math.IsNaN(v) }
 
@@ -71,20 +72,37 @@ func DecodeChunk(seq int, raw []byte) (c Chunk, ok bool, err error) {
 		if zerr != nil {
 			return Chunk{}, false, zerr
 		}
-		raw, err = io.ReadAll(zr)
+		raw, err = io.ReadAll(io.LimitReader(zr, maxDecompressed+1))
 		if err != nil {
 			return Chunk{}, false, err
 		}
+		if int64(len(raw)) > maxDecompressed {
+			return Chunk{}, false, errors.New("heatmap: decompressed chunk too large")
+		}
 	}
-	var rc rawChunk
-	if err := json.Unmarshal(raw, &rc); err != nil {
-		return Chunk{}, false, err
+	if !json.Valid(raw) {
+		return Chunk{}, false, errors.New("heatmap: chunk is not valid JSON")
 	}
-	if rc.Format != screenChunkFormat {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil {
+		return Chunk{}, false, nil // valid JSON but not an object (e.g. an rrweb event array)
+	}
+	var format string
+	if json.Unmarshal(top["format"], &format) != nil || format != screenChunkFormat {
 		return Chunk{}, false, nil
 	}
-	c = Chunk{Seq: seq, Platform: rc.Platform}
-	for i, f := range rc.Frames {
+	c = Chunk{Seq: seq}
+	_ = json.Unmarshal(top["platform"], &c.Platform)
+
+	// Items are decoded one by one so a wrong-typed entry is dropped alone, like the frontend does.
+	var rawFrames, rawTouches []json.RawMessage
+	_ = json.Unmarshal(top["frames"], &rawFrames)
+	_ = json.Unmarshal(top["touches"], &rawTouches)
+	for i, item := range rawFrames {
+		var f rawFrame
+		if json.Unmarshal(item, &f) != nil {
+			continue
+		}
 		if !finite(f.TS) || !positive(f.W) || !positive(f.H) || !positive(f.VW) || !positive(f.VH) ||
 			f.Mime != "image/jpeg" || f.Data == "" {
 			continue
@@ -97,8 +115,9 @@ func DecodeChunk(seq int, raw []byte) (c Chunk, ok bool, err error) {
 			TS: int64(*f.TS), Screen: f.Screen, VW: f.VW, VH: f.VH, Masked: masked, ChunkSeq: seq, Index: i,
 		})
 	}
-	for _, t := range rc.Touches {
-		if !finite(t.TS) || !finite(t.X) || !finite(t.Y) {
+	for _, item := range rawTouches {
+		var t rawTouch
+		if json.Unmarshal(item, &t) != nil || !finite(t.TS) || !finite(t.X) || !finite(t.Y) {
 			continue
 		}
 		if t.Kind != "down" && t.Kind != "move" && t.Kind != "up" {

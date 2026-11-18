@@ -176,3 +176,12 @@ func TestExtractVisitsAndBackgrounds(t *testing.T) {
 		t.Fatalf("layouts: visits=%+v backgrounds=%+v", r.Visits, r.Backgrounds)
 	}
 }
+
+func TestExtractSkippedScreenTapIsNotAttributedToEarlierFrame(t *testing.T) {
+	frames := []Frame{fr(0, "Safe", 400, 800, 0), fr(1000, "PinActivity", 400, 800, 0)}
+	skip := func(s string) bool { return s == "PinActivity" }
+	r := Extract([]Chunk{chunk(0, frames, tapsAt(10, 500, 1500)...)}, skip)
+	if len(r.Taps) != 1 || r.Taps[0].Screen != "Safe" || r.Taps[0].TS != 500 || r.Unrecognized != 0 {
+		t.Fatalf("result = %+v", r)
+	}
+}
