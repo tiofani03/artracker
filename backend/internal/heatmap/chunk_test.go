@@ -114,3 +114,20 @@ func TestDecodeChunkSanitizes(t *testing.T) {
 		t.Fatalf("touches = %+v", c.Touches)
 	}
 }
+
+func TestDecodeChunkBooleanMaskedKeepsFrame(t *testing.T) {
+	frame := func(masked string) string {
+		return `{"ts":1700000001000,"screen":"Home","w":200,"h":400,"vw":400,"vh":800,"mime":"image/jpeg","masked":` + masked + `,"data":"AAAA"}`
+	}
+	raw := `{"format":"artracker-screen-v1","platform":"ios","frames":[` +
+		frame("false") + "," + frame("true") + "," + frame("3") + `],"touches":[]}`
+	c, ok, err := DecodeChunk(1, []byte(raw))
+	if err != nil || !ok || len(c.Frames) != 3 {
+		t.Fatalf("got %+v ok=%v err=%v", c, ok, err)
+	}
+	for i, want := range []int{0, 0, 3} {
+		if c.Frames[i].Masked != want {
+			t.Fatalf("frame %d Masked = %d, want %d", i, c.Frames[i].Masked, want)
+		}
+	}
+}

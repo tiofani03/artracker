@@ -46,7 +46,7 @@ type rawFrame struct {
 	VW     float64  `json:"vw"`
 	VH     float64  `json:"vh"`
 	Mime   string   `json:"mime"`
-	Masked float64  `json:"masked"`
+	Masked any      `json:"masked"` // iOS sends a bool; like the frontend, non-numbers count as 0
 	Data   string   `json:"data"`
 }
 
@@ -126,8 +126,8 @@ func DecodeChunk(seq int, raw []byte) (c Chunk, ok bool, err error) {
 			continue
 		}
 		masked := 0
-		if !math.IsNaN(f.Masked) && !math.IsInf(f.Masked, 0) {
-			masked = int(math.Max(0, math.Min(f.Masked, maxViewport)))
+		if m, isNum := f.Masked.(float64); isNum && !math.IsNaN(m) && !math.IsInf(m, 0) {
+			masked = int(math.Max(0, math.Min(m, maxViewport)))
 		}
 		c.Frames = append(c.Frames, Frame{
 			TS: int64(*f.TS), Screen: cleanText(f.Screen), VW: f.VW, VH: f.VH, Masked: masked, ChunkSeq: seq, Index: i,
