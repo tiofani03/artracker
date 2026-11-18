@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS screen_taps (
     FOREIGN KEY (project_id, session_id) REFERENCES replay_sessions (project_id, id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS screen_taps_project_screen_ts_idx ON screen_taps (project_id, screen, ts);
+CREATE INDEX IF NOT EXISTS screen_taps_project_session_idx ON screen_taps (project_id, session_id);
 
 CREATE TABLE IF NOT EXISTS screen_visits (
     project_id    BIGINT      NOT NULL,
