@@ -11,6 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 )
 
 // ReplayStore defines the contract for generating presigned URLs for session replay chunks.
@@ -173,6 +175,11 @@ func (s *R2Storage) GetObject(ctx context.Context, objectKey string) (io.ReadClo
 
 	out, err := s.client.GetObject(ctx, input)
 	if err != nil {
+		var nsk *types.NoSuchKey
+		var apiErr smithy.APIError
+		if errors.As(err, &nsk) || (errors.As(err, &apiErr) && (apiErr.ErrorCode() == "NoSuchKey" || apiErr.ErrorCode() == "NotFound")) {
+			return nil, 0, "", fmt.Errorf("storage: get object: %w", ErrNotFound)
+		}
 		return nil, 0, "", fmt.Errorf("storage: get object: %w", err)
 	}
 

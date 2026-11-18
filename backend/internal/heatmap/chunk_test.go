@@ -3,7 +3,9 @@ package heatmap
 import (
 	"bytes"
 	"compress/gzip"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func gz(t *testing.T, s string) []byte {
@@ -80,7 +82,8 @@ func TestDecodeChunkDropsWrongTypedItems(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("ok=%v err=%v", ok, err)
 	}
-	if len(c.Frames) != 1 || c.Frames[0].Screen != "Good" || c.Frames[0].Index != 3 {
+	// the non-string screen (index 1) is kept as "" (unrecognized), only the bad ts (index 0) is dropped
+	if len(c.Frames) != 2 || c.Frames[0].Screen != "" || c.Frames[0].Index != 1 || c.Frames[1].Screen != "Good" || c.Frames[1].Index != 3 {
 		t.Fatalf("frames = %+v", c.Frames)
 	}
 	if len(c.Touches) != 1 || c.Touches[0].Kind != "up" {
@@ -129,5 +132,30 @@ func TestDecodeChunkBooleanMaskedKeepsFrame(t *testing.T) {
 		if c.Frames[i].Masked != want {
 			t.Fatalf("frame %d Masked = %d, want %d", i, c.Frames[i].Masked, want)
 		}
+	}
+}
+
+func TestDecodeChunkFrameEdgeCases(t *testing.T) {
+	fr := func(screen string, vw, vh string) string {
+		return `{"ts":1700000001000,"screen":` + screen + `,"w":200,"h":400,"vw":` + vw + `,"vh":` + vh + `,"mime":"image/jpeg","data":"AAAA"}`
+	}
+	long := strings.Repeat("é", 200) // 400 bytes, 2 bytes per rune
+	body := `{"format":"artracker-screen-v1","frames":[` +
+		fr(`"TinyVw"`, "0.5", "800") + `,` + // dropped: vw < 1
+		fr(`"TinyVh"`, "400", "0.001") + `,` + // dropped: vh < 1
+		fr(`42`, "400", "800") + `,` + // non-string screen kept as ""
+		fr(`"`+long+`"`, "400", "800") + `]}`
+	c, ok, err := DecodeChunk(0, []byte(body))
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	if len(c.Frames) != 2 {
+		t.Fatalf("frames = %+v", c.Frames)
+	}
+	if c.Frames[0].Screen != "" {
+		t.Errorf("non-string screen = %q, want empty", c.Frames[0].Screen)
+	}
+	if s := c.Frames[1].Screen; len(s) != 256 || !utf8.ValidString(s) {
+		t.Errorf("long screen len=%d valid=%v, want 256 valid", len(s), utf8.ValidString(s))
 	}
 }

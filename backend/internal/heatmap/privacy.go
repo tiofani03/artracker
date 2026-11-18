@@ -18,8 +18,10 @@ func isUnrecognized(screen string) bool {
 // SensitiveRule is the human-readable rule shown in Settings.
 const SensitiveRule = "Words: pin, otp, cvv; words starting with password, passcode, login, signin, payment, secur; sign in; card number"
 
-// splitWords lowercases a screen name split at CamelCase, digit and any non-alphanumeric boundaries.
-// Acronym runs stay together until the last capital that starts a new word: "OTPView" -> otp, view.
+// splitWords lowercases a screen name split at CamelCase, letter/digit and any non-alphanumeric
+// boundaries. Acronym runs stay together until the last capital that starts a new word: "OTPView" -> otp,
+// view. A lowercase plural stays with its acronym: "EnterPINsScreen" -> enter, pins, screen
+// ("pins" matches the exact word "pin" through IsSensitive's singularization).
 func splitWords(screen string) []string {
 	r := []rune(screen)
 	var words []string
@@ -35,10 +37,17 @@ func splitWords(screen string) []string {
 			flush()
 			continue
 		}
-		if unicode.IsUpper(c) && len(cur) > 0 {
+		if len(cur) > 0 {
 			prev := r[i-1]
 			nextLower := i+1 < len(r) && unicode.IsLower(r[i+1])
-			if unicode.IsLower(prev) || unicode.IsDigit(prev) || (unicode.IsUpper(prev) && nextLower) {
+			// an acronym plural ("OTPs", "PINsScreen"): a lone lowercase s does not start a new word
+			if nextLower && r[i+1] == 's' && (i+2 >= len(r) || !unicode.IsLower(r[i+2])) {
+				nextLower = false
+			}
+			switch {
+			case unicode.IsDigit(c) != unicode.IsDigit(prev):
+				flush()
+			case unicode.IsUpper(c) && (unicode.IsLower(prev) || (unicode.IsUpper(prev) && nextLower)):
 				flush()
 			}
 		}
@@ -52,7 +61,7 @@ func splitWords(screen string) []string {
 func IsSensitive(screen string) bool {
 	words := splitWords(screen)
 	for i, w := range words {
-		switch w {
+		switch strings.TrimSuffix(w, "s") {
 		case "pin", "otp", "cvv":
 			return true
 		}

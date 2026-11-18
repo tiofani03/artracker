@@ -4,9 +4,10 @@ import "testing"
 
 func TestIsSensitive(t *testing.T) {
 	yes := []string{"PinInputActivity", "android://LoginFragment", "OtpViewController", "PaymentSheet",
-		"SecurityQuestion", "CardNumberForm", "SignInViewController", "enter_pin_screen", "OTPView"}
+		"SecurityQuestion", "CardNumberForm", "SignInViewController", "enter_pin_screen", "OTPView",
+		"Pin2Activity", "PinsFragment", "OTPsView", "EnterPINsScreen", "CvvForm", "PasswordReset", "PasscodeLock", "SigninActivity", "enter-pin-screen"}
 	no := []string{"GiftCardViewController", "HomePageViewController", "android://ShoppingFragment",
-		"BasketActivity", "SpinWheelActivity", "TopUpViewController"}
+		"BasketActivity", "SpinWheelActivity", "TopUpViewController", "SignInfoScreen"}
 	for _, s := range yes {
 		if !IsSensitive(s) {
 			t.Errorf("IsSensitive(%q) = false, want true", s)

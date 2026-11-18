@@ -2,7 +2,9 @@
 ALTER TABLE replay_sessions
     ADD COLUMN IF NOT EXISTS taps_processed_at     TIMESTAMPTZ NULL,
     ADD COLUMN IF NOT EXISTS taps_processed_chunks INT         NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS taps_unrecognized     INT         NOT NULL DEFAULT 0;
+    ADD COLUMN IF NOT EXISTS taps_unrecognized     INT         NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS taps_attempts         INT         NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS taps_retry_at         TIMESTAMPTZ NULL;
 
 -- sessions the worker still has to (re)process
 CREATE INDEX IF NOT EXISTS replay_sessions_taps_pending_idx
