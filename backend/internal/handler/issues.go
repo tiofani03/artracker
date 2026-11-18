@@ -646,7 +646,7 @@ func (h *Handler) UploadSourceMap(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "file name is required (source map has no 'file' field)")
 	}
 
-	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(c.Context(), 60*time.Second)
 	defer cancel()
 
 	if _, err := h.db.Exec(ctx, `

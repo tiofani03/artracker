@@ -87,7 +87,7 @@ func (h *Handler) UploadDSYM(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "database is unavailable")
 	}
 
-	ctx, cancel := context.WithTimeout(c.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(c.Context(), 60*time.Second)
 	defer cancel()
 
 	var artifactID int64
@@ -158,7 +158,7 @@ func (h *Handler) UploadProguard(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "database is unavailable")
 	}
 
-	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(c.Context(), 60*time.Second)
 	defer cancel()
 
 	var artifactID int64

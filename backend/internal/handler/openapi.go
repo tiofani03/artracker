@@ -865,7 +865,7 @@ var openAPISpecBytes = []byte(`{
     "/projects/{projectID}/releases/{version}/sourcemaps": {
       "post": {
         "summary": "Upload Web Source Map",
-        "description": "Uploads a source map JSON (request body) for one minified file of a release so web stack traces are deobfuscated. Needs an admin login token; secret keys are not accepted.",
+        "description": "Uploads a source map JSON (request body) for one minified file of a release so web stack traces are deobfuscated. Needs an admin login token; CI uses POST /sdk/releases/{version}/sourcemaps with a secret key.",
         "operationId": "uploadSourceMap",
         "tags": ["Crash Diagnostics"],
         "security": [{ "BearerAuth": [] }],
@@ -916,6 +916,69 @@ var openAPISpecBytes = []byte(`{
           "201": { "description": "ProGuard mapping stored" },
           "400": { "description": "Invalid ProGuard mapping syntax" },
           "401": { "description": "Unauthorized" }
+        }
+      }
+    },
+    "/sdk/releases/{version}/proguard": {
+      "post": {
+        "summary": "Upload ProGuard / R8 Mapping (secret key)",
+        "description": "Uploads mapping.txt for a release. Authenticated with a secret key (art_sec_) in X-Artracker-Key; the key decides the project, so no login is needed. Meant for CI.",
+        "operationId": "uploadProguardWithKey",
+        "tags": ["Crash Diagnostics"],
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "version", "in": "path", "required": true, "description": "Must equal the app_version the SDK reports; URL-encode it", "schema": { "type": "string" } },
+          { "name": "build", "in": "query", "required": false, "description": "Build number", "schema": { "type": "string" } },
+          { "name": "file", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "201": { "description": "ProGuard mapping stored" },
+          "400": { "description": "Invalid ProGuard mapping syntax or missing version" },
+          "401": { "description": "Missing, unknown, revoked or MCP key" },
+          "403": { "description": "Key is valid but is not a secret key" },
+          "413": { "description": "Body larger than ARTIFACT_MAX_BYTES" }
+        }
+      }
+    },
+    "/sdk/releases/{version}/dsyms": {
+      "post": {
+        "summary": "Upload iOS dSYM (secret key)",
+        "description": "Uploads a dSYM bundle zip or a raw DWARF binary for a release. Authenticated with a secret key (art_sec_) in X-Artracker-Key; the key decides the project, so no login is needed. Meant for CI.",
+        "operationId": "uploadDSYMWithKey",
+        "tags": ["Crash Diagnostics"],
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "version", "in": "path", "required": true, "description": "Must equal the app_version the SDK reports; URL-encode it", "schema": { "type": "string" } },
+          { "name": "build", "in": "query", "required": false, "description": "Build number", "schema": { "type": "string" } },
+          { "name": "file", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "201": { "description": "dSYM artifact stored" },
+          "400": { "description": "Invalid dSYM archive or missing version" },
+          "401": { "description": "Missing, unknown, revoked or MCP key" },
+          "403": { "description": "Key is valid but is not a secret key" },
+          "413": { "description": "Body larger than ARTIFACT_MAX_BYTES" }
+        }
+      }
+    },
+    "/sdk/releases/{version}/sourcemaps": {
+      "post": {
+        "summary": "Upload Web Source Map (secret key)",
+        "description": "Uploads a source map JSON for one minified file of a release. Authenticated with a secret key (art_sec_) in X-Artracker-Key; the key decides the project, so no login is needed. Meant for CI.",
+        "operationId": "uploadSourceMapWithKey",
+        "tags": ["Crash Diagnostics"],
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "version", "in": "path", "required": true, "description": "Must equal the app_version the SDK reports; URL-encode it", "schema": { "type": "string" } },
+          { "name": "build", "in": "query", "required": false, "description": "Build number", "schema": { "type": "string" } },
+          { "name": "file", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "201": { "description": "Source map stored" },
+          "400": { "description": "Invalid source map or missing version" },
+          "401": { "description": "Missing, unknown, revoked or MCP key" },
+          "403": { "description": "Key is valid but is not a secret key" },
+          "413": { "description": "Body larger than ARTIFACT_MAX_BYTES" }
         }
       }
     },

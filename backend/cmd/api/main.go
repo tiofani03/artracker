@@ -74,14 +74,19 @@ func main() {
 	}, pool)
 
 	app := fiber.New(fiber.Config{
-		AppName:               "artracker-api",
-		ReadTimeout:           10 * time.Second,
+		AppName: "artracker-api",
+		// Symbol uploads are large. nginx buffers the body first, so the API still reads it fast; the
+		// 4 MiB cap for every other route is enforced by handler.LimitBody.
+		BodyLimit:             cfg.ArtifactMaxBytes,
+		StreamRequestBody:     true,
+		ReadTimeout:           60 * time.Second,
 		WriteTimeout:          15 * time.Second,
 		IdleTimeout:           60 * time.Second,
 		DisableStartupMessage: true,
 		ErrorHandler:          handler.ErrorHandler,
 	})
 
+	app.Use(handler.LimitBody(4<<20, "/api/v1/sdk/releases/"))
 	app.Use(recover.New())
 	app.Use(fiberlogger.New(fiberlogger.Config{
 		Format: "${time} ${status} ${latency} ${method} ${path}\n",
