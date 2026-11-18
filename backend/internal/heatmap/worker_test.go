@@ -3,12 +3,15 @@ package heatmap
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -224,5 +227,194 @@ func TestProcessSessionStripsNulAndSkipsBadTimestamps(t *testing.T) {
 	var n int
 	if err := f.pool.QueryRow(context.Background(), `SELECT count(*) FROM screen_taps WHERE project_id=$1 AND screen='HomeActivity'`, f.pid).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("taps = %d err=%v", n, err)
+	}
+}
+
+// hookGetter wraps an ObjectGetter; after (if set) runs once the object was fetched, err overrides it.
+type hookGetter struct {
+	inner ObjectGetter
+	err   error
+	after func()
+}
+
+func (h *hookGetter) GetObject(ctx context.Context, key string) (io.ReadCloser, int64, string, error) {
+	if h.err != nil {
+		return nil, 0, "", h.err
+	}
+	rc, n, ct, err := h.inner.GetObject(ctx, key)
+	if err == nil && h.after != nil {
+		h.after()
+	}
+	return rc, n, ct, err
+}
+
+func (f *wfix) idleNow(t *testing.T) {
+	t.Helper()
+	if _, err := f.pool.Exec(context.Background(), `UPDATE replay_sessions SET updated_at = now() - interval '11 minutes' WHERE project_id=$1`, f.pid); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProcessSessionExclusionChangedAfterChunkLoad(t *testing.T) {
+	f := newWFix(t)
+	ctx := context.Background()
+	f.addChunk(t, 0, chunkBody("HomeActivity", 1699999000000, 1699999001000), true)
+	f.w.store = &hookGetter{inner: f.w.store, after: func() {
+		if _, err := f.pool.Exec(ctx, `UPDATE projects SET heatmap_excluded_screens = '{HomeActivity}' WHERE id=$1`, f.pid); err != nil {
+			t.Error(err)
+		}
+	}}
+	if err := f.w.ProcessSession(ctx, f.pid, sid); err != nil {
+		t.Fatal(err)
+	}
+	for _, tb := range []string{"screen_taps", "screen_visits", "screen_backgrounds"} {
+		if n := f.count(t, tb); n != 0 {
+			t.Fatalf("%s = %d, want 0", tb, n)
+		}
+	}
+}
+
+func TestFailingSessionBacksOffThenGivesUp(t *testing.T) {
+	f := newWFix(t)
+	ctx := context.Background()
+	f.addChunk(t, 0, chunkBody("HomeActivity", 1699999000000, 1699999001000), true)
+	f.idleNow(t)
+	f.w.store = &hookGetter{inner: f.w.store, err: errors.New("r2 unavailable")}
+
+	if n, err := f.w.ProcessPending(ctx); err != nil || n != 0 {
+		t.Fatalf("first: n=%d err=%v", n, err)
+	}
+	var attempts int
+	var retryAt *time.Time
+	var processed bool
+	q := `SELECT taps_attempts, taps_retry_at, taps_processed_at IS NOT NULL FROM replay_sessions WHERE project_id=$1 AND id=$2`
+	if err := f.pool.QueryRow(ctx, q, f.pid, sid).Scan(&attempts, &retryAt, &processed); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 1 || retryAt == nil || !retryAt.After(time.Now()) || processed {
+		t.Fatalf("after failure: attempts=%d retry=%v processed=%v", attempts, retryAt, processed)
+	}
+	// not picked again before retry_at
+	if _, err := f.w.ProcessPending(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pool.QueryRow(ctx, q, f.pid, sid).Scan(&attempts, &retryAt, &processed); err != nil || attempts != 1 {
+		t.Fatalf("retried early: attempts=%d err=%v", attempts, err)
+	}
+	// after the maximum number of attempts the session is marked processed
+	for i := 0; i < maxAttempts-1; i++ {
+		if _, err := f.pool.Exec(ctx, `UPDATE replay_sessions SET taps_retry_at = now() - interval '1 second' WHERE project_id=$1`, f.pid); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.w.ProcessPending(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.pool.QueryRow(ctx, q, f.pid, sid).Scan(&attempts, &retryAt, &processed); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != maxAttempts || !processed {
+		t.Fatalf("attempts=%d processed=%v, want %d/true", attempts, processed, maxAttempts)
+	}
+	if n, err := f.w.ProcessPending(ctx); err != nil || n != 0 {
+		t.Fatalf("given-up session picked again: n=%d err=%v", n, err)
+	}
+}
+
+func TestSuccessResetsAttempts(t *testing.T) {
+	f := newWFix(t)
+	ctx := context.Background()
+	f.addChunk(t, 0, chunkBody("HomeActivity", 1699999000000, 1699999001000), true)
+	if _, err := f.pool.Exec(ctx, `UPDATE replay_sessions SET taps_attempts=3, taps_retry_at = now() - interval '1 second' WHERE project_id=$1`, f.pid); err != nil {
+		t.Fatal(err)
+	}
+	f.idleNow(t)
+	if n, err := f.w.ProcessPending(ctx); err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	var a int
+	var r *time.Time
+	if err := f.pool.QueryRow(ctx, `SELECT taps_attempts, taps_retry_at FROM replay_sessions WHERE project_id=$1`, f.pid).Scan(&a, &r); err != nil || a != 0 || r != nil {
+		t.Fatalf("attempts=%d retry=%v err=%v", a, r, err)
+	}
+}
+
+func TestTransientStorageErrorFailsSession(t *testing.T) {
+	f := newWFix(t)
+	ctx := context.Background()
+	f.addChunk(t, 0, chunkBody("HomeActivity", 1699999000000, 1699999001000), true)
+	f.w.store = &hookGetter{inner: f.w.store, err: errors.New("connection reset")}
+	if err := f.w.ProcessSession(ctx, f.pid, sid); err == nil {
+		t.Fatal("want error for a transient storage failure")
+	}
+	if n := f.count(t, "screen_taps"); n != 0 {
+		t.Fatalf("taps = %d", n)
+	}
+	var processed bool
+	if err := f.pool.QueryRow(ctx, `SELECT taps_processed_at IS NOT NULL FROM replay_sessions WHERE project_id=$1`, f.pid).Scan(&processed); err != nil || processed {
+		t.Fatalf("processed=%v err=%v", processed, err)
+	}
+	// a not-found object is skipped, not an error
+	f.w.store = &hookGetter{inner: f.w.store, err: fmt.Errorf("get: %w", storage.ErrNotFound)}
+	if err := f.w.ProcessSession(ctx, f.pid, sid); err != nil {
+		t.Fatalf("not-found must be skipped: %v", err)
+	}
+}
+
+func TestPendingSkipsWebAndStopsOnNonScreenChunk(t *testing.T) {
+	f := newWFix(t)
+	ctx := context.Background()
+	f.addChunk(t, 0, `[{"type":4,"data":{}}]`, true)
+	f.addChunk(t, 1, chunkBody("HomeActivity", 1699999000000, 1699999001000), true)
+	if err := f.w.ProcessSession(ctx, f.pid, sid); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.count(t, "screen_taps"); n != 0 {
+		t.Fatalf("taps = %d, want 0 after a non-screen first chunk", n)
+	}
+	var processed bool
+	if err := f.pool.QueryRow(ctx, `SELECT taps_processed_at IS NOT NULL FROM replay_sessions WHERE project_id=$1`, f.pid).Scan(&processed); err != nil || !processed {
+		t.Fatalf("processed=%v err=%v", processed, err)
+	}
+
+	if _, err := f.pool.Exec(ctx, `UPDATE replay_sessions SET taps_processed_at=NULL WHERE project_id=$1`, f.pid); err != nil {
+		t.Fatal(err)
+	}
+	f.idleNow(t)
+	if _, err := f.pool.Exec(ctx, `UPDATE projects SET platform='web' WHERE id=$1`, f.pid); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := f.w.ProcessPending(ctx); err != nil || n != 0 {
+		t.Fatalf("web project: n=%d err=%v", n, err)
+	}
+}
+
+func TestProcessPendingNewestFirstAndDrains(t *testing.T) {
+	f := newWFix(t)
+	ctx := context.Background()
+	f.addChunk(t, 0, chunkBody("HomeActivity", 1699999000000, 1699999001000), true)
+	// two more idle sessions sharing the chunk object
+	for _, id := range []string{"old", "mid"} {
+		if _, err := f.pool.Exec(ctx, `INSERT INTO replay_sessions(id, project_id, chunk_count) VALUES ($1,$2,1)`, id, f.pid); err != nil {
+			t.Fatal(err)
+		}
+		key := fmt.Sprintf("projects/%d/sessions/%s/chunk_0.gz", f.pid, sid)
+		if _, err := f.pool.Exec(ctx, `INSERT INTO replay_chunks(project_id, session_id, chunk_seq, object_key) VALUES ($1,$2,0,$3)`, f.pid, id, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for id, ago := range map[string]string{"old": "3 hours", sid: "1 hour", "mid": "2 hours"} {
+		if _, err := f.pool.Exec(ctx, `UPDATE replay_sessions SET updated_at = now() - $3::interval WHERE project_id=$1 AND id=$2`, f.pid, id, ago); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.w.batch = 1
+	p, err := f.w.listPending(ctx)
+	if err != nil || len(p) != 1 || p[0].sessionID != sid {
+		t.Fatalf("newest first: %+v err=%v", p, err)
+	}
+	// one tick drains every batch
+	if n, err := f.w.ProcessPending(ctx); err != nil || n != 3 {
+		t.Fatalf("drain: n=%d err=%v", n, err)
 	}
 }
