@@ -11,6 +11,7 @@ import LoginPage from './pages/LoginPage'
 import SettingsPage from './pages/SettingsPage'
 import IssuesPage from './pages/IssuesPage'
 import PeoplePage from './pages/PeoplePage'
+import HeatmapPage from './pages/HeatmapPage'
 import IssueDetailPage from './pages/IssueDetailPage'
 import InviteAcceptPage from './pages/InviteAcceptPage'
 import { Redirect, useLocation } from './router'
@@ -63,6 +64,8 @@ function Routes() {
       return <IssuesPage />
     case '/dashboard/people':
       return <PeoplePage />
+    case '/dashboard/heatmap':
+      return <HeatmapPage />
     case '/dashboard/settings':
       return <SettingsPage />
     default:

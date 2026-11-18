@@ -794,7 +794,13 @@ export type HeatmapParams = {
   platform?: string
   app_version?: string
 }
-export type HeatmapGetParams = HeatmapParams & { screen: string; orientation?: string; aspect?: number }
+export type HeatmapOrientation = 'portrait' | 'landscape'
+export type HeatmapGetParams = Omit<HeatmapParams, 'platform'> & {
+  screen: string
+  platform: string
+  orientation: HeatmapOrientation
+  aspect?: number
+}
 
 function heatmapQuery(params: Record<string, string | number | undefined>): string {
   const qs = new URLSearchParams()
