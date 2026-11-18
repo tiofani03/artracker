@@ -246,6 +246,16 @@ Production `.env` needs the following. Compose refuses to run without `POSTGRES_
 - the `R2_*` variables if you want session replay (`REPLAY_LOCAL_DIR` keeps chunks on the container's own disk and is meant for development)
 - `HEATMAP_WORKER` (default `true`): runs the tap-heatmap worker, which reads finished screenshot replays and writes the tap data. With more than one API instance, set `HEATMAP_WORKER=false` on every instance except one
 
+To reprocess a project's heatmap data (for example after removing a screen from the exclusion list, or after
+a storage outage that made sessions fail), reset its sessions and the worker re-extracts them on its next ticks:
+
+```sql
+UPDATE replay_sessions SET taps_processed_at = NULL, taps_attempts = 0, taps_retry_at = NULL WHERE project_id = <id>;
+```
+
+The worker backs a failing session off (1 minute doubling up to 6 hours) and gives up after 8 attempts; this
+reset also clears that.
+
 Pin a build with `TAG=<sha>` in `.env`. Migrations are embedded in the API
 binary and run at boot, so there is no separate migrate step.
 

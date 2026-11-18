@@ -252,7 +252,12 @@ func (h *Handler) GetHeatmap(c *fiber.Ctx) error {
 	if aspect == 0 {
 		aspect = 2
 	}
-	if rowsN, err = heatmapIntParam(c, "rows", int(math.Round(float64(cols)*aspect)), heatmapMaxRows); err != nil {
+	// aspect is long side / short side: a portrait screen is taller than wide, a landscape one wider
+	defRows := float64(cols) * aspect
+	if landscape {
+		defRows = float64(cols) / aspect
+	}
+	if rowsN, err = heatmapIntParam(c, "rows", max(1, int(math.Round(defRows))), heatmapMaxRows); err != nil {
 		return err
 	}
 	if rowsN > heatmapMaxRows {
@@ -326,12 +331,13 @@ func (h *Handler) GetHeatmap(c *fiber.Ctx) error {
 		chunkSeq  int
 		vw, vh    float32
 	)
+	// Prefer a background captured inside the requested range; fall back to the latest overall.
 	err = h.db.QueryRow(ctx, `
 		SELECT session_id, chunk_seq, frame_index, vw, vh, app_version FROM screen_backgrounds
 		 WHERE project_id = $1 AND screen = $2 AND platform = $3 AND landscape = $4
 		   AND abs(aspect_bucket - $5) < $6 AND ($7 = '' OR app_version = $7)
-		 ORDER BY captured_at DESC LIMIT 1`,
-		projectID, screen, platform, landscape, aspect, heatmapAspectTol, version).
+		 ORDER BY (captured_at >= $8 AND captured_at < $9) DESC, captured_at DESC LIMIT 1`,
+		projectID, screen, platform, landscape, aspect, heatmapAspectTol, version, from, to).
 		Scan(&sessionID, &chunkSeq, &bg.FrameIndex, &vw, &vh, &bg.AppVersion)
 	if err == nil {
 		bg.VW, bg.VH = float64(vw), float64(vh)

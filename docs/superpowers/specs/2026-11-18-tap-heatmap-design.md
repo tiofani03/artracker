@@ -1,7 +1,7 @@
 # Tap Heatmap per Screen — Design
 
 Date: 2026-11-18
-Status: awaiting approval
+Status: approved
 
 ## Intent
 
@@ -171,3 +171,18 @@ The user picked **B**.
 - Worker batch size and pacing against R2.
 - Test strategy: extraction logic is pure (chunks in → taps out) and gets table-driven unit tests;
   DB tests use `artracker_test`, never the dev DB.
+
+## Implementation notes
+
+Where the text above is outdated, the shipped behavior is:
+
+- The sensitive-screen rule is word-based (CamelCase/digit/separator split; `pin`, `otp`, `cvv` also match a
+  plural), not a substring regexp.
+- `GET /heatmap/screens` also returns `app_versions`, the versions seen in the data.
+- The worker backs failing sessions off (`taps_attempts`, `taps_retry_at`; 1 minute doubling, capped at 6 hours)
+  and marks a session processed after 8 failed attempts. Only missing objects are skipped; other storage errors
+  fail the session. Web projects are skipped, newest sessions are processed first, and a tick drains batches
+  within a 45 s budget.
+- Exclusions are re-read inside the write transaction (`FOR SHARE` on the project row) so a concurrent settings
+  change cannot be overtaken.
+- Reprocessing a project is documented in the README (reset `taps_processed_at`).

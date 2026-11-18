@@ -238,7 +238,7 @@ function HeatmapView({ projectId }: { projectId: number }) {
         )}
         {(list.data?.unrecognized_taps ?? 0) > 0 && (
           <p className="ppl-muted ppl-pad">
-            {list.data!.unrecognized_taps} taps on unrecognized screens are hidden.
+            {list.data!.unrecognized_taps} {list.data!.unrecognized_taps === 1 ? 'tap' : 'taps'} on unrecognized screens {list.data!.unrecognized_taps === 1 ? 'is' : 'are'} hidden.
           </p>
         )}
       </aside>

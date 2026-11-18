@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func (e *testEnv) addVisit(t *testing.T, pid int64, sid, screen, platform string, aspect float64) {
@@ -151,6 +152,71 @@ func TestHeatmapGrid(t *testing.T) {
 	}
 	if len(g.Rage) != 1 || g.Background != nil {
 		t.Fatalf("rage=%v background=%v", g.Rage, g.Background)
+	}
+}
+
+func TestHeatmapGridLandscapeRows(t *testing.T) {
+	e := newTestEnv(t)
+	org := e.addOrg(t, "hm-land")
+	uid, hdr := e.addUser(t, "hmlandviewer")
+	e.addMember(t, org, uid, "viewer")
+	pid := e.addProject(t, org, "hm-land-app")
+	for orient, want := range map[string]int{"portrait": 88, "landscape": 18} {
+		var g hmGrid
+		path := fmt.Sprintf("/api/v1/projects/%d/heatmap?screen=Home&platform=android&orientation=%s&aspect=2.2", pid, orient)
+		if st := hmGet(t, e, hdr, path, &g); st != 200 {
+			t.Fatalf("status %d", st)
+		}
+		if g.Cols != 40 || g.Rows != want {
+			t.Errorf("%s: cols=%d rows=%d, want 40x%d", orient, g.Cols, g.Rows, want)
+		}
+	}
+}
+
+func TestHeatmapBackgroundPrefersRange(t *testing.T) {
+	e := newTestEnv(t)
+	e.h.WithReplayStore(&mockReplayStore{})
+	org := e.addOrg(t, "hm-bg")
+	uid, hdr := e.addUser(t, "hmbgviewer")
+	e.addMember(t, org, uid, "viewer")
+	pid := e.addProject(t, org, "hm-bg-app")
+	e.addReplaySession(t, pid, "s1", "1 hour", false, false, false)
+	e.addVisit(t, pid, "s1", "Home", "android", 2.2)
+	ctx := context.Background()
+	if _, err := e.pool.Exec(ctx, `INSERT INTO replay_chunks(project_id, session_id, chunk_seq, object_key) VALUES ($1,'s1',0,'k/0')`, pid); err != nil {
+		t.Fatal(err)
+	}
+	for v, ago := range map[string]string{"1.0.0": "10 days", "2.0.0": "1 hour"} {
+		if _, err := e.pool.Exec(ctx,
+			`INSERT INTO screen_backgrounds(project_id, screen, platform, app_version, aspect_bucket, session_id, chunk_seq, frame_index, vw, vh, captured_at)
+			 VALUES ($1,'Home','android',$2,2.2,'s1',0,0,400,880, now() - $3::interval)`, pid, v, ago); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var g struct {
+		Background *struct {
+			AppVersion string `json:"app_version"`
+		} `json:"background"`
+	}
+	base := fmt.Sprintf("/api/v1/projects/%d/heatmap?screen=Home&platform=android&orientation=portrait&aspect=2.2", pid)
+	from := time.Now().Add(-11 * 24 * time.Hour).Format("2006-01-02")
+	to := time.Now().Add(-9 * 24 * time.Hour).Format("2006-01-02")
+	// range covering only the old background: it wins over the newer one
+	if _, err := e.pool.Exec(ctx, `UPDATE screen_visits SET ts = now() - interval '10 days' WHERE project_id=$1`, pid); err != nil {
+		t.Fatal(err)
+	}
+	if st := hmGet(t, e, hdr, base+"&from="+from+"&to="+to, &g); st != 200 || g.Background == nil || g.Background.AppVersion != "1.0.0" {
+		t.Fatalf("status=%d background=%+v, want 1.0.0", st, g.Background)
+	}
+	// range covering no background: fall back to the latest overall
+	if _, err := e.pool.Exec(ctx, `UPDATE screen_visits SET ts = now() WHERE project_id=$1`, pid); err != nil {
+		t.Fatal(err)
+	}
+	g.Background = nil
+	soon := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
+	recent := time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
+	if st := hmGet(t, e, hdr, base+"&from="+recent+"&to="+soon, &g); st != 200 || g.Background == nil || g.Background.AppVersion != "2.0.0" {
+		t.Fatalf("status=%d background=%+v, want fallback 2.0.0", st, g.Background)
 	}
 }
 
