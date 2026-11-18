@@ -2,8 +2,6 @@ package handler
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net/url"
 	"path/filepath"
@@ -45,7 +43,10 @@ func (h *Handler) UploadDSYM(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "release version is required")
 	}
 
-	body := c.Body()
+	body, err := readArtifactBody(c)
+	if err != nil {
+		return err
+	}
 	if len(body) == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "dSYM binary body or zip archive is required")
 	}
@@ -56,7 +57,6 @@ func (h *Handler) UploadDSYM(c *fiber.Ctx) error {
 	}
 
 	dwarfBytes := body
-	var err error
 
 	// If payload is a zip archive (starts with PK\x03\x04), extract the inner DWARF binary
 	if len(body) >= 4 && body[0] == 'P' && body[1] == 'K' && body[2] == 0x03 && body[3] == 0x04 {
@@ -77,9 +77,7 @@ func (h *Handler) UploadDSYM(c *fiber.Ctx) error {
 		meta = symbolication.MachOInfo{Arch: "arm64"}
 	}
 
-	hasher := sha256.New()
-	hasher.Write(dwarfBytes)
-	checksum := hex.EncodeToString(hasher.Sum(nil))
+	checksum := sha256Hex(dwarfBytes)
 
 	storagePath := fmt.Sprintf("projects/%d/releases/%s/dsyms/%s", projectID, version, filepath.Base(fileName))
 
@@ -89,6 +87,21 @@ func (h *Handler) UploadDSYM(c *fiber.Ctx) error {
 
 	ctx, cancel := context.WithTimeout(c.Context(), 60*time.Second)
 	defer cancel()
+
+	if same, err := h.isLatestArtifact(ctx, projectID, version, "dsym", checksum); err != nil {
+		return err
+	} else if same {
+		return c.JSON(fiber.Map{
+			"status":          "unchanged",
+			"project_id":      projectID,
+			"release_version": version,
+			"file_name":       fileName,
+			"debug_uuid":      meta.UUID,
+			"cpu_arch":        meta.Arch,
+			"size_bytes":      len(dwarfBytes),
+			"checksum":        checksum,
+		})
+	}
 
 	var artifactID int64
 	err = h.db.QueryRow(ctx, `
@@ -132,13 +145,16 @@ func (h *Handler) UploadProguard(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "release version is required")
 	}
 
-	body := c.Body()
+	body, err := readArtifactBody(c)
+	if err != nil {
+		return err
+	}
 	if len(body) == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "mapping.txt content is required")
 	}
 
 	// Validate mapping syntax
-	retracer, err := symbolication.ParseProguardMapping(body)
+	_, err = symbolication.ParseProguardMapping(body)
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid proguard mapping: "+err.Error())
 	}
@@ -148,9 +164,7 @@ func (h *Handler) UploadProguard(c *fiber.Ctx) error {
 		fileName = "mapping.txt"
 	}
 
-	hasher := sha256.New()
-	hasher.Write(body)
-	checksum := hex.EncodeToString(hasher.Sum(nil))
+	checksum := sha256Hex(body)
 
 	storagePath := fmt.Sprintf("projects/%d/releases/%s/proguard/%s", projectID, version, filepath.Base(fileName))
 
@@ -160,6 +174,20 @@ func (h *Handler) UploadProguard(c *fiber.Ctx) error {
 
 	ctx, cancel := context.WithTimeout(c.Context(), 60*time.Second)
 	defer cancel()
+
+	if same, err := h.isLatestArtifact(ctx, projectID, version, "proguard_mapping", checksum); err != nil {
+		return err
+	} else if same {
+		return c.JSON(fiber.Map{
+			"status":          "unchanged",
+			"project_id":      projectID,
+			"release_version": version,
+			"file_name":       fileName,
+			"artifact_type":   "proguard_mapping",
+			"size_bytes":      len(body),
+			"checksum":        checksum,
+		})
+	}
 
 	var artifactID int64
 	err = h.db.QueryRow(ctx, `
@@ -175,8 +203,6 @@ func (h *Handler) UploadProguard(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-
-	_ = retracer
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"status":          "stored",

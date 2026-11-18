@@ -628,7 +628,10 @@ func (h *Handler) UploadSourceMap(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "release version is required")
 	}
 
-	body := c.Body()
+	body, err := readArtifactBody(c)
+	if err != nil {
+		return err
+	}
 	if len(body) == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "source map body is required")
 	}
@@ -648,6 +651,21 @@ func (h *Handler) UploadSourceMap(c *fiber.Ctx) error {
 
 	ctx, cancel := context.WithTimeout(c.Context(), 60*time.Second)
 	defer cancel()
+
+	var current string
+	err = h.db.QueryRow(ctx, `SELECT encode(sha256(content), 'hex') FROM source_maps
+		WHERE project_id = $1 AND release_version = $2 AND file_name = $3`, projectID, version, fileName).Scan(&current)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if err == nil && current == sha256Hex(body) {
+		return c.JSON(fiber.Map{
+			"status":          "unchanged",
+			"release_version": version,
+			"file_name":       fileName,
+			"sources":         len(sm.Sources),
+		})
+	}
 
 	if _, err := h.db.Exec(ctx, `
 		INSERT INTO source_maps(project_id, release_version, file_name, content)

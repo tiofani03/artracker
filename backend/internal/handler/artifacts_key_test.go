@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -102,5 +103,87 @@ func TestSecretKeyUploadDSYMAndSourceMap(t *testing.T) {
 	q := fmt.Sprintf(`SELECT count(*) FROM source_maps WHERE project_id=%d AND release_version='2.0.0+1'`, project)
 	if n := e.count(t, q); n != 1 {
 		t.Fatalf("source map stored under decoded version = %d rows, want 1", n)
+	}
+}
+
+func TestSecretKeyUploadGzip(t *testing.T) {
+	e, _, project, hdr := keyFixture(t)
+	sec := e.createKey(t, project, "secret_admin", hdr).Secret
+	gzHdr := map[string]string{"Content-Encoding": "gzip"}
+
+	body := string(gz(t, []byte(testMapping)))
+	if got := e.uploadWithKey(t, "/api/v1/sdk/releases/3.0.0/proguard", sec, body, gzHdr).StatusCode; got != 201 {
+		t.Fatalf("gzip proguard = %d, want 201", got)
+	}
+	// stored decoded, so symbolication sees the real mapping
+	var content string
+	if err := e.pool.QueryRow(context.Background(),
+		`SELECT convert_from(content,'UTF8') FROM project_release_artifacts WHERE project_id=$1 AND version='3.0.0'`, project).Scan(&content); err != nil {
+		t.Fatal(err)
+	}
+	if content != testMapping {
+		t.Fatalf("stored content = %q, want the decoded mapping", content)
+	}
+	if got := e.uploadWithKey(t, "/api/v1/sdk/releases/3.0.0/proguard", sec, "notgzip", gzHdr).StatusCode; got != 400 {
+		t.Fatalf("bad gzip = %d, want 400", got)
+	}
+}
+
+func uploadStatus(t *testing.T, e *testEnv, path, key, body string) (int, string) {
+	t.Helper()
+	resp := e.uploadWithKey(t, path, key, body, nil)
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
+func TestSecretKeyUploadIdempotent(t *testing.T) {
+	e, _, project, hdr := keyFixture(t)
+	sec := e.createKey(t, project, "secret_admin", hdr).Secret
+	path := "/api/v1/sdk/releases/4.0.0/proguard"
+	a := testMapping
+	b := testMapping + "    void stop() -> c\n"
+	rows := func() int {
+		return e.count(t, fmt.Sprintf(`SELECT count(*) FROM project_release_artifacts WHERE project_id=%d AND version='4.0.0'`, project))
+	}
+
+	steps := []struct {
+		body   string
+		status int
+		rows   int
+	}{
+		{a, 201, 1}, // first upload
+		{a, 200, 1}, // same content again: nothing stored
+		{b, 201, 2}, // new content for the same version
+		{a, 201, 3}, // A is no longer the newest, so it must be stored again to become the active mapping
+		{a, 200, 3}, // now it is the newest: unchanged
+	}
+	for i, s := range steps {
+		code, out := uploadStatus(t, e, path, sec, s.body)
+		if code != s.status {
+			t.Fatalf("step %d: status = %d, want %d (%s)", i, code, s.status, out)
+		}
+		if s.status == 200 && !strings.Contains(out, `"status":"unchanged"`) {
+			t.Fatalf("step %d: body = %s, want status unchanged", i, out)
+		}
+		if got := rows(); got != s.rows {
+			t.Fatalf("step %d: rows = %d, want %d", i, got, s.rows)
+		}
+	}
+}
+
+func TestSecretKeyUploadSourceMapIdempotent(t *testing.T) {
+	e, _, project, hdr := keyFixture(t)
+	sec := e.createKey(t, project, "secret_admin", hdr).Secret
+	path := "/api/v1/sdk/releases/5.0.0/sourcemaps"
+	sm := `{"version":3,"file":"app.js","sources":["a.ts"],"names":[],"mappings":"AAAA"}`
+	if code, out := uploadStatus(t, e, path, sec, sm); code != 201 {
+		t.Fatalf("first = %d %s", code, out)
+	}
+	if code, out := uploadStatus(t, e, path, sec, sm); code != 200 || !strings.Contains(out, `"status":"unchanged"`) {
+		t.Fatalf("repeat = %d %s, want 200 unchanged", code, out)
+	}
+	changed := strings.Replace(sm, "AAAA", "AACA", 1)
+	if code, out := uploadStatus(t, e, path, sec, changed); code != 201 {
+		t.Fatalf("changed = %d %s, want 201", code, out)
 	}
 }
