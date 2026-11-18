@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -621,7 +622,8 @@ func (h *Handler) AssignIssue(c *fiber.Ctx) error {
 // UploadSourceMap stores a Source Map v3 document for a release + output file.
 func (h *Handler) UploadSourceMap(c *fiber.Ctx) error {
 	projectID := c.Locals("projectID").(int64)
-	version := strings.TrimSpace(c.Params("version"))
+	rawVersion, _ := url.PathUnescape(c.Params("version"))
+	version := strings.TrimSpace(rawVersion)
 	if version == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "release version is required")
 	}

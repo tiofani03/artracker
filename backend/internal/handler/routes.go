@@ -114,6 +114,11 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Get("/mcp", h.MCPMethodNotAllowed)
 	api.Delete("/mcp", h.MCPMethodNotAllowed)
 
+	// Release artifacts from a build machine: a secret key (art_sec_) picks the project, no login needed.
+	api.Post("/sdk/releases/:version/proguard", h.RequireSecretKey, h.UploadProguard)
+	api.Post("/sdk/releases/:version/dsyms", h.RequireSecretKey, h.UploadDSYM)
+	api.Post("/sdk/releases/:version/sourcemaps", h.RequireSecretKey, h.UploadSourceMap)
+
 	api.Get("/sdk/validate", h.sdkValidate(false))
 	api.Get("/sdk/validate-admin", h.sdkValidate(true))
 
