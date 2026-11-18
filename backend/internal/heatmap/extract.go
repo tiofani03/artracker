@@ -49,7 +49,7 @@ type Result struct {
 	Taps         []Tap
 	Visits       []Visit
 	Backgrounds  []Background
-	Unrecognized int // distinct unrecognized screen names seen
+	Unrecognized int // taps dropped because their screen is unrecognized (skipped screens are not counted)
 }
 
 type layoutKey struct {
@@ -83,14 +83,9 @@ func Extract(chunks []Chunk, skip func(screen string) bool) Result {
 	sort.SliceStable(frames, func(i, j int) bool { return frames[i].TS < frames[j].TS })
 	sort.SliceStable(touches, func(i, j int) bool { return touches[i].TS < touches[j].TS })
 
-	unrecognized := map[string]bool{}
-	// drop reports whether a screen is excluded, counting unrecognized names once.
+	// drop reports whether a screen is excluded: unrecognized or skipped.
 	drop := func(screen string) bool {
-		if isUnrecognized(screen) {
-			unrecognized[screen] = true
-			return true
-		}
-		return skip != nil && skip(screen)
+		return isUnrecognized(screen) || (skip != nil && skip(screen))
 	}
 
 	// Visits and backgrounds.
@@ -132,7 +127,14 @@ func Extract(chunks []Chunk, skip func(screen string) bool) Result {
 				continue
 			}
 			f, ok := frameAt(frames, d.TS)
-			if !ok || time.Duration(d.TS-f.TS)*time.Millisecond > StaleFrameLimit || drop(f.Screen) {
+			if !ok || time.Duration(d.TS-f.TS)*time.Millisecond > StaleFrameLimit {
+				continue
+			}
+			if isUnrecognized(f.Screen) {
+				res.Unrecognized++
+				continue
+			}
+			if drop(f.Screen) {
 				continue
 			}
 			res.Taps = append(res.Taps, Tap{
@@ -144,7 +146,6 @@ func Extract(chunks []Chunk, skip func(screen string) bool) Result {
 		}
 	}
 	markRage(res.Taps, raw)
-	res.Unrecognized = len(unrecognized)
 	return res
 }
 

@@ -145,6 +145,14 @@ func TestExtractUnrecognizedAndSkip(t *testing.T) {
 		t.Fatalf("result = %+v", r)
 	}
 
+	// Unrecognized counts taps, not screens.
+	frames = []Frame{fr(0, "App", 400, 800, 0), fr(5000, "Screen", 400, 800, 0)}
+	touches = append(tapsAt(10, 100, 200), tapsAt(10, 5100)...)
+	r = Extract([]Chunk{chunk(0, frames, touches...)}, noSkip)
+	if len(r.Taps) != 0 || r.Unrecognized != 3 {
+		t.Fatalf("tap count result = %+v", r)
+	}
+
 	skip := func(s string) bool { return s == "PinActivity" }
 	r = Extract([]Chunk{chunk(0, []Frame{fr(0, "PinActivity", 400, 800, 0)}, tapsAt(10, 100)...)}, skip)
 	if len(r.Taps)+len(r.Visits)+len(r.Backgrounds) != 0 || r.Unrecognized != 0 {
