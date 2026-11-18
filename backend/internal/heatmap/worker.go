@@ -94,7 +94,12 @@ func (w *Worker) ProcessPending(ctx context.Context) (int, error) {
 }
 
 // ProcessSession reads all chunks of one session and replaces its rows in one transaction.
-func (w *Worker) ProcessSession(ctx context.Context, projectID int64, sessionID string) error {
+func (w *Worker) ProcessSession(ctx context.Context, projectID int64, sessionID string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic processing session: %v", r)
+		}
+	}()
 	var chunkCount int
 	if err := w.pool.QueryRow(ctx,
 		`SELECT chunk_count FROM replay_sessions WHERE project_id=$1 AND id=$2`, projectID, sessionID).Scan(&chunkCount); err != nil {
@@ -126,6 +131,9 @@ func (w *Worker) ProcessSession(ctx context.Context, projectID int64, sessionID 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1 || ':' || $2))`, fmt.Sprint(projectID), sessionID); err != nil {
+		return fmt.Errorf("lock session: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `DELETE FROM screen_taps WHERE project_id=$1 AND session_id=$2`, projectID, sessionID); err != nil {
 		return fmt.Errorf("delete taps: %w", err)
 	}

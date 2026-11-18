@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"strings"
 )
 
 const screenChunkFormat = "artracker-screen-v1"
@@ -59,6 +60,22 @@ type rawTouch struct {
 // maxDecompressed caps the size of one decompressed chunk. A variable so tests can lower it.
 var maxDecompressed int64 = 64 << 20
 
+// Epoch-ms bounds (years 2000 to 2100) for plausible frame and touch timestamps.
+const (
+	minTS = 946684800000
+	maxTS = 4102444800000
+)
+
+// maxViewport keeps viewport sizes and masked counts inside Postgres REAL/INT.
+const maxViewport = 1e6
+
+func tsOK(p *float64) bool { return finite(p) && *p >= minTS && *p <= maxTS }
+
+// cleanText drops invalid UTF-8 and NUL bytes, which Postgres TEXT rejects.
+func cleanText(s string) string {
+	return strings.ReplaceAll(strings.ToValidUTF8(s, ""), "\x00", "")
+}
+
 func positive(v float64) bool { return v > 0 && !math.IsInf(v, 0) && !math.IsNaN(v) }
 
 func finite(p *float64) bool { return p != nil && !math.IsInf(*p, 0) && !math.IsNaN(*p) }
@@ -93,6 +110,7 @@ func DecodeChunk(seq int, raw []byte) (c Chunk, ok bool, err error) {
 	}
 	c = Chunk{Seq: seq}
 	_ = json.Unmarshal(top["platform"], &c.Platform)
+	c.Platform = cleanText(c.Platform)
 
 	// Items are decoded one by one so a wrong-typed entry is dropped alone, like the frontend does.
 	var rawFrames, rawTouches []json.RawMessage
@@ -103,21 +121,21 @@ func DecodeChunk(seq int, raw []byte) (c Chunk, ok bool, err error) {
 		if json.Unmarshal(item, &f) != nil {
 			continue
 		}
-		if !finite(f.TS) || !positive(f.W) || !positive(f.H) || !positive(f.VW) || !positive(f.VH) ||
+		if !tsOK(f.TS) || !positive(f.W) || !positive(f.H) || !positive(f.VW) || !positive(f.VH) || f.VW > maxViewport || f.VH > maxViewport ||
 			f.Mime != "image/jpeg" || f.Data == "" {
 			continue
 		}
 		masked := 0
 		if !math.IsNaN(f.Masked) && !math.IsInf(f.Masked, 0) {
-			masked = int(f.Masked)
+			masked = int(math.Max(0, math.Min(f.Masked, maxViewport)))
 		}
 		c.Frames = append(c.Frames, Frame{
-			TS: int64(*f.TS), Screen: f.Screen, VW: f.VW, VH: f.VH, Masked: masked, ChunkSeq: seq, Index: i,
+			TS: int64(*f.TS), Screen: cleanText(f.Screen), VW: f.VW, VH: f.VH, Masked: masked, ChunkSeq: seq, Index: i,
 		})
 	}
 	for _, item := range rawTouches {
 		var t rawTouch
-		if json.Unmarshal(item, &t) != nil || !finite(t.TS) || !finite(t.X) || !finite(t.Y) {
+		if json.Unmarshal(item, &t) != nil || !tsOK(t.TS) || !finite(t.X) || !finite(t.Y) {
 			continue
 		}
 		if t.Kind != "down" && t.Kind != "move" && t.Kind != "up" {

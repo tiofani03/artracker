@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -119,7 +120,7 @@ func chunkBody(screen string, t0 int64, tapTS ...int64) string {
 
 func TestProcessSessionWritesRows(t *testing.T) {
 	f := newWFix(t)
-	f.addChunk(t, 0, chunkBody("HomeActivity", 1_000_000, 1_001_000, 1_005_000), true)
+	f.addChunk(t, 0, chunkBody("HomeActivity", 1699999000000, 1699999001000, 1699999005000), true)
 	if err := f.w.ProcessSession(context.Background(), f.pid, sid); err != nil {
 		t.Fatal(err)
 	}
@@ -139,11 +140,11 @@ func TestProcessSessionWritesRows(t *testing.T) {
 func TestProcessSessionIdempotent(t *testing.T) {
 	f := newWFix(t)
 	ctx := context.Background()
-	f.addChunk(t, 0, chunkBody("HomeActivity", 1_000_000, 1_001_000, 1_005_000), true)
+	f.addChunk(t, 0, chunkBody("HomeActivity", 1699999000000, 1699999001000, 1699999005000), true)
 	if err := f.w.ProcessSession(ctx, f.pid, sid); err != nil {
 		t.Fatal(err)
 	}
-	f.addChunk(t, 1, `{"format":"artracker-screen-v1","platform":"android","frames":[],"touches":[{"ts":1010000,"x":100,"y":200,"kind":"down"},{"ts":1010050,"x":100,"y":200,"kind":"up"}]}`, true)
+	f.addChunk(t, 1, `{"format":"artracker-screen-v1","platform":"android","frames":[],"touches":[{"ts":1699999010000,"x":100,"y":200,"kind":"down"},{"ts":1699999010050,"x":100,"y":200,"kind":"up"}]}`, true)
 	if err := f.w.ProcessSession(ctx, f.pid, sid); err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +159,7 @@ func TestProcessSessionIdempotent(t *testing.T) {
 func TestProcessSessionSkipsMissingChunk(t *testing.T) {
 	f := newWFix(t)
 	f.addChunk(t, 0, "", false)
-	f.addChunk(t, 1, chunkBody("HomeActivity", 1_000_000, 1_001_000), true)
+	f.addChunk(t, 1, chunkBody("HomeActivity", 1699999000000, 1699999001000), true)
 	if err := f.w.ProcessSession(context.Background(), f.pid, sid); err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +173,7 @@ func TestProcessSessionRespectsExclusion(t *testing.T) {
 	if _, err := f.pool.Exec(context.Background(), `UPDATE projects SET heatmap_excluded_screens = '{HomeActivity}' WHERE id=$1`, f.pid); err != nil {
 		t.Fatal(err)
 	}
-	f.addChunk(t, 0, chunkBody("HomeActivity", 1_000_000, 1_001_000), true)
+	f.addChunk(t, 0, chunkBody("HomeActivity", 1699999000000, 1699999001000), true)
 	if err := f.w.ProcessSession(context.Background(), f.pid, sid); err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +187,7 @@ func TestProcessSessionRespectsExclusion(t *testing.T) {
 func TestProcessPendingIdle(t *testing.T) {
 	f := newWFix(t)
 	ctx := context.Background()
-	f.addChunk(t, 0, chunkBody("HomeActivity", 1_000_000, 1_001_000), true)
+	f.addChunk(t, 0, chunkBody("HomeActivity", 1699999000000, 1699999001000), true)
 	if _, err := f.pool.Exec(ctx, `UPDATE replay_sessions SET updated_at = now() WHERE project_id=$1`, f.pid); err != nil {
 		t.Fatal(err)
 	}
@@ -202,11 +203,26 @@ func TestProcessPendingIdle(t *testing.T) {
 	if n, err := f.w.ProcessPending(ctx); err != nil || n != 0 {
 		t.Fatalf("already processed: n=%d err=%v", n, err)
 	}
-	f.addChunk(t, 1, chunkBody("HomeActivity", 1_100_000, 1_101_000), true)
+	f.addChunk(t, 1, chunkBody("HomeActivity", 1699999100000, 1699999101000), true)
 	if _, err := f.pool.Exec(ctx, `UPDATE replay_sessions SET updated_at = now() - interval '11 minutes' WHERE project_id=$1`, f.pid); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := f.w.ProcessPending(ctx); err != nil || n != 1 {
 		t.Fatalf("grown session: n=%d err=%v", n, err)
+	}
+}
+
+func TestProcessSessionStripsNulAndSkipsBadTimestamps(t *testing.T) {
+	f := newWFix(t)
+	body := strings.Replace(chunkBody("HomeXActivity", 1_700_000_000_000, 1_700_000_001_000), "X", `\u0000`, 1)
+	// a frame and a touch with an absurd ts must be dropped, not fail the session
+	body = body[:len(body)-2] + `,{"ts":1e300,"x":1,"y":1,"kind":"down"}]}`
+	f.addChunk(t, 0, body, true)
+	if err := f.w.ProcessSession(context.Background(), f.pid, sid); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := f.pool.QueryRow(context.Background(), `SELECT count(*) FROM screen_taps WHERE project_id=$1 AND screen='HomeActivity'`, f.pid).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("taps = %d err=%v", n, err)
 	}
 }

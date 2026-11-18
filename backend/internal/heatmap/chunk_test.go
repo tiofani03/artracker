@@ -22,11 +22,11 @@ func gz(t *testing.T, s string) []byte {
 func TestDecodeChunk(t *testing.T) {
 	const body = `{"format":"artracker-screen-v1","platform":"android","seq":3,
 	 "frames":[
-	  {"ts":1000,"screen":"Home","w":200,"h":400,"vw":400,"vh":800,"mime":"image/jpeg","masked":2,"data":"AAAA"},
-	  {"ts":1100,"screen":"Bad","w":0,"h":400,"vw":400,"vh":800,"mime":"image/jpeg","data":"AAAA"},
-	  {"ts":1200,"screen":"NoData","w":200,"h":400,"vw":400,"vh":800,"mime":"image/jpeg","data":""},
-	  {"ts":1300,"w":200,"h":400,"vw":400,"vh":800,"mime":"image/jpeg","data":"AAAA"}],
-	 "touches":[{"ts":1010,"x":5,"y":6,"kind":"down"},{"ts":1020,"x":5,"y":6,"kind":"tap"},{"ts":1030,"y":6,"kind":"up"}]}`
+	  {"ts":1700000001000,"screen":"Home","w":200,"h":400,"vw":400,"vh":800,"mime":"image/jpeg","masked":2,"data":"AAAA"},
+	  {"ts":1700000001100,"screen":"Bad","w":0,"h":400,"vw":400,"vh":800,"mime":"image/jpeg","data":"AAAA"},
+	  {"ts":1700000001200,"screen":"NoData","w":200,"h":400,"vw":400,"vh":800,"mime":"image/jpeg","data":""},
+	  {"ts":1700000001300,"w":200,"h":400,"vw":400,"vh":800,"mime":"image/jpeg","data":"AAAA"}],
+	 "touches":[{"ts":1700000001010,"x":5,"y":6,"kind":"down"},{"ts":1700000001020,"x":5,"y":6,"kind":"tap"},{"ts":1700000001030,"y":6,"kind":"up"}]}`
 	for name, raw := range map[string][]byte{"gzip": gz(t, body), "plain": []byte(body)} {
 		t.Run(name, func(t *testing.T) {
 			c, ok, err := DecodeChunk(7, raw)
@@ -37,13 +37,13 @@ func TestDecodeChunk(t *testing.T) {
 				t.Fatalf("seq/platform = %d/%q", c.Seq, c.Platform)
 			}
 			want := []Frame{
-				{TS: 1000, Screen: "Home", VW: 400, VH: 800, Masked: 2, ChunkSeq: 7, Index: 0},
-				{TS: 1300, Screen: "", VW: 400, VH: 800, ChunkSeq: 7, Index: 3},
+				{TS: 1700000001000, Screen: "Home", VW: 400, VH: 800, Masked: 2, ChunkSeq: 7, Index: 0},
+				{TS: 1700000001300, Screen: "", VW: 400, VH: 800, ChunkSeq: 7, Index: 3},
 			}
 			if len(c.Frames) != len(want) || c.Frames[0] != want[0] || c.Frames[1] != want[1] {
 				t.Fatalf("frames = %+v", c.Frames)
 			}
-			if len(c.Touches) != 1 || c.Touches[0] != (Touch{TS: 1010, X: 5, Y: 6, Kind: "down"}) {
+			if len(c.Touches) != 1 || c.Touches[0] != (Touch{TS: 1700000001010, X: 5, Y: 6, Kind: "down"}) {
 				t.Fatalf("touches = %+v", c.Touches)
 			}
 		})
@@ -72,10 +72,10 @@ func TestDecodeChunkDropsWrongTypedItems(t *testing.T) {
 	const body = `{"format":"artracker-screen-v1","platform":"ios",
 	 "frames":[
 	  {"ts":"x","screen":"Bad","w":1,"h":1,"vw":1,"vh":1,"mime":"image/jpeg","data":"A"},
-	  {"ts":1,"screen":5,"w":1,"h":1,"vw":1,"vh":1,"mime":"image/jpeg","data":"A"},
+	  {"ts":1700000000001,"screen":5,"w":1,"h":1,"vw":1,"vh":1,"mime":"image/jpeg","data":"A"},
 	  null,
-	  {"ts":2,"screen":"Good","w":1,"h":1,"vw":4,"vh":8,"mime":"image/jpeg","data":"A"}],
-	 "touches":[{"ts":1,"x":"5","y":6,"kind":"down"},7,{"ts":2,"x":5,"y":6,"kind":"up"}]}`
+	  {"ts":1700000000002,"screen":"Good","w":1,"h":1,"vw":4,"vh":8,"mime":"image/jpeg","data":"A"}],
+	 "touches":[{"ts":1700000000001,"x":"5","y":6,"kind":"down"},7,{"ts":1700000000002,"x":5,"y":6,"kind":"up"}]}`
 	c, ok, err := DecodeChunk(0, []byte(body))
 	if err != nil || !ok {
 		t.Fatalf("ok=%v err=%v", ok, err)
@@ -94,5 +94,23 @@ func TestDecodeChunkSizeLimit(t *testing.T) {
 	defer func() { maxDecompressed = old }()
 	if _, _, err := DecodeChunk(0, gz(t, `{"format":"artracker-screen-v1","frames":[]}`)); err == nil {
 		t.Fatal("oversized chunk: want error")
+	}
+}
+
+func TestDecodeChunkSanitizes(t *testing.T) {
+	body := `{"format":"artracker-screen-v1","platform":"an\u0000droid","frames":[
+	 {"ts":1700000000000,"screen":"a\u0000b","w":1,"h":1,"vw":4,"vh":8,"mime":"image/jpeg","data":"AA"},
+	 {"ts":1e300,"screen":"Far","w":1,"h":1,"vw":4,"vh":8,"mime":"image/jpeg","data":"AA"},
+	 {"ts":5,"screen":"Early","w":1,"h":1,"vw":4,"vh":8,"mime":"image/jpeg","data":"AA"}],
+	 "touches":[{"ts":1e300,"x":1,"y":1,"kind":"down"},{"ts":1700000000000,"x":1,"y":1,"kind":"up"}]}`
+	c, ok, err := DecodeChunk(0, []byte(body))
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	if c.Platform != "android" || len(c.Frames) != 1 || c.Frames[0].Screen != "ab" {
+		t.Fatalf("platform=%q frames=%+v", c.Platform, c.Frames)
+	}
+	if len(c.Touches) != 1 {
+		t.Fatalf("touches = %+v", c.Touches)
 	}
 }
