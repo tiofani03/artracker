@@ -871,27 +871,40 @@ An item may carry an optional \`id\`. The server keeps it as the record id only 
     category: 'ISSUES & RELEASES API',
     isGuide: true,
     description:
-      'Upload source maps, ProGuard / R8 mappings and iOS dSYMs per release so stack traces are deobfuscated.',
+      'Upload source maps, ProGuard / R8 mappings and iOS dSYMs per release so stack traces are deobfuscated. CI can upload with a secret key.',
     callouts: [
       {
-        type: 'warning',
-        title: 'Login token required',
+        type: 'info',
+        title: 'From CI: use a secret key',
         content:
-          'The upload endpoints need an admin\'s dashboard login (Bearer) token (listing artifacts needs only a viewer). Secret keys (art_sec_) are not accepted yet, so a CI job cannot upload with a key today.',
+          'A build machine uploads with a secret key (art_sec_) on /sdk/releases/:version/..., no login needed. The dashboard-token routes under /projects/:projectId/releases/:version stay available for admins.',
       },
     ],
-    guideContent: `### Endpoints
+    guideContent: `### Upload from CI (secret key)
 
-All paths are under \`/projects/:projectId/releases/:version\`, where \`:version\` must equal the \`app_version\` your SDK reports.
+Send the project's secret key (\`art_sec_...\`, Settings > API Keys) in \`X-Artracker-Key\`. The key decides the project, so there is no project id in the path. \`:version\` must equal the \`app_version\` your SDK reports; URL-encode it (\`1.4.0+7\` becomes \`1.4.0%2B7\`).
 
 | Method | Path | Body | Query |
 | :--- | :--- | :--- | :--- |
-| \`POST\` | \`/sourcemaps\` | Source map JSON | \`file\`: name of the minified file the map belongs to |
-| \`POST\` | \`/proguard\` | ProGuard / R8 \`mapping.txt\` | \`file\`, \`build\` (build number) |
-| \`POST\` | \`/dsyms\` | dSYM binary or a zip of it | \`file\`, \`build\` |
-| \`GET\` | \`/artifacts\` | none | List the dSYMs and ProGuard mappings stored for the release (web source maps are not listed) |
+| \`POST\` | \`/sdk/releases/:version/proguard\` | ProGuard / R8 \`mapping.txt\` | \`file\`, \`build\` (build number) |
+| \`POST\` | \`/sdk/releases/:version/dsyms\` | dSYM binary or a zip of it | \`file\`, \`build\` |
+| \`POST\` | \`/sdk/releases/:version/sourcemaps\` | Source map JSON | \`file\`: name of the minified file the map belongs to |
 
-Uploads answer \`201\` with \`{ "status": "stored", ... }\`. Uploading again for the same release adds another ProGuard or dSYM artifact (the newest one is used); a source map uploaded again for the same file replaces the earlier one.
+\`\`\`bash
+gzip -c app/build/outputs/mapping/release/mapping.txt | curl -sS -X POST \\
+  -H "X-Artracker-Key: $ARTRACKER_SECRET_KEY" -H "Content-Encoding: gzip" \\
+  --data-binary @- "https://YOUR_HOST/api/v1/sdk/releases/1.4.0/proguard?build=42"
+\`\`\`
+
+- Bodies up to 256 MB are accepted (the server's \`ARTIFACT_MAX_BYTES\`); gzip them with \`Content-Encoding: gzip\` (at most 1 GiB once decoded).
+- \`201\` means stored. \`200\` with \`"status": "unchanged"\` means the newest upload for the release is identical, so nothing was stored; it is safe to run on every build.
+- \`401\`: missing, unknown or revoked key (MCP keys are rejected too). \`403\`: a public key (\`art_live_\`) was used; only secret keys may upload.
+
+### Upload with a login token
+
+The same three uploads exist under \`/projects/:projectId/releases/:version/{sourcemaps,proguard,dsyms}\` for an admin's dashboard (Bearer) token, and \`GET /projects/:projectId/releases/:version/artifacts\` lists the dSYMs and ProGuard mappings stored for a release (viewer role; web source maps are not listed).
+
+Uploads answer \`201\` with \`{ "status": "stored", ... }\`. Uploading different content for the same release adds another ProGuard or dSYM artifact (the newest one is used); a source map uploaded again for the same file replaces the earlier one.
 
 ### Trace not deobfuscated?
 

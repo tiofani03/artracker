@@ -113,12 +113,17 @@ Anyone can create an organization and becomes its `owner`. Non-members get `404`
 - Validate a key: `curl -H 'X-Artracker-Key: <key>' /api/v1/sdk/validate` (200 with project id, else 401).
   `/api/v1/sdk/validate-admin` accepts secret keys only (public key gets 403).
 
-### Known limitations
+### Symbol upload from CI
 
-- Uploading source maps, ProGuard mappings and dSYMs
-  (`POST /api/v1/projects/:id/releases/:version/{sourcemaps,proguard,dsyms}`) needs a dashboard login (JWT)
-  token from an admin. A secret key (`art_sec_...`) is not accepted there, so a CI pipeline cannot upload
-  them with a key yet.
+A build machine uploads source maps, ProGuard / R8 mappings and dSYMs with a project **secret key** (`art_sec_...`); the key picks the project, so no login or project id is needed:
+
+```bash
+gzip -c app/build/outputs/mapping/release/mapping.txt | curl -sS -X POST \
+  -H "X-Artracker-Key: $ARTRACKER_SECRET_KEY" -H "Content-Encoding: gzip" \
+  --data-binary @- "$API_URL/api/v1/sdk/releases/1.4.0/proguard?build=42"
+```
+
+Routes: `POST /api/v1/sdk/releases/:version/{proguard,dsyms,sourcemaps}`. `:version` must equal the `app_version` the SDK reports (URL-encoded). Bodies up to `ARTIFACT_MAX_BYTES` (default 256 MiB) are accepted on these routes only; every other route stays at 4 MiB, and a reverse proxy in front needs a matching limit (`frontend/nginx.conf` ships one). `201` = stored, `200` with `"status":"unchanged"` = identical to the newest upload. A public or MCP key gets `403` / `401`. The login-token routes under `/projects/:id/releases/:version/...` still work.
 
 ### Tests
 

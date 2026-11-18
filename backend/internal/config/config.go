@@ -29,6 +29,8 @@ type Config struct {
 	ReplayRateRPS             float64
 	IngestProjectEventsPerSec float64
 	IngestKeyCacheTTLSec      int
+	// ArtifactMaxBytes caps a release artifact upload (/api/v1/sdk/releases/*); every other route keeps 4 MiB.
+	ArtifactMaxBytes int
 
 	// Analytics Pipeline configuration
 	AnalyticsWorkers             int
@@ -97,6 +99,7 @@ func Load() Config {
 		ReplayRateRPS:             envFloat("REPLAY_RATE_RPS", 100.0),
 		IngestProjectEventsPerSec: envFloat("INGEST_PROJECT_EVENTS_PER_SEC", 1000.0),
 		IngestKeyCacheTTLSec:      envInt("INGEST_KEY_CACHE_TTL_SEC", 60),
+		ArtifactMaxBytes:          envInt("ARTIFACT_MAX_BYTES", 256<<20),
 
 		AnalyticsWorkers:             envInt("ANALYTICS_WORKERS", 4),
 		AnalyticsQueueSize:           envInt("ANALYTICS_QUEUE_SIZE", 2048),

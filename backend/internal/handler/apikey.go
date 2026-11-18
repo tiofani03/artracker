@@ -281,6 +281,43 @@ func (h *Handler) sdkValidate(adminOnly bool) fiber.Handler {
 	}
 }
 
+// RequireSecretKey authenticates a build machine uploading release artifacts:
+// only an active secret_admin key passes, and the key decides the project
+// (stored in the projectID local). It reads api_keys directly, not the ingest
+// key cache, so a revoked key is rejected on the very next request.
+func (h *Handler) RequireSecretKey(c *fiber.Ctx) error {
+	plain := c.Get("X-Artracker-Key")
+	if plain == "" {
+		return errInvalidAPIKey
+	}
+	if h.db == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "database is unavailable")
+	}
+	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	defer cancel()
+	var pid int64
+	var kt string
+	err := h.db.QueryRow(ctx, `SELECT project_id, key_type FROM api_keys WHERE key_hash = $1 AND is_active`,
+		auth.HashKey(plain)).Scan(&pid, &kt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errInvalidAPIKey
+	}
+	if err != nil {
+		return err
+	}
+	switch auth.KeyType(kt) {
+	case auth.KeySecretAdmin:
+	case auth.KeyMCP:
+		return errInvalidAPIKey
+	default:
+		return fiber.NewError(fiber.StatusForbidden, "secret key required")
+	}
+	c.Locals("projectID", pid)
+	return c.Next()
+}
+
+var errInvalidAPIKey = fiber.NewError(fiber.StatusUnauthorized, "invalid api key")
+
 // revokeMemberMCPKeys revokes the active mcp keys userID minted in orgID's
 // projects. It runs inside the caller's transaction (member removal or
 // demotion to viewer). Only mcp keys are revoked: public/secret keys are

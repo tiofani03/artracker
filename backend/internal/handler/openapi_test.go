@@ -40,6 +40,9 @@ func TestOpenAPISpecValid(t *testing.T) {
 		"/projects/{projectID}/sessions/{sessionID}/perf",
 		"/orgs/{orgID}/alerts/telegram-bot",
 		"/projects/{projectID}/alerts/channels",
+		"/sdk/releases/{version}/proguard",
+		"/sdk/releases/{version}/dsyms",
+		"/sdk/releases/{version}/sourcemaps",
 	}
 
 	for _, p := range expectedPaths {
