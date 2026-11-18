@@ -2,6 +2,7 @@ import { useState } from 'react'
 import ApiKeysPanel from '../components/ApiKeysPanel'
 import McpConnectPanel from '../components/McpConnectPanel'
 import DashboardShell from '../components/DashboardShell'
+import HeatmapSettingsPanel from '../components/HeatmapSettingsPanel'
 import ReplaySettingsPanel from '../components/ReplaySettingsPanel'
 import TelegramBotCard from '../components/TelegramBotCard'
 import TeamMembersPanel from '../components/TeamMembersPanel'
@@ -129,7 +130,12 @@ export default function SettingsPage() {
                       </p>
                     </section>
                   ) : (
-                    project && <ReplaySettingsPanel key={project.id} project={project} canManage={canManage} />
+                    project && (
+                      <>
+                        <ReplaySettingsPanel key={project.id} project={project} canManage={canManage} />
+                        <HeatmapSettingsPanel key={`heatmap-${project.id}`} project={project} canManage={canManage} />
+                      </>
+                    )
                   )}
                 </>
               )}
