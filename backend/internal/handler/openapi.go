@@ -1578,9 +1578,10 @@ var openAPISpecBytes = []byte(`{
       },
       "RawItem": {
         "type": "object",
+        "description": "One telemetry item. Mobile SDKs send two kinds of perf items: perf.samples (per-session performance samples) and app_start (one app launch). An app_start item has type perf, name app_start and an attributes object shaped as { v: 1, platform: android|ios, start_id: uuid unique per start, type: cold|warm|hot, duration_ms, phases: [{ name, ms }] (contiguous, in order, summing to duration_ms), first_screen, trampoline, profiled (a profile upload for the same start_id follows), build, device: { model, os_version, ram_mb, cores } }. Missing values are omitted, never 0. app_version comes from the batch context.",
         "required": ["type"],
         "properties": {
-          "type": { "type": "string", "enum": ["event", "log", "session"] },
+          "type": { "type": "string", "enum": ["event", "log", "session", "perf"] },
           "name": { "type": "string", "maxLength": 255, "example": "checkout_completed" },
           "level": { "type": "string", "enum": ["debug", "info", "warn", "error", "fatal"] },
           "message": { "type": "string", "maxLength": 4096 },

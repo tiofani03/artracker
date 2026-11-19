@@ -526,6 +526,218 @@ ARTracker.reset()
     ],
   },
   {
+    id: 'app-start-item',
+    title: 'App Start Item',
+    category: 'CORE INGESTION API',
+    method: 'POST',
+    path: '/ingest',
+    isGuide: true,
+    description:
+      'Mobile SDKs report each app launch (cold, warm or hot) as a perf item named app_start, with the total time and a phase breakdown. It travels in the same batch as every other item.',
+    callouts: [
+      {
+        type: 'info',
+        title: 'Measurement on, profiling opt-in',
+        content:
+          'Measurement is on by default in the SDKs; profiling is opt-in (`profileSampleRate` 0.1).',
+      },
+    ],
+    headers: [
+      { name: 'X-Artracker-Key', type: 'string', required: true, desc: 'Project client API key starting with art_live_.' },
+      { name: 'Content-Type', type: 'string', required: true, desc: 'application/json' },
+      { name: 'Content-Encoding', type: 'string', required: false, desc: 'Optional gzip for compressed payloads.' },
+    ],
+    params: [
+      {
+        name: 'items[]',
+        type: 'RawItem',
+        required: true,
+        desc: 'An item with `type: "perf"` and `name: "app_start"`. Its `attributes` follow the schema below. `app_version` comes from the batch `context`, like any other item.',
+        children: [
+          { name: 'timestamp', type: 'string (ISO-8601)', required: false, desc: 'Time of the start anchor (process start for a cold start).' },
+          { name: 'session_id', type: 'string', required: false, desc: 'Session the start belongs to.' },
+          { name: 'attributes.v', type: 'integer', required: true, desc: 'Schema version. Always 1.' },
+          { name: 'attributes.platform', type: 'string', required: true, desc: '"android" or "ios".' },
+          { name: 'attributes.start_id', type: 'string (UUID)', required: true, desc: 'Unique per start. Links the item to its profile upload.' },
+          { name: 'attributes.type', type: 'string', required: true, desc: '"cold", "warm" or "hot".' },
+          { name: 'attributes.duration_ms', type: 'integer', required: true, desc: 'Total start time in milliseconds. Equals the sum of the phases.' },
+          { name: 'attributes.phases', type: 'array<{ name, ms }>', required: false, desc: 'Contiguous phases in order. A phase whose boundary is unavailable is omitted and its time merged into the next one.' },
+          { name: 'attributes.first_screen', type: 'string', required: false, desc: 'Activity or view controller that drew the first frame.' },
+          { name: 'attributes.trampoline', type: 'boolean', required: false, desc: 'Android: a splash or trampoline Activity was given up, so `activity_create` counts from the first Activity.' },
+          { name: 'attributes.profiled', type: 'boolean', required: false, desc: 'When true, a profile upload with the same `start_id` follows (see Startup Profile Upload).' },
+          { name: 'attributes.build', type: 'string', required: false, desc: 'Build number of the app.' },
+          { name: 'attributes.device', type: 'object', required: false, desc: '`model`, `os_version`, `ram_mb` and `cores`. Missing values are omitted, never sent as 0.' },
+        ],
+      },
+    ],
+    responseSample: JSON.stringify({ status: 'accepted', queued: 1 }, null, 2),
+    defaultHeaders: {
+      'Content-Type': 'application/json',
+      'X-Artracker-Key': 'art_live_xxxxxxxxxxxxxxxx',
+    },
+    defaultBody: JSON.stringify(
+      {
+        sent_at: new Date().toISOString(),
+        sdk: { name: 'artracker-android', version: '1.2.0' },
+        context: { environment: 'production', app_version: '3.2.0' },
+        items: [
+          {
+            id: '6f1c2f7a-4f3e-4f0b-8a52-3d5c0f9e1a10',
+            type: 'perf',
+            name: 'app_start',
+            timestamp: new Date().toISOString(),
+            session_id: 'ses_94829',
+            attributes: {
+              v: 1,
+              platform: 'android',
+              start_id: '0b7d1e52-9c0e-4c58-9d0f-6a3f2f7d8b44',
+              type: 'cold',
+              duration_ms: 2412,
+              phases: [
+                { name: 'process_to_init', ms: 310 },
+                { name: 'application_on_create', ms: 1502 },
+                { name: 'activity_create', ms: 380 },
+                { name: 'first_draw', ms: 220 },
+              ],
+              first_screen: 'MainActivity',
+              trampoline: false,
+              profiled: true,
+              build: '1203',
+              device: { model: 'SM-A145F', os_version: '14', ram_mb: 3712, cores: 8 },
+            },
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+    guideContent: `### Start types
+
+All times are milliseconds. Phases are contiguous and listed in order; their sum is \`duration_ms\`.
+
+| Type | Android | iOS |
+| :--- | :--- | :--- |
+| \`cold\` | New process, up to the first frame of the first Activity that draws | New, not prewarmed process, up to the first frame |
+| \`warm\` | Process alive with no Activity alive, and an Activity is created | New process that was prewarmed, or launched in the background and later brought to the foreground |
+| \`hot\` | Process and Activity alive, the app returns from background | Existing process returning from background |
+
+### Phases
+
+| Platform | Type | Phases, in order |
+| :--- | :--- | :--- |
+| Android | \`cold\` | \`process_to_init\`, \`application_on_create\`, \`activity_create\`, \`first_draw\` |
+| Android 15+ | \`cold\` | \`bind_application\`, \`content_providers\`, \`app_on_create_pre_init\` replace \`process_to_init\` |
+| Android | \`warm\` | \`activity_create\`, \`first_draw\` |
+| Android | \`hot\` | \`activity_start\`, \`first_draw\` |
+| iOS | \`cold\` | \`pre_main\`, \`pre_init\`, \`did_finish_launching\`, \`scene_activation\`, \`first_draw\` |
+| iOS | \`warm\` (prewarmed) | \`did_finish_launching\`, \`scene_activation\`, \`first_draw\` |
+| iOS | \`warm\` (background launch), \`hot\` | \`foreground_transition\`, \`first_draw\` |
+
+### Rules
+
+- A start is dropped when the app goes to background before the first frame, or when it takes too long (more than 10 s for warm and hot, 60 s for cold). On iOS it is also dropped when the SDK is initialised late.
+- \`profiled: true\` promises a profile upload for the same \`start_id\`. Send it to \`POST /app-start/profiles\`.
+- The dashboard reads these back through the App Start endpoints listed under Alerts & Project Management API.`,
+  },
+  {
+    id: 'app-start-profiles',
+    title: 'Startup Profile Upload',
+    category: 'CORE INGESTION API',
+    method: 'POST',
+    path: '/app-start/profiles',
+    isGuide: true,
+    description:
+      'Uploads one sampled startup profile for a cold start that was reported with profiled: true. The server stores it gzipped and symbolicates it in the background.',
+    callouts: [
+      {
+        type: 'tip',
+        title: 'Symbolicate profiles',
+        content:
+          'Upload mappings/dSYMs so profiles are symbolicated (see Mapping & Symbol Uploads, section release-artifacts).',
+      },
+    ],
+    headers: [
+      { name: 'X-Artracker-Key', type: 'string', required: true, desc: 'Project client API key starting with art_live_. Same key, middleware and rate limit as /ingest.' },
+      { name: 'Content-Type', type: 'string', required: true, desc: 'application/json' },
+      { name: 'Content-Encoding', type: 'string', required: false, desc: 'gzip is what SDKs send. A plain JSON body is accepted up to 4 MB.' },
+    ],
+    params: [
+      { name: 'sdk', type: 'object', required: false, desc: 'Client library identifier, e.g. `{ name: "artracker-android", version: "1.2.0" }`.' },
+      { name: 'context', type: 'object', required: true, desc: '`app_version`, `build` and `environment`. The version selects the mapping or dSYM used to symbolicate.' },
+      {
+        name: 'profile',
+        type: 'object',
+        required: true,
+        desc: 'The sampled profile, in a compact frame / stack / sample form.',
+        children: [
+          { name: 'profile.v', type: 'integer', required: true, desc: 'Schema version. Always 1.' },
+          { name: 'profile.start_id', type: 'string (UUID)', required: true, desc: 'Same value as the `app_start` item.' },
+          { name: 'profile.platform', type: 'string', required: true, desc: '"android" or "ios".' },
+          { name: 'profile.app_packages', type: 'array<string>', required: false, desc: 'Android: package prefixes treated as app code.' },
+          { name: 'profile.interval_ms', type: 'integer', required: true, desc: 'Sampling interval (10 by default, doubles when sampling gets expensive). Samples carry real times.' },
+          { name: 'profile.t0', type: 'string', required: true, desc: 'Origin of sample times. "process_start" for a cold start.' },
+          { name: 'profile.frames', type: 'array', required: true, desc: 'Unique frames. Android: `{ c, m, l, f }` (class, method, line, file). iOS: `{ a, i, sym }` (address, index into `images`, name from dladdr for non-app images).' },
+          { name: 'profile.images', type: 'array', required: false, desc: 'iOS only: `{ uuid, name, load, app }` for the images that frames reference. App-image frames are symbolicated server-side.' },
+          { name: 'profile.stacks', type: 'array<array<integer>>', required: true, desc: 'Unique stacks as frame indexes, root first. At most 128 frames each; deeper stacks lose the frames nearest the root.' },
+          { name: 'profile.samples', type: 'array<{ t, s }>', required: true, desc: '`t` is milliseconds since the start anchor, `s` the stack index. At most 1000 samples, in time order.' },
+        ],
+      },
+    ],
+    responseSample: JSON.stringify({ status: 'accepted' }, null, 2),
+    defaultHeaders: {
+      'Content-Type': 'application/json',
+      'X-Artracker-Key': 'art_live_xxxxxxxxxxxxxxxx',
+    },
+    defaultBody: JSON.stringify(
+      {
+        sdk: { name: 'artracker-android', version: '1.2.0' },
+        context: { app_version: '3.2.0', build: '1203', environment: 'production' },
+        profile: {
+          v: 1,
+          start_id: '0b7d1e52-9c0e-4c58-9d0f-6a3f2f7d8b44',
+          platform: 'android',
+          app_packages: ['com.example.shop'],
+          interval_ms: 10,
+          t0: 'process_start',
+          frames: [
+            { c: 'com.example.shop.App', m: 'onCreate', l: 42, f: 'App.kt' },
+            { c: 'com.example.shop.Db', m: 'open', l: 88, f: 'Db.kt' },
+            { c: 'android.app.ActivityThread', m: 'main', l: 8177, f: 'ActivityThread.java' },
+          ],
+          stacks: [[2, 0], [2, 0, 1]],
+          samples: [
+            { t: 318, s: 0 },
+            { t: 328, s: 1 },
+          ],
+        },
+      },
+      null,
+      2,
+    ),
+    guideContent: `### Limits
+
+| Limit | Value |
+| :--- | :--- |
+| Body size | 1 MB gzip, 4 MB uncompressed |
+| Samples per profile | 1000 |
+| Frames per stack | 128 |
+
+### Responses
+
+| Status | Meaning |
+| :--- | :--- |
+| \`202\` | Stored and queued for symbolication. A duplicate \`start_id\` also returns \`202\` and is ignored, so retries are safe. |
+| \`400\` | Invalid JSON or gzip, or a profile that breaks the wire contract (version, platform, interval, counts, indexes, sample order). |
+| \`401\` | Missing or invalid client key. |
+| \`413\` | Over the size limit. The SDK deletes the file and never retries it. |
+| \`429\` | Per-project rate limit exceeded. |
+
+### Notes
+
+- Profiling is opt-in: the SDK decides once per process (\`profileSampleRate\`, 0.1 by default) and only profiles cold starts.
+- Android frames are deobfuscated with the release's ProGuard / R8 mapping, iOS frames with its dSYM. Without them the profile still shows, with raw names or addresses.`,
+  },
+  {
     id: 'events-batch',
     title: 'Batch Product Events',
     category: 'CORE INGESTION API',
@@ -1342,7 +1554,7 @@ The issue page shows "Raw trace" when no matching artifact exists for the event'
 | \`GET\` | \`/projects/:projectId/alerts/incidents?status=&limit=\` | viewer |
 | \`GET\`, \`PUT\`, \`PATCH\`, \`DELETE\` | \`/orgs/:orgId/alerts/telegram-bot\` (the organization's own bot) | viewer for GET, admin otherwise |
 
-### Replay, funnels and navigation
+### Replay, funnels, App Start and navigation
 
 | Method | Path | Notes | Min. role |
 | :--- | :--- | :--- | :--- |
@@ -1352,6 +1564,10 @@ The issue page shows "Raw trace" when no matching artifact exists for the event'
 | \`POST\` | \`/projects/:projectId/analytics/funnels\` | Save a funnel preset | member |
 | \`DELETE\` | \`/projects/:projectId/analytics/funnels/:funnelId\` | Delete a saved funnel | member |
 | \`GET\` | \`/projects/:projectId/nav-counts\` | Sidebar badges: open issues, firing alerts, frustrated replays (24h) | viewer |
+| \`GET\` | \`/projects/:projectId/app-starts/summary\` | Start count, p50/p75/p90/p95, median per phase, daily and per-version trend. Filters: \`platform\`, \`type\`, \`version\`, \`from\`, \`to\`, \`ram_tier\` (\`low\` under 4 GB, \`mid\` 4-8 GB, \`high\` over 8 GB), \`environment\` | viewer |
+| \`GET\` | \`/projects/:projectId/app-starts/functions\` | Top 50 slowest functions across profiled starts. Filters: \`platform\`, \`version\`, \`from\`, \`to\`, \`app_only\`, \`environment\` | viewer |
+| \`GET\` | \`/projects/:projectId/app-starts\` | List of starts. \`sort\` (\`slowest\` or \`recent\`), \`limit\`, \`cursor\` plus the summary filters | viewer |
+| \`GET\` | \`/projects/:projectId/app-starts/:startId\` | One start with its phases, device and, when profiled, the symbolicated profile and its status | viewer |
 
 ### API keys
 

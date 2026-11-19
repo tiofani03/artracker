@@ -43,6 +43,9 @@ artracker/
 - **User Flow**: screen-to-screen paths and time on screen for mobile projects, derived from screenshot
   replay like the heatmap, so it also appears about 10 minutes after a session ends. The heatmap exclusion
   list does not apply: excluded screens still show up in User Flow.
+- **App Start**: cold, warm and hot start times per version and device with a phase breakdown, plus optional
+  startup profiling (main-thread sampling, symbolicated server-side) that ranks the slowest app functions and
+  shows a flamegraph per start. Mobile only.
 - **Analytics**: event log, funnels (including saved funnels) and retention.
 - **Alerts**: per-project rules for new issues, regressions and issue spikes, delivered to Telegram
   (see [Alerts](#alerts-telegram)).
