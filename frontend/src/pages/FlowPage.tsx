@@ -1,8 +1,18 @@
-import { displayScreen, screenMatches } from '../screens/name'
 import { useEffect, useMemo, useState } from 'react'
-import { flowApi, type FlowDirection, type FlowPathsResponse, type FlowScreensResponse } from '../api'
+import { flowApi, type FlowDirection, type FlowPathsResponse, type FlowScreen, type FlowScreensResponse } from '../api'
 import CustomSelect from '../components/CustomSelect'
 import DashboardShell from '../components/DashboardShell'
+import {
+  exitTone,
+  heatmapHref,
+  neighbourLabel,
+  neighbours,
+  rateOf,
+  sortScreens,
+  type Neighbour,
+  type SortDir,
+  type SortKey,
+} from '../flow/focus'
 import { formatDuration } from '../flow/format'
 import { layoutSankey, NODE_WIDTH, type LaidLink } from '../flow/sankey'
 import {
@@ -21,6 +31,8 @@ import {
   unrecognizedLead,
   type ScreenRef,
 } from '../flow/view'
+import { Link } from '../router'
+import { displayScreen, screenMatches } from '../screens/name'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -127,13 +139,188 @@ function SankeyChart({
   )
 }
 
+type PathsState = { data: FlowPathsResponse | null; error: string; loading: boolean }
+
+/** Loads one /flow/paths result; key encodes every input, '' disables the request. */
+function usePaths(
+  key: string,
+  load: () => Promise<FlowPathsResponse>,
+): PathsState {
+  const [state, setState] = useState<Tagged<FlowPathsResponse>>({ key: '', error: '', data: null })
+  useEffect(() => {
+    if (!key) return
+    let cancelled = false
+    load()
+      .then((data) => !cancelled && setState({ key, error: '', data }))
+      .catch((e: unknown) => !cancelled && setState({ key, error: e instanceof Error ? e.message : 'Request failed', data: null }))
+    return () => {
+      cancelled = true
+    }
+    // key encodes every input of load
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+  return {
+    // Keep the previous result while a new one loads.
+    data: state.data,
+    error: state.key === key ? state.error : '',
+    loading: !!key && state.key !== key,
+  }
+}
+
+function NeighbourList({
+  title,
+  items,
+  state,
+  onPick,
+}: {
+  title: string
+  items: Neighbour[]
+  state: PathsState
+  onPick: (screen: string) => void
+}) {
+  return (
+    <div className="fl-nb">
+      <h3 className="fl-nb__title">{title}</h3>
+      {state.error ? (
+        <p className="ppl-muted">Couldn't load: {state.error}</p>
+      ) : !state.data ? (
+        <p className="ppl-muted">Loading…</p>
+      ) : items.length === 0 ? (
+        <p className="ppl-muted">No data for these filters.</p>
+      ) : (
+        <ul className="fl-nb__list">
+          {items.map((n) => {
+            const pickable = isSelectableNode(n.screen)
+            const pct = percentLabel(n.sessions, state.data!.sessions)
+            const body = (
+              <>
+                <span className="fl-nb__row">
+                  <span className="fl-nb__name" title={neighbourLabel(n.screen)}>
+                    {neighbourLabel(n.screen)}
+                  </span>
+                  <span className="fl-nb__pct">{pct}</span>
+                </span>
+                <span className="fl-bar" aria-hidden="true">
+                  <span style={{ width: `${Math.max(2, n.share * 100)}%` }} />
+                </span>
+                <span className="fl-nb__sub">{sessionsLabel(n.sessions)}</span>
+              </>
+            )
+            const tone = isTerminal(n.screen) ? ' fl-nb__item--drop' : n.screen === 'Other' ? ' fl-nb__item--other' : ''
+            return (
+              <li key={n.screen} className={`fl-nb__item${tone}`}>
+                {pickable ? (
+                  <button type="button" className="fl-nb__btn" onClick={() => onPick(n.screen)} aria-label={`Focus ${neighbourLabel(n.screen)}, ${pct}`}>
+                    {body}
+                  </button>
+                ) : (
+                  <div className="fl-nb__btn is-static">{body}</div>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function FocusView({
+  stats,
+  prev,
+  next,
+  onPick,
+}: {
+  stats: FlowScreen | undefined
+  prev: PathsState
+  next: PathsState
+  onPick: (screen: string) => void
+}) {
+  const exitRate = stats ? rateOf(stats.exit_sessions, stats.sessions) : 0
+  const loading = prev.loading || next.loading
+  return (
+    <div className={`fl-focus${loading ? ' is-loading' : ''}`}>
+      <NeighbourList title="Came from" items={neighbours(prev.data)} state={prev} onPick={onPick} />
+      <div className="fl-focus__card" aria-live="polite">
+        {stats ? (
+          <>
+            <p className="fl-focus__name" title={displayScreen(stats.screen)}>
+              {displayScreen(stats.screen)}
+            </p>
+            <dl className="fl-stats">
+              <div>
+                <dt>Sessions</dt>
+                <dd>{stats.sessions}</dd>
+              </div>
+              <div>
+                <dt>Median time</dt>
+                <dd>{formatDuration(stats.median_ms)}</dd>
+              </div>
+              <div>
+                <dt>p75 time</dt>
+                <dd>{formatDuration(stats.p75_ms)}</dd>
+              </div>
+              <div>
+                <dt>Sessions ended here</dt>
+                <dd className={`fl-tone--${exitTone(exitRate)}`}>{exitRateLabel(stats)}</dd>
+              </div>
+              <div>
+                <dt>Sessions started here</dt>
+                <dd>{percentLabel(stats.entry_sessions, stats.sessions)}</dd>
+              </div>
+            </dl>
+            <Link className="fl-focus__link" to={heatmapHref(stats.screen)}>
+              Open heatmap →
+            </Link>
+          </>
+        ) : (
+          <p className="ppl-muted">Loading…</p>
+        )}
+      </div>
+      <NeighbourList title="Went to" items={neighbours(next.data)} state={next} onPick={onPick} />
+    </div>
+  )
+}
+
+const SORT_LABELS: Record<SortKey, string> = { screen: 'Screen', sessions: 'Sessions', median: 'Median', exit: 'Exit' }
+
+function SortHeader({
+  k,
+  sort,
+  onSort,
+  numeric,
+}: {
+  k: SortKey
+  sort: { key: SortKey; dir: SortDir }
+  onSort: (k: SortKey) => void
+  numeric?: boolean
+}) {
+  const active = sort.key === k
+  return (
+    <th
+      scope="col"
+      className={numeric ? 'fl-num' : undefined}
+      aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
+      <button type="button" className={`fl-sort${active ? ' is-active' : ''}`} onClick={() => onSort(k)}>
+        {SORT_LABELS[k]}
+        <span aria-hidden="true">{active ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}</span>
+      </button>
+    </th>
+  )
+}
+
+type ViewMode = 'focus' | 'paths'
+
 function FlowView({ projectId }: { projectId: number }) {
   const [days, setDays] = useState(30)
   const [appVersion, setAppVersion] = useState('')
   const [search, setSearch] = useState('')
   const [picked, setPicked] = useState<ScreenRef | null>(null)
+  const [mode, setMode] = useState<ViewMode>('focus')
   const [direction, setDirection] = useState<FlowDirection>('next')
   const [steps, setSteps] = useState(3)
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: 'sessions', dir: 'desc' })
 
   // The window is anchored when the range changes, so requests stay stable between renders.
   const range = useMemo(() => {
@@ -157,38 +344,26 @@ function FlowView({ projectId }: { projectId: number }) {
   const listLoading = list.key !== listKey
 
   const allScreens = useMemo(() => list.data?.screens ?? [], [list.data])
-  const screens = useMemo(() => {
-    return allScreens.filter((s) => screenMatches(s.screen, search))
-  }, [allScreens, search])
+  const screens = useMemo(
+    () => sortScreens(allScreens.filter((s) => screenMatches(s.screen, search)), sort.key, sort.dir),
+    [allScreens, search, sort],
+  )
+  const maxMedian = useMemo(() => Math.max(1, ...allScreens.map((s) => s.median_ms)), [allScreens])
   const unrecognized = list.data?.unrecognized_sessions ?? 0
 
   const selected = useMemo(() => resolveSelection(allScreens, picked), [allScreens, picked])
+  const stats = useMemo(
+    () => (selected ? allScreens.find((s) => screenKey(s) === screenKey(selected)) : undefined),
+    [allScreens, selected],
+  )
 
-  const pathKey = selected && !listLoading ? `${listKey}|${screenKey(selected)}|${direction}|${steps}` : ''
-  const [paths, setPaths] = useState<Tagged<FlowPathsResponse>>({ key: '', error: '', data: null })
-  useEffect(() => {
-    if (!selected || !pathKey) return
-    let cancelled = false
-    flowApi
-      .paths(projectId, {
-        ...range,
-        app_version: appVersion,
-        screen: selected.screen,
-        platform: selected.platform,
-        direction,
-        steps,
-      })
-      .then((data) => !cancelled && setPaths({ key: pathKey, error: '', data }))
-      .catch((e: unknown) => !cancelled && setPaths({ key: pathKey, error: e instanceof Error ? e.message : 'Request failed', data: null }))
-    return () => {
-      cancelled = true
-    }
-    // pathKey encodes every input
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathKey, projectId, range])
-  const pathsLoading = !!pathKey && paths.key !== pathKey
-  // Keep showing the previous chart while a new one loads.
-  const res = paths.data
+  const baseKey = selected && !listLoading ? `${listKey}|${screenKey(selected)}` : ''
+  const load = (dir: FlowDirection, n: number) => () =>
+    flowApi.paths(projectId, { ...range, app_version: appVersion, screen: selected!.screen, platform: selected!.platform, direction: dir, steps: n })
+  const prev = usePaths(baseKey && mode === 'focus' ? `${baseKey}|prev|1` : '', load('prev', 1))
+  const next = usePaths(baseKey && mode === 'focus' ? `${baseKey}|next|1` : '', load('next', 1))
+  const explore = usePaths(baseKey && mode === 'paths' ? `${baseKey}|${direction}|${steps}` : '', load(direction, steps))
+  const res = explore.data
 
   const versionOptions = useMemo(() => {
     const vs = new Set(list.data?.app_versions ?? [])
@@ -200,6 +375,8 @@ function FlowView({ projectId }: { projectId: number }) {
     if (!selected) return
     setPicked({ screen, platform: selected.platform })
   }
+  const onSort = (key: SortKey) =>
+    setSort((cur) => (cur.key === key ? { key, dir: cur.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'screen' ? 'asc' : 'desc' }))
 
   const noRows = !listLoading && !list.error && allScreens.length === 0
 
@@ -231,15 +408,19 @@ function FlowView({ projectId }: { projectId: number }) {
             <table className="fl-table" aria-label="Screens">
               <thead>
                 <tr>
-                  <th scope="col">Screen</th>
-                  <th scope="col" className="fl-num">Sessions</th>
-                  <th scope="col" className="fl-num">Median</th>
-                  <th scope="col" className="fl-num">Exit</th>
+                  <SortHeader k="screen" sort={sort} onSort={onSort} />
+                  <SortHeader k="sessions" sort={sort} onSort={onSort} numeric />
+                  <SortHeader k="median" sort={sort} onSort={onSort} numeric />
+                  <SortHeader k="exit" sort={sort} onSort={onSort} numeric />
+                  <th scope="col" className="fl-hm-col">
+                    <span className="sr-only">Heatmap</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {screens.map((s) => {
                   const active = !!selected && screenKey(selected) === screenKey(s)
+                  const exitRate = rateOf(s.exit_sessions, s.sessions)
                   return (
                     <tr
                       key={screenKey(s)}
@@ -247,18 +428,31 @@ function FlowView({ projectId }: { projectId: number }) {
                       onClick={() => setPicked({ screen: s.screen, platform: s.platform })}
                     >
                       <td className="fl-name">
-                        <button
-                          type="button"
-                          className="fl-row-btn"
-                          aria-pressed={active}
-                          title={displayScreen(s.screen)}
-                        >
+                        <button type="button" className="fl-row-btn" aria-pressed={active} title={displayScreen(s.screen)}>
                           {displayScreen(s.screen)}
                         </button>
                       </td>
                       <td className="fl-num">{s.sessions}</td>
-                      <td className="fl-num">{formatDuration(s.median_ms)}</td>
-                      <td className="fl-num">{exitRateLabel(s)}</td>
+                      <td className="fl-num">
+                        {formatDuration(s.median_ms)}
+                        <span className="fl-bar fl-bar--cell" aria-hidden="true">
+                          <span style={{ width: `${Math.max(2, (s.median_ms / maxMedian) * 100)}%` }} />
+                        </span>
+                      </td>
+                      <td className={`fl-num fl-tone--${exitTone(exitRate)}`}>{exitRateLabel(s)}</td>
+                      <td className="fl-hm-col">
+                        <Link
+                          className="fl-hm-link"
+                          to={heatmapHref(s.screen)}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Open heatmap for ${displayScreen(s.screen)}`}
+                          title="Open heatmap"
+                        >
+                          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                            <path d="M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Z" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                          </svg>
+                        </Link>
+                      </td>
                     </tr>
                   )
                 })}
@@ -303,35 +497,65 @@ function FlowView({ projectId }: { projectId: number }) {
               <h2 className="dash-card__title hm-toolbar__title" title={displayScreen(selected.screen)}>
                 {displayScreen(selected.screen)}
               </h2>
-              {pathsLoading && res && <span className="ppl-muted">Loading…</span>}
-              <div className="dash-seg" role="group" aria-label="Direction">
+              <div className="dash-seg" role="group" aria-label="View">
                 <button
                   type="button"
-                  className={`dash-seg__btn${direction === 'next' ? ' is-active' : ''}`}
-                  aria-pressed={direction === 'next'}
-                  onClick={() => setDirection('next')}
+                  className={`dash-seg__btn${mode === 'focus' ? ' is-active' : ''}`}
+                  aria-pressed={mode === 'focus'}
+                  onClick={() => setMode('focus')}
                 >
-                  Next ▸
+                  Focus
                 </button>
                 <button
                   type="button"
-                  className={`dash-seg__btn${direction === 'prev' ? ' is-active' : ''}`}
-                  aria-pressed={direction === 'prev'}
-                  onClick={() => setDirection('prev')}
+                  className={`dash-seg__btn${mode === 'paths' ? ' is-active' : ''}`}
+                  aria-pressed={mode === 'paths'}
+                  onClick={() => setMode('paths')}
                 >
-                  ◂ Previous
+                  Explore paths
                 </button>
               </div>
-              <CustomSelect size="sm" ariaLabel="Steps" options={STEP_OPTIONS} value={steps} onChange={setSteps} />
+              {mode === 'paths' && (
+                <>
+                  {explore.loading && res && <span className="ppl-muted">Loading…</span>}
+                  <div className="dash-seg" role="group" aria-label="Direction">
+                    <button
+                      type="button"
+                      className={`dash-seg__btn${direction === 'next' ? ' is-active' : ''}`}
+                      aria-pressed={direction === 'next'}
+                      onClick={() => setDirection('next')}
+                    >
+                      Next ▸
+                    </button>
+                    <button
+                      type="button"
+                      className={`dash-seg__btn${direction === 'prev' ? ' is-active' : ''}`}
+                      aria-pressed={direction === 'prev'}
+                      onClick={() => setDirection('prev')}
+                    >
+                      ◂ Previous
+                    </button>
+                  </div>
+                  <CustomSelect size="sm" ariaLabel="Steps" options={STEP_OPTIONS} value={steps} onChange={setSteps} />
+                </>
+              )}
             </div>
-            {paths.key === pathKey && paths.error ? (
-              <p className="ppl-muted ppl-pad">Couldn't load paths: {paths.error}</p>
+            {mode === 'focus' ? (
+              <>
+                <FocusView stats={stats} prev={prev} next={next} onPick={pick} />
+                <p className="hm-note">
+                  Shares are of the sessions that opened this screen (first visit). Click a screen to focus it. Updated about 10
+                  minutes after a session ends.
+                </p>
+              </>
+            ) : explore.error ? (
+              <p className="ppl-muted ppl-pad">Couldn't load paths: {explore.error}</p>
             ) : !res ? (
               <p className="ppl-muted ppl-pad">Loading…</p>
             ) : res.sessions === 0 || res.links.length === 0 ? (
               <p className="ppl-muted ppl-pad">No sessions reached this screen for these filters.</p>
             ) : (
-              <div className={`fl-stage${pathsLoading ? ' is-loading' : ''}`}>
+              <div className={`fl-stage${explore.loading ? ' is-loading' : ''}`}>
                 <SankeyChart res={res} onPick={pick} />
                 <p className="hm-note">
                   {res.sessions} {res.sessions === 1 ? 'session' : 'sessions'} reached {displayScreen(res.screen)}. Hover a band for its

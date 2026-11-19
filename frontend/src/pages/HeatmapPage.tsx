@@ -1,4 +1,3 @@
-import { displayScreen, screenMatches } from '../screens/name'
 import { useEffect, useMemo, useState } from 'react'
 import { heatmapApi, type HeatmapCell, type HeatmapOrientation, type HeatmapResponse, type HeatmapScreen, type HeatmapScreensResponse } from '../api'
 import CustomSelect from '../components/CustomSelect'
@@ -7,6 +6,7 @@ import HeatCanvas from '../components/heatmap/HeatCanvas'
 import { cellShare, MIN_RELIABLE_SESSIONS, shareLabel } from '../heatmap/grid'
 import { fetchChunkPayloads } from '../replay/parseChunk'
 import { screenFrameData } from '../replay/screen'
+import { displayScreen, screenMatches } from '../screens/name'
 
 const SEARCH_ALL = ''
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -30,7 +30,9 @@ function HeatmapView({ projectId }: { projectId: number }) {
   const [appVersion, setAppVersion] = useState('')
   const [aspect, setAspect] = useState<number | ''>('')
   const [search, setSearch] = useState(SEARCH_ALL)
-  const [selected, setSelected] = useState<HeatmapScreen | null>(null)
+  const [picked, setSelected] = useState<HeatmapScreen | null>(null)
+  // ?screen=<raw name> (e.g. from User Flow) preselects that screen until the user picks another.
+  const [wanted] = useState(() => new URLSearchParams(window.location.search).get('screen') ?? '')
   const [showRage, setShowRage] = useState(false)
   const [hover, setHover] = useState<{ cell: HeatmapCell; x: number; y: number } | null>(null)
 
@@ -66,6 +68,10 @@ function HeatmapView({ projectId }: { projectId: number }) {
   const screens = useMemo(() => {
     return (list.data?.screens ?? []).filter((s) => screenMatches(s.screen, search))
   }, [list.data, search])
+  const selected = useMemo(
+    () => picked ?? (wanted ? (list.data?.screens.find((s) => s.screen === wanted) ?? null) : null),
+    [picked, wanted, list.data],
+  )
 
   const heatKey = selected ? `${listKey}|${screenKey(selected)}|${orientation}|${aspect}` : ''
   const [heat, setHeat] = useState<Tagged<HeatmapResponse>>({ key: '', error: '', data: null })
