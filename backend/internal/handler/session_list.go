@@ -10,32 +10,25 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// sessionTelemetryWindow bounds how far back telemetry-derived sessions (sessions with no replay row) are looked up
-// when the caller gives no explicit `from`.
+// sessionTelemetryWindow bounds how far back telemetry-derived sessions (sessions with no replay row) are listed
+// when the caller gives no explicit `from`: a session is listed when it was last seen inside the window.
 const sessionTelemetryWindow = 7 * 24 * time.Hour
 
-// sessionTelemetryCTE defines two CTEs, src and tel. tel has one row per session id seen in telemetry_events
-// (excluding replay chunk uploads) or issue_events inside the window, with the same columns as replay_sessions.
-// Placeholders: $1 = project id, $2 = window start (list) or session id (single-session lookup, no window).
-// It is a shared fragment so a single-session lookup derives the same aggregates; the source rows are filtered
-// before aggregating, so a lookup never scans the whole project.
-func sessionTelemetryCTE(single bool) string {
-	telCond, issueCond := "event_timestamp >= $2", "ie.created_at >= $2"
-	if single {
-		telCond, issueCond = "session_id = $2", "ie.session_id = $2"
-	}
-	return fmt.Sprintf(sessionTelemetryCTEFmt, telCond, issueCond)
-}
+// sessionTelemetryCTE defines two CTEs, src and tel, for one session: tel has one row derived from the session's
+// telemetry_events (excluding replay chunk uploads) and issue_events, with the same columns as replay_sessions.
+// Placeholders: $1 = project id, $2 = session id. The rows are filtered by session id before aggregating, so a
+// lookup never scans the whole project. The list reads the same aggregates from session_contexts instead.
+func sessionTelemetryCTE() string { return sessionTelemetryCTESQL }
 
-const sessionTelemetryCTEFmt = `
+const sessionTelemetryCTESQL = `
 src AS (
 	SELECT session_id, user_id, environment, event_timestamp AS ts, level, name, false AS crash
 	FROM telemetry_events
-	WHERE project_id = $1 AND session_id <> '' AND name <> 'replay_chunk' AND %s
+	WHERE project_id = $1 AND session_id <> '' AND name <> 'replay_chunk' AND session_id = $2
 	UNION ALL
 	SELECT ie.session_id, ie.user_id, NULLIF(ie.environment, ''), ie.created_at, 'fatal'::text, ''::text, true
 	FROM issue_events ie JOIN issues i ON i.id = ie.issue_id
-	WHERE i.project_id = $1 AND ie.session_id <> '' AND %s
+	WHERE i.project_id = $1 AND ie.session_id <> '' AND ie.session_id = $2
 ), tel AS (
 	SELECT
 		session_id AS id,
@@ -66,8 +59,10 @@ type sessionListFilter struct {
 }
 
 // buildSessionListQuery returns the merged session list query: every replay_sessions row of the project, plus
-// sessions derived from telemetry/crash events that have no replay row. Selected columns are the ReplaySessionItem
-// columns in scan order, then has_replay, then full_count. All user input goes through placeholders.
+// sessions with telemetry/crash events and no replay row, read from the per-session summary session_contexts that
+// ingest maintains (never from raw telemetry, whose volume would make every list request scan millions of rows).
+// Selected columns are the ReplaySessionItem columns in scan order, then has_replay, then full_count. All user
+// input goes through placeholders.
 func buildSessionListQuery(projectID int64, f sessionListFilter, now time.Time, limit, offset int) (string, []any) {
 	win := now.Add(-sessionTelemetryWindow)
 	if f.From != nil {
@@ -76,7 +71,25 @@ func buildSessionListQuery(projectID int64, f sessionListFilter, now time.Time, 
 	args := []any{projectID, win}
 
 	var q strings.Builder
-	q.WriteString("WITH" + sessionTelemetryCTE(false) + `, merged AS (
+	q.WriteString(`WITH tel AS (
+	SELECT
+		session_id AS id,
+		project_id,
+		user_id,
+		COALESCE(NULLIF(environment, ''), 'production') AS environment,
+		first_seen AS start_time,
+		last_seen AS end_time,
+		(EXTRACT(EPOCH FROM (last_seen - first_seen)) * 1000)::bigint AS duration_ms,
+		0::int AS chunk_count,
+		event_count,
+		0::bigint AS total_size_bytes,
+		has_error, has_rage_click, has_dead_click,
+		''::text AS storage_prefix,
+		first_seen AS created_at,
+		last_seen AS updated_at
+	FROM session_contexts
+	WHERE project_id = $1 AND event_count > 0 AND last_seen >= $2
+), merged AS (
 	SELECT
 		id, project_id, user_id, environment, start_time, end_time,
 		duration_ms, chunk_count, event_count, total_size_bytes,
@@ -142,7 +155,7 @@ WHERE true`)
 // telemetry or crash rows.
 func (h *Handler) telemetrySessionItem(ctx context.Context, projectID int64, sessionID string) (ReplaySessionItem, bool, error) {
 	var it ReplaySessionItem
-	err := h.db.QueryRow(ctx, "WITH"+sessionTelemetryCTE(true)+`
+	err := h.db.QueryRow(ctx, "WITH"+sessionTelemetryCTE()+`
 SELECT
 	id, project_id, user_id, environment, start_time, end_time,
 	duration_ms, chunk_count, event_count, total_size_bytes,
