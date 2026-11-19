@@ -1075,6 +1075,52 @@ var openAPISpecBytes = []byte(`{
         }
       }
     },
+    "/symbols": {
+      "post": {
+        "summary": "Upload Debug Symbols (Auto-detected)",
+        "description": "Uploads debug symbols (iOS dSYM zip/binary, Android ProGuard mapping.txt, or Source Map) with automatic content-type detection. Authenticated with a secret key (art_sec_) in X-Artracker-Key or query ?key=; project is inferred from the key. Release version is provided via query parameter ?version= or headers (X-App-Version, X-Release-Version).",
+        "operationId": "uploadSymbolsAuto",
+        "tags": ["Crash Diagnostics"],
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "version", "in": "query", "required": false, "description": "Release version string", "schema": { "type": "string" } },
+          { "name": "build", "in": "query", "required": false, "description": "Build number", "schema": { "type": "string" } },
+          { "name": "file", "in": "query", "required": false, "description": "File name of artifact", "schema": { "type": "string" } },
+          { "name": "type", "in": "query", "required": false, "description": "Artifact type override (dsym, proguard, sourcemap)", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Identical to newest upload; unchanged" },
+          "201": { "description": "Symbols stored successfully" },
+          "400": { "description": "Invalid format or missing version" },
+          "401": { "description": "Missing or invalid secret key" },
+          "403": { "description": "Secret key required" },
+          "413": { "description": "Payload exceeds maximum allowed size" }
+        }
+      }
+    },
+    "/symbols/{version}": {
+      "post": {
+        "summary": "Upload Debug Symbols for Release Version",
+        "description": "Uploads debug symbols for a specific release version in the URL path. Auto-detects dSYM, ProGuard mapping, or Source Map.",
+        "operationId": "uploadSymbolsForVersion",
+        "tags": ["Crash Diagnostics"],
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "version", "in": "path", "required": true, "description": "Release version string (e.g. 1.0.0)", "schema": { "type": "string" } },
+          { "name": "build", "in": "query", "required": false, "description": "Build number", "schema": { "type": "string" } },
+          { "name": "file", "in": "query", "required": false, "description": "File name of artifact", "schema": { "type": "string" } },
+          { "name": "type", "in": "query", "required": false, "description": "Artifact type override (dsym, proguard, sourcemap)", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Identical to newest upload; unchanged" },
+          "201": { "description": "Symbols stored successfully" },
+          "400": { "description": "Invalid format or missing version" },
+          "401": { "description": "Missing or invalid secret key" },
+          "403": { "description": "Secret key required" },
+          "413": { "description": "Payload exceeds maximum allowed size" }
+        }
+      }
+    },
     "/projects/{projectID}/releases/{version}/artifacts": {
       "get": {
         "summary": "List Release Debug Artifacts",
