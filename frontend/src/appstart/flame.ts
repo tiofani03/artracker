@@ -65,3 +65,22 @@ export function boxStats(p: SymbolicatedProfile, box: FlameBox): { totalMs: numb
   })
   return { totalMs, selfMs }
 }
+
+export type PixelBox = FlameBox & { x: number; w: number }
+
+const MIN_BOX_PX = 1
+
+/** Maps boxes from the [viewStart, viewEnd] ms window onto `width` px, clipped to it; boxes under 1 px are dropped. */
+export function toPixels(boxes: FlameBox[], viewStart: number, viewEnd: number, width: number): PixelBox[] {
+  const span = viewEnd - viewStart
+  if (span <= 0 || width <= 0) return []
+  const scale = width / span
+  const out: PixelBox[] = []
+  for (const b of boxes) {
+    const x0 = Math.max(0, (b.start - viewStart) * scale)
+    const x1 = Math.min(width, (b.end - viewStart) * scale)
+    if (x1 - x0 < MIN_BOX_PX) continue
+    out.push({ ...b, x: x0, w: x1 - x0 })
+  }
+  return out
+}

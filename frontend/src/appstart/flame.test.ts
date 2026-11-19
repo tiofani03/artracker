@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SymbolicatedProfile } from '../api'
-import { boxStats, layoutFlame } from './flame'
+import { boxStats, layoutFlame, toPixels, type FlameBox } from './flame'
 
 const frames = (n: number) => Array.from({ length: n }, (_, i) => ({ function: `f${i}`, is_app: true, resolved: true }))
 
@@ -81,5 +81,33 @@ describe('boxStats', () => {
   })
   it('reports self as only the samples where the box is the top frame', () => {
     expect(boxStats(p, { depth: 0, start: 0, end: 40, frame: 0 })).toEqual({ totalMs: 40, selfMs: 10 })
+  })
+})
+
+describe('Flamegraph geometry', () => {
+  const box = (depth: number, start: number, end: number): FlameBox => ({ depth, start, end, frame: 0 })
+
+  it('maps start and end linearly onto the width', () => {
+    const [px] = toPixels([box(0, 0, 50)], 0, 100, 400)
+    expect(px).toMatchObject({ x: 0, w: 200 })
+    const [shifted] = toPixels([box(1, 25, 75)], 0, 100, 400)
+    expect(shifted).toMatchObject({ depth: 1, x: 100, w: 200 })
+  })
+
+  it('drops boxes narrower than 1 px', () => {
+    const out = toPixels([box(0, 0, 0.2), box(0, 10, 11), box(0, 20, 100)], 0, 100, 100)
+    expect(out.map((b) => b.start)).toEqual([10, 20])
+  })
+
+  it('zooms: maps against the view window and clips to the width', () => {
+    const out = toPixels([box(0, 0, 100), box(1, 0, 20), box(1, 40, 60)], 40, 60, 200)
+    expect(out).toHaveLength(2)
+    expect(out[0]).toMatchObject({ x: 0, w: 200 })
+    expect(out[1]).toMatchObject({ start: 40, x: 0, w: 200 })
+  })
+
+  it('returns nothing for an empty window or width', () => {
+    expect(toPixels([box(0, 0, 10)], 5, 5, 100)).toEqual([])
+    expect(toPixels([box(0, 0, 10)], 0, 10, 0)).toEqual([])
   })
 })
