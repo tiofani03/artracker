@@ -342,3 +342,23 @@ Anti-goals (failure even if it "works"):
 - Flamegraph rendering details (colour by app/library, min width before a box is hidden).
 - Test strategy per repo, following each repo's conventions (Robolectric + fakes; XCTest + injection seams;
   Go table tests + DB tests on `artracker_test`).
+
+## 12. Additions made while writing the plans
+
+- **`attributed_ms`** in `app_start_fn_stats`: each sample is charged to its **leaf-most app frame**. This is
+  the default ranking of the "slowest functions" table: total time always ranks `Application.onCreate` first,
+  and self time empties the app-only view because the slow leaves are usually library code.
+- **Sample weight** = gap to the next sample, capped at 100 ms; the last sample weighs `interval_ms`. The
+  backend stats and the frontend flamegraph use the same rule.
+- **iOS caller frames**: the SDK sends raw return addresses; the backend looks up `pc − 1` for every
+  non-leaf frame.
+- **iOS `app_version`** arrives as `"1.4.0 (217)"`; the backend splits it into version and build
+  (`SplitVersionBuild`) for both items and profiles. An explicit `build` wins.
+- `app_start_profiles.image_uuids` (so a dSYM upload can re-queue profiles without unpacking them) and
+  `environment` on `app_start_fn_stats`.
+- The platform select is hidden in the toolbar: a project already has a single platform.
+- The existing R8 mapping parser skips lines with an original line range (inlined/remapped methods); the
+  backend plan fixes it, which also improves crash retrace.
+- Warm/hot cut-off is 10 s on iOS too. Android arms warm/hot only after an explicit trigger (return from
+  background, or a cold start dropped as background-launched), because the SDK cannot count Activities that
+  existed before a late init. iOS buffers items produced before its disk queue exists (Phase B).
