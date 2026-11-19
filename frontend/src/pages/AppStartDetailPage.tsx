@@ -10,7 +10,15 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : 'Request failed
 
 function ProfileBanner({ detail }: { detail: AppStartDetail }) {
   const profile = detail.profile
-  if (!profile) return <p className="hm-note">This start was not profiled.</p>
+  if (!profile) {
+    return (
+      <p className="hm-note">
+        {detail.profiled
+          ? 'Profile expired (profiles are kept 30 days) or was not received.'
+          : 'This start was not profiled.'}
+      </p>
+    )
+  }
   switch (profile.status) {
     case 'pending':
       return <p className="hm-note">Profile is being processed — it appears within a minute.</p>
