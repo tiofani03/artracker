@@ -560,6 +560,26 @@ var openAPISpecBytes = []byte(`{
         }
       }
     },
+    "/projects/{projectID}/flow/screens": {
+      "get": {
+        "summary": "List Flow Screens",
+        "description": "Per-screen user flow stats in the range: sessions, views, median and p75 time on screen, and how many sessions entered or left the app on that screen. Sorted by sessions, then views.",
+        "operationId": "listFlowScreens",
+        "tags": ["Flow"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "from", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default 7 days ago" },
+          { "name": "to", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default now" },
+          { "name": "platform", "in": "query", "schema": { "type": "string" } },
+          { "name": "app_version", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "{screens:[{screen,platform,sessions,views,median_ms,p75_ms,entry_sessions,exit_sessions}], app_versions:[string] (distinct non-empty versions in range and platform filter, sorted descending, max 50), unrecognized_sessions (processed sessions in range with no recognized screens; ignores app_version)}" },
+          "400": { "description": "Invalid date range" }
+        }
+      }
+    },
     "/projects/{projectID}/heatmap": {
       "get": {
         "summary": "Get Tap Heatmap",
