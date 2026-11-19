@@ -13,6 +13,7 @@ import (
 
 	"github.com/tiofani03/artracker/backend/internal/analytics"
 	"github.com/tiofani03/artracker/backend/internal/ingest"
+	"github.com/tiofani03/artracker/backend/internal/people"
 )
 
 type BucketPoint struct {
@@ -602,6 +603,12 @@ func (h *Handler) SeedProjectMockData(c *fiber.Ctx) error {
 
 	if err := h.ingestSvc.Sink().WriteBatch(ctx, rows); err != nil {
 		return err
+	}
+	// The sink skips the ingest row processors; feed the per-session summary so seeded sessions are listed.
+	if st := h.PeopleStore(); st != nil {
+		if err := people.NewProcessor(st).ProcessRows(ctx, rows); err != nil {
+			return err
+		}
 	}
 
 	// Also seed Growth Analytics events & cohort history if analytics service is enabled

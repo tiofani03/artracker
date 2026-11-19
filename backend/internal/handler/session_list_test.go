@@ -227,6 +227,47 @@ func TestListSessionsCrashOnlyEnvironment(t *testing.T) {
 	wantIDs(t, s.ids(t, "environment=production"))
 }
 
+// Demo data written by seed-mock bypasses the ingest workers; its sessions must still be listed.
+func TestListSessionsIncludesSeededMockSessions(t *testing.T) {
+	s := newSessionListEnv(t, "seed")
+	// seed-mock also writes analytics `events`, which has no FK to projects and outlives the per-test TRUNCATE.
+	cleanEvents := func() { _, _ = s.pool.Exec(context.Background(), `DELETE FROM events WHERE project_id = $1`, s.pid) }
+	cleanEvents()
+	t.Cleanup(cleanEvents)
+	resp := s.do(t, "POST", fmt.Sprintf("/api/v1/projects/%d/seed-mock", s.pid), nil, s.hdr)
+	if resp.StatusCode != 200 {
+		t.Fatalf("seed-mock status %d", resp.StatusCode)
+	}
+	rows, err := s.pool.Query(context.Background(), `
+		SELECT DISTINCT session_id FROM telemetry_events
+		WHERE project_id = $1 AND session_id <> '' AND name <> 'replay_chunk' AND event_timestamp >= now() - interval '7 days'
+		ORDER BY 1`, s.pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		want = append(want, id)
+	}
+	rows.Close()
+	if len(want) == 0 {
+		t.Fatal("seed-mock wrote no session telemetry")
+	}
+	listed := map[string]bool{}
+	for _, id := range s.ids(t, "limit=100") {
+		listed[id] = true
+	}
+	for _, id := range want {
+		if !listed[id] {
+			t.Errorf("seeded session %s not listed", id)
+		}
+	}
+}
+
 // The list must not aggregate raw telemetry per request: on a busy project that scan outgrew the handler's timeout.
 func TestBuildSessionListQueryDoesNotScanTelemetry(t *testing.T) {
 	q, _ := buildSessionListQuery(1, sessionListFilter{}, time.Now(), 10, 0)
