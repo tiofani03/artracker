@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"path/filepath"
@@ -9,7 +10,9 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5"
 
+	"github.com/tiofani03/artracker/backend/internal/issues"
 	"github.com/tiofani03/artracker/backend/internal/symbolication"
 )
 
@@ -266,5 +269,242 @@ func (h *Handler) ListReleaseArtifacts(c *fiber.Ctx) error {
 		"project_id": projectID,
 		"version":    version,
 		"artifacts":  items,
+	})
+}
+
+// UploadSymbols handles POST /api/v1/symbols and POST /api/v1/symbols/:version.
+// It auto-detects iOS dSYM (.zip or Mach-O binary), Android ProGuard (mapping.txt),
+// or Source Map, and stores it under the authenticated project with no extra login.
+func (h *Handler) UploadSymbols(c *fiber.Ctx) error {
+	projectID, ok := c.Locals("projectID").(int64)
+	if !ok || projectID <= 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	rawVersion, _ := url.PathUnescape(c.Params("version"))
+	version := strings.TrimSpace(rawVersion)
+	if version == "" {
+		version = strings.TrimSpace(c.Query("version"))
+	}
+	if version == "" {
+		version = strings.TrimSpace(c.Query("release"))
+	}
+	if version == "" {
+		version = strings.TrimSpace(c.Query("app_version"))
+	}
+	if version == "" {
+		version = strings.TrimSpace(c.Get("X-App-Version"))
+	}
+	if version == "" {
+		version = strings.TrimSpace(c.Get("X-Release-Version"))
+	}
+	if version == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "release version is required")
+	}
+
+	body, err := readArtifactBody(c)
+	if err != nil {
+		return err
+	}
+	if len(body) == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "symbols body or archive is required")
+	}
+
+	buildNumber := strings.TrimSpace(c.Query("build"))
+	if buildNumber == "" {
+		buildNumber = strings.TrimSpace(c.Get("X-App-Build"))
+	}
+
+	fileName := strings.TrimSpace(c.Query("file"))
+	if fileName == "" {
+		fileName = strings.TrimSpace(c.Get("X-File-Name"))
+	}
+
+	artifactType := strings.ToLower(strings.TrimSpace(c.Query("type")))
+	if artifactType == "" {
+		artifactType = strings.ToLower(strings.TrimSpace(c.Get("X-Artifact-Type")))
+	}
+
+	isZip := len(body) >= 4 && body[0] == 'P' && body[1] == 'K' && body[2] == 0x03 && body[3] == 0x04
+	_, machOErr := symbolication.ExtractMachOMetadata(body)
+	isMachO := machOErr == nil
+
+	// Route to dSYM if zip archive, Mach-O binary, or explicitly dsym
+	if artifactType == "dsym" || isZip || isMachO || strings.HasSuffix(strings.ToLower(fileName), ".dsym") || strings.HasSuffix(strings.ToLower(fileName), ".zip") {
+		dwarfBytes := body
+		if isZip {
+			innerBytes, innerName, zipErr := symbolication.ExtractDSYMBinaryFromZip(body)
+			if zipErr != nil {
+				return fiber.NewError(fiber.StatusBadRequest, "invalid dSYM zip: "+zipErr.Error())
+			}
+			dwarfBytes = innerBytes
+			if innerName != "" && fileName == "" {
+				fileName = innerName
+			}
+		}
+		if fileName == "" {
+			fileName = "app.dSYM"
+		}
+		meta, metaErr := symbolication.ExtractMachOMetadata(dwarfBytes)
+		if metaErr != nil {
+			meta = symbolication.MachOInfo{Arch: "arm64"}
+		}
+		checksum := sha256Hex(dwarfBytes)
+		storagePath := fmt.Sprintf("projects/%d/releases/%s/dsyms/%s", projectID, version, filepath.Base(fileName))
+
+		if h.db == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "database is unavailable")
+		}
+		ctx, cancel := context.WithTimeout(c.Context(), 60*time.Second)
+		defer cancel()
+
+		if same, err := h.isLatestArtifact(ctx, projectID, version, "dsym", checksum); err != nil {
+			return err
+		} else if same {
+			return c.JSON(fiber.Map{
+				"status":          "unchanged",
+				"project_id":      projectID,
+				"release_version": version,
+				"file_name":       fileName,
+				"debug_uuid":      meta.UUID,
+				"cpu_arch":        meta.Arch,
+				"size_bytes":      len(dwarfBytes),
+				"checksum":        checksum,
+			})
+		}
+
+		var artifactID int64
+		err = h.db.QueryRow(ctx, `
+			INSERT INTO project_release_artifacts(
+				project_id, version, build_number, artifact_type, file_name,
+				storage_path, content, checksum_sha256, cpu_arch, debug_uuid, size_bytes
+			)
+			VALUES ($1, $2, $3, 'dsym', $4, $5, $6, $7, $8, $9, $10)
+			RETURNING id`,
+			projectID, version, buildNumber, fileName,
+			storagePath, dwarfBytes, checksum, meta.Arch, meta.UUID, int64(len(dwarfBytes)),
+		).Scan(&artifactID)
+		if err != nil {
+			return err
+		}
+
+		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+			"status":          "stored",
+			"id":              artifactID,
+			"project_id":      projectID,
+			"release_version": version,
+			"file_name":       fileName,
+			"debug_uuid":      meta.UUID,
+			"cpu_arch":        meta.Arch,
+			"size_bytes":      len(dwarfBytes),
+			"checksum":        checksum,
+		})
+	}
+
+	// Route to SourceMap if json format or explicitly sourcemap
+	if artifactType == "sourcemap" || strings.HasSuffix(strings.ToLower(fileName), ".map") {
+		sm, err := issues.ParseSourceMap(body)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid source map: "+err.Error())
+		}
+		if fileName == "" {
+			fileName = strings.TrimSpace(sm.File)
+		}
+		if fileName == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "file name is required (source map has no 'file' field)")
+		}
+
+		ctx, cancel := context.WithTimeout(c.Context(), 60*time.Second)
+		defer cancel()
+
+		var current string
+		err = h.db.QueryRow(ctx, `SELECT encode(sha256(content), 'hex') FROM source_maps
+			WHERE project_id = $1 AND release_version = $2 AND file_name = $3`, projectID, version, fileName).Scan(&current)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if err == nil && current == sha256Hex(body) {
+			return c.JSON(fiber.Map{
+				"status":          "unchanged",
+				"release_version": version,
+				"file_name":       fileName,
+				"sources":         len(sm.Sources),
+			})
+		}
+
+		if _, err := h.db.Exec(ctx, `
+			INSERT INTO source_maps(project_id, release_version, file_name, content)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (project_id, release_version, file_name)
+			DO UPDATE SET content = EXCLUDED.content, created_at = now()`,
+			projectID, version, fileName, body); err != nil {
+			return err
+		}
+
+		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+			"status":          "stored",
+			"project_id":      projectID,
+			"release_version": version,
+			"file_name":       fileName,
+			"sources":         len(sm.Sources),
+		})
+	}
+
+	// Default/fallback: ProGuard / R8 mapping file
+	_, err = symbolication.ParseProguardMapping(body)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid proguard mapping or unrecognized symbols format: "+err.Error())
+	}
+
+	if fileName == "" {
+		fileName = "mapping.txt"
+	}
+	checksum := sha256Hex(body)
+	storagePath := fmt.Sprintf("projects/%d/releases/%s/proguard/%s", projectID, version, filepath.Base(fileName))
+
+	if h.db == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "database is unavailable")
+	}
+	ctx, cancel := context.WithTimeout(c.Context(), 60*time.Second)
+	defer cancel()
+
+	if same, err := h.isLatestArtifact(ctx, projectID, version, "proguard_mapping", checksum); err != nil {
+		return err
+	} else if same {
+		return c.JSON(fiber.Map{
+			"status":          "unchanged",
+			"project_id":      projectID,
+			"release_version": version,
+			"file_name":       fileName,
+			"artifact_type":   "proguard_mapping",
+			"size_bytes":      len(body),
+			"checksum":        checksum,
+		})
+	}
+
+	var artifactID int64
+	err = h.db.QueryRow(ctx, `
+		INSERT INTO project_release_artifacts(
+			project_id, version, build_number, artifact_type, file_name,
+			storage_path, content, checksum_sha256, cpu_arch, debug_uuid, size_bytes
+		)
+		VALUES ($1, $2, $3, 'proguard_mapping', $4, $5, $6, $7, '', '', $8)
+		RETURNING id`,
+		projectID, version, buildNumber, fileName,
+		storagePath, body, checksum, int64(len(body)),
+	).Scan(&artifactID)
+	if err != nil {
+		return err
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		"status":          "stored",
+		"id":              artifactID,
+		"project_id":      projectID,
+		"release_version": version,
+		"file_name":       fileName,
+		"artifact_type":   "proguard_mapping",
+		"size_bytes":      len(body),
+		"checksum":        checksum,
 	})
 }

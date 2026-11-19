@@ -27,7 +27,7 @@ func (h *Handler) Routes(api fiber.Router) {
 		off := func(*fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "this feature needs the database (SKIP_DB is enabled)")
 		}
-		for _, prefix := range []string{"/auth", "/orgs", "/projects", "/sdk", "/replay"} {
+		for _, prefix := range []string{"/auth", "/orgs", "/projects", "/sdk", "/replay", "/symbols"} {
 			api.All(prefix, off)
 			api.All(prefix+"/*", off)
 		}
@@ -122,6 +122,8 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Post("/sdk/releases/:version/proguard", h.RequireSecretKey, h.UploadProguard)
 	api.Post("/sdk/releases/:version/dsyms", h.RequireSecretKey, h.UploadDSYM)
 	api.Post("/sdk/releases/:version/sourcemaps", h.RequireSecretKey, h.UploadSourceMap)
+	api.Post("/symbols", h.RequireSecretKey, h.UploadSymbols)
+	api.Post("/symbols/:version", h.RequireSecretKey, h.UploadSymbols)
 
 	api.Get("/sdk/validate", h.sdkValidate(false))
 	api.Get("/sdk/validate-admin", h.sdkValidate(true))

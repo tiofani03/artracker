@@ -187,3 +187,30 @@ func TestSecretKeyUploadSourceMapIdempotent(t *testing.T) {
 		t.Fatalf("changed = %d %s, want 201", code, out)
 	}
 }
+
+func TestUploadSymbolsEndpoint(t *testing.T) {
+	e, _, project, hdr := keyFixture(t)
+	sec := e.createKey(t, project, "secret_admin", hdr).Secret
+
+	// Missing version -> 400
+	if code, _ := uploadStatus(t, e, "/api/v1/symbols", sec, testMapping); code != 400 {
+		t.Fatalf("missing version: status = %d, want 400", code)
+	}
+
+	// Upload mapping with version query param -> 201
+	pathQuery := "/api/v1/symbols?version=2.0.0"
+	if code, out := uploadStatus(t, e, pathQuery, sec, testMapping); code != 201 {
+		t.Fatalf("upload via ?version=: status = %d, want 201 (%s)", code, out)
+	}
+
+	// Idempotent re-upload -> 200 unchanged
+	if code, out := uploadStatus(t, e, pathQuery, sec, testMapping); code != 200 || !strings.Contains(out, `"status":"unchanged"`) {
+		t.Fatalf("re-upload via ?version=: status = %d, want 200 unchanged (%s)", code, out)
+	}
+
+	// Upload via /api/v1/symbols/:version path param -> 201
+	pathParam := "/api/v1/symbols/2.1.0"
+	if code, out := uploadStatus(t, e, pathParam, sec, testMapping); code != 201 {
+		t.Fatalf("upload via /symbols/:version: status = %d, want 201 (%s)", code, out)
+	}
+}
