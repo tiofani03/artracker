@@ -84,7 +84,8 @@ export default function HeatmapSettingsPanel({ project, canManage }: Props) {
               Tap Heatmap Exclusions
             </h2>
             <p className="dash-card__desc">
-              Screens in <strong>{project.name}</strong> that never contribute to tap heatmaps.
+              Screens in <strong>{project.name}</strong> that never contribute to tap heatmaps. This list only affects
+              the heatmap; User Flow still shows these screens.
             </p>
           </div>
         </div>

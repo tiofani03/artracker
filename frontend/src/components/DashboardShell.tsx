@@ -105,6 +105,12 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
         demoAllowed: false,
       },
       {
+        to: '/dashboard/flow',
+        label: 'User Flow',
+        icon: 'M4 7h11m0 0-3-3m3 3-3 3M20 17H9m0 0 3-3m-3 3 3 3',
+        demoAllowed: false,
+      },
+      {
         to: '/dashboard/people',
         label: 'People',
         icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm13 10v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',

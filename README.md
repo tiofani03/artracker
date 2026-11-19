@@ -40,6 +40,9 @@ artracker/
   screenshot of the screen). It is derived from screenshot-mode session replay, so it appears about 10
   minutes after a session ends, and sensitive screens (login, payment and the like, plus any you add in
   Settings) are excluded.
+- **User Flow**: screen-to-screen paths and time on screen for mobile projects, derived from screenshot
+  replay like the heatmap, so it also appears about 10 minutes after a session ends. The heatmap exclusion
+  list does not apply: excluded screens still show up in User Flow.
 - **Analytics**: event log, funnels (including saved funnels) and retention.
 - **Alerts**: per-project rules for new issues, regressions and issue spikes, delivered to Telegram
   (see [Alerts](#alerts-telegram)).
@@ -255,6 +258,9 @@ UPDATE replay_sessions SET taps_processed_at = NULL, taps_attempts = 0, taps_ret
 
 The worker backs a failing session off (1 minute doubling up to 6 hours) and gives up after 8 attempts; this
 reset also clears that.
+
+The same reset also rebuilds the project's User Flow data: the worker re-extracts each session's screen views
+along with its taps.
 
 Pin a build with `TAG=<sha>` in `.env`. Migrations are embedded in the API
 binary and run at boot, so there is no separate migrate step.

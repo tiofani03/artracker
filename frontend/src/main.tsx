@@ -12,6 +12,7 @@ import SettingsPage from './pages/SettingsPage'
 import IssuesPage from './pages/IssuesPage'
 import PeoplePage from './pages/PeoplePage'
 import HeatmapPage from './pages/HeatmapPage'
+import FlowPage from './pages/FlowPage'
 import IssueDetailPage from './pages/IssueDetailPage'
 import InviteAcceptPage from './pages/InviteAcceptPage'
 import { Redirect, useLocation } from './router'
@@ -66,6 +67,8 @@ function Routes() {
       return <PeoplePage />
     case '/dashboard/heatmap':
       return <HeatmapPage />
+    case '/dashboard/flow':
+      return <FlowPage />
     case '/dashboard/settings':
       return <SettingsPage />
     default:
