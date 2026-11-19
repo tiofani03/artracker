@@ -99,21 +99,11 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
         demoAllowed: true,
       },
       {
-        to: '/dashboard/heatmap',
-        label: 'Heatmap',
-        icon: 'M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Z',
-        demoAllowed: false,
-      },
-      {
-        to: '/dashboard/flow',
-        label: 'User Flow',
-        icon: 'M4 7h11m0 0-3-3m3 3-3 3M20 17H9m0 0 3-3m-3 3 3 3',
-        demoAllowed: false,
-      },
-      {
-        to: '/dashboard/people',
-        label: 'People',
-        icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm13 10v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
+        to: '/dashboard/issues',
+        label: 'Issues',
+        icon: 'M12 8v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z',
+        badgeKey: 'issues',
+        badgeTone: 'alert',
         demoAllowed: true,
       },
       {
@@ -122,19 +112,29 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
         icon: 'M4 6h16M4 12h16M4 18h10',
         demoAllowed: true,
       },
-      {
-        to: '/dashboard/issues',
-        label: 'Issues',
-        icon: 'M12 8v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z',
-        badgeKey: 'issues',
-        badgeTone: 'alert',
-        demoAllowed: true,
-      },
     ],
   },
   {
-    heading: 'Growth & Ops',
+    heading: 'Product Analytics',
     items: [
+      {
+        to: '/dashboard/flow',
+        label: 'User Flow',
+        icon: 'M4 7h11m0 0-3-3m3 3-3 3M20 17H9m0 0 3-3m-3 3 3 3',
+        demoAllowed: false,
+      },
+      {
+        to: '/dashboard/heatmap',
+        label: 'Heatmap',
+        icon: 'M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Z',
+        demoAllowed: false,
+      },
+      {
+        to: '/dashboard/people',
+        label: 'People',
+        icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm13 10v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
+        demoAllowed: true,
+      },
       // Temporarily hidden: Marketing Campaigns & Funnel & Retention
       // {
       //   to: '/dashboard/campaigns',
@@ -148,6 +148,11 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
       //   icon: 'M3 3v18h18M7 16l4-4 4 4 5-6',
       //   demoAllowed: true,
       // },
+    ],
+  },
+  {
+    heading: 'Ops',
+    items: [
       {
         to: '/dashboard/alerts',
         label: 'Alerts',
