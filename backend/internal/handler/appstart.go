@@ -210,10 +210,11 @@ func (h *Handler) resolveAppStartScope(ctx context.Context, projectID int64, fro
 	}
 
 	vrows, err := h.db.Query(ctx,
-		`SELECT DISTINCT app_version FROM app_starts
+		`SELECT app_version FROM app_starts
 		  WHERE project_id = $1 AND started_at >= $2 AND started_at < $3 AND app_version <> ''
 		    AND ($4 = '' OR environment = $4) AND ($5 = '' OR platform = $5)
-		  LIMIT 500`, projectID, from, to, scope.Environment, platform)
+		  GROUP BY app_version ORDER BY max(started_at) DESC, app_version DESC
+		  LIMIT `+strconv.Itoa(appStartMaxVersions), projectID, from, to, scope.Environment, platform)
 	if err != nil {
 		return scope, err
 	}
@@ -227,10 +228,6 @@ func (h *Handler) resolveAppStartScope(ctx context.Context, projectID int64, fro
 	}
 	if err := vrows.Err(); err != nil {
 		return scope, err
-	}
-	sort.Sort(sort.Reverse(sort.StringSlice(scope.Versions))) // byte order, independent of DB collation
-	if len(scope.Versions) > appStartMaxVersions {
-		scope.Versions = scope.Versions[:appStartMaxVersions]
 	}
 	return scope, nil
 }

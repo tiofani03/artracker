@@ -239,8 +239,8 @@ func TestAppStartByVersionLatest10(t *testing.T) {
 	if len(got.ByVersion) != 10 || got.ByVersion[0].Version != "1.12.0" {
 		t.Errorf("by_version = %+v", got.ByVersion)
 	}
-	if len(got.Versions) != 12 {
-		t.Errorf("versions = %v", got.Versions)
+	if len(got.Versions) != 12 || got.Versions[0] != "1.12.0" || got.Versions[1] != "1.11.0" || got.Versions[11] != "1.1.0" {
+		t.Errorf("versions must be newest first by recency: %v", got.Versions)
 	}
 }
 
@@ -316,37 +316,40 @@ func TestListAppStartsCursor(t *testing.T) {
 	// A duplicate duration exercises the id tie-break.
 	s.e.addAppStart(t, s.pid, startSeed{startID: "s6", duration: 300, at: time.Now().Add(-30 * time.Minute)})
 
-	for _, tc := range []struct {
-		sort string
-		want []string
-	}{
-		{"slowest", []string{"s5", "s4", "s6", "s3", "s2", "s1"}},
-		{"recent", []string{"s6", "s5", "s4", "s3", "s2", "s1"}},
-	} {
-		var seen []string
-		cursor := ""
-		for page := 0; page < 10; page++ {
-			var got appStartListResp
-			url := s.path("?limit=2&sort=" + tc.sort)
-			if cursor != "" {
-				url += "&cursor=" + cursor
+	// limit 3 puts the tied duration (s6, s3 at 300 ms) across the first page boundary for "slowest".
+	for _, limit := range []int{2, 3} {
+		for _, tc := range []struct {
+			sort string
+			want []string
+		}{
+			{"slowest", []string{"s5", "s4", "s6", "s3", "s2", "s1"}},
+			{"recent", []string{"s6", "s5", "s4", "s3", "s2", "s1"}},
+		} {
+			var seen []string
+			cursor := ""
+			for page := 0; page < 10; page++ {
+				var got appStartListResp
+				url := s.path(fmt.Sprintf("?limit=%d&sort=%s", limit, tc.sort))
+				if cursor != "" {
+					url += "&cursor=" + cursor
+				}
+				if st := hmGet(t, s.e, s.hdr, url, &got); st != 200 {
+					t.Fatalf("%s limit %d page %d status %d", tc.sort, limit, page, st)
+				}
+				for _, r := range got.Starts {
+					seen = append(seen, r.StartID)
+				}
+				if got.NextCursor == "" {
+					break
+				}
+				if len(got.Starts) != limit {
+					t.Fatalf("%s limit %d: page with cursor has %d rows", tc.sort, limit, len(got.Starts))
+				}
+				cursor = got.NextCursor
 			}
-			if st := hmGet(t, s.e, s.hdr, url, &got); st != 200 {
-				t.Fatalf("%s page %d status %d", tc.sort, page, st)
+			if fmt.Sprint(seen) != fmt.Sprint(tc.want) {
+				t.Errorf("%s limit %d order = %v, want %v", tc.sort, limit, seen, tc.want)
 			}
-			for _, r := range got.Starts {
-				seen = append(seen, r.StartID)
-			}
-			if got.NextCursor == "" {
-				break
-			}
-			if len(got.Starts) != 2 {
-				t.Fatalf("%s: page with cursor has %d rows", tc.sort, len(got.Starts))
-			}
-			cursor = got.NextCursor
-		}
-		if fmt.Sprint(seen) != fmt.Sprint(tc.want) {
-			t.Errorf("%s order = %v, want %v", tc.sort, seen, tc.want)
 		}
 	}
 	if st := hmGet(t, s.e, s.hdr, s.path("?cursor=!!!"), nil); st != 400 {
