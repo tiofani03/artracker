@@ -205,3 +205,63 @@ func TestWorkerDiscardsPerfItemsWithoutPerfSink(t *testing.T) {
 		t.Fatalf("dropped items = %d, want 1", got)
 	}
 }
+
+func TestCollectPerfRoutesAppStart(t *testing.T) {
+	wp := &WorkerPool{perfSink: NewMemoryPerfSink(), metrics: NewMetrics(100, 1)}
+	wp.SetAppStartSink(NewMemoryAppStartSink())
+
+	job := BatchJob{
+		ProjectID:  3,
+		ReceivedAt: time.Now(),
+		Envelope: IngestEnvelope{
+			Context: map[string]any{"environment": "staging", "app_version": "3.2.0"},
+			Items: []RawItem{
+				{Type: PerfItemType, Name: "perf.samples", SessionID: "ses_a", Attributes: validPerfAttrs()},
+				{Type: PerfItemType, Name: AppStartItemName, SessionID: "ses_a",
+					Attributes: []byte(`{"v":1,"platform":"android","start_id":"s1","type":"cold","duration_ms":1000}`)},
+				{Type: PerfItemType, Name: "perf.unknown", SessionID: "ses_a", Attributes: validPerfAttrs()},
+			},
+		},
+	}
+	perf, starts := wp.collectPerf(job)
+	if len(perf) != 1 || len(starts) != 1 {
+		t.Fatalf("want 1 perf row and 1 app start, got %d and %d", len(perf), len(starts))
+	}
+	if starts[0].Environment != "staging" || starts[0].AppVersion != "3.2.0" || starts[0].ProjectID != 3 {
+		t.Errorf("app start missing envelope context: %+v", starts[0])
+	}
+	if got := wp.metrics.Snapshot(0).DroppedItems; got != 1 {
+		t.Fatalf("dropped items = %d, want 1 (perf.unknown)", got)
+	}
+}
+
+func TestWorkerWritesAppStartsAndDropsWithoutSink(t *testing.T) {
+	job := BatchJob{
+		ProjectID:  3,
+		ReceivedAt: time.Now(),
+		Envelope: IngestEnvelope{Items: []RawItem{
+			{Type: PerfItemType, Name: AppStartItemName, SessionID: "ses_a",
+				Attributes: []byte(`{"v":1,"platform":"ios","start_id":"s1","type":"hot","duration_ms":300}`)},
+		}},
+	}
+
+	withSink := NewMemoryAppStartSink()
+	pool := NewWorkerPool(100, 1, 100, 60000, NewMemoryStorageSink(), NewMemoryPerfSink(), NewMetrics(100, 1))
+	pool.SetAppStartSink(withSink)
+	pool.Enqueue(job)
+	if err := pool.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if rows := withSink.Rows(); len(rows) != 1 || rows[0].StartID != "s1" {
+		t.Fatalf("app start sink wrong: %+v", rows)
+	}
+
+	noSink := NewWorkerPool(100, 1, 100, 60000, NewMemoryStorageSink(), NewMemoryPerfSink(), NewMetrics(100, 1))
+	noSink.Enqueue(job)
+	if err := noSink.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if got := noSink.Stats().DroppedItems; got != 1 {
+		t.Fatalf("dropped items = %d, want 1", got)
+	}
+}

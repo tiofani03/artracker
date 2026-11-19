@@ -13,6 +13,7 @@ type WorkerPool struct {
 	queue         chan BatchJob
 	sink          StorageSink
 	perfSink      PerfSink
+	appStartSink  atomic.Pointer[AppStartSink]
 	sanitizer     *Sanitizer
 	metrics       *Metrics
 	processors    atomic.Pointer[[]RowProcessor]
@@ -63,6 +64,16 @@ func NewWorkerPool(
 	return wp
 }
 
+// SetAppStartSink sets where app_start items are stored; without one they are dropped and counted.
+// Safe while workers run.
+func (wp *WorkerPool) SetAppStartSink(s AppStartSink) {
+	if s == nil {
+		wp.appStartSink.Store(nil)
+		return
+	}
+	wp.appStartSink.Store(&s)
+}
+
 // AddRowProcessor registers a processor that runs after every successful flush. Safe while workers run.
 func (wp *WorkerPool) AddRowProcessor(p RowProcessor) {
 	if p == nil {
@@ -108,19 +119,32 @@ func (wp *WorkerPool) workerLoop(workerID int) {
 
 	rows := make([]TelemetryRow, 0, wp.batchSize)
 	perfRows := make([]PerfBatchRow, 0, 16)
+	appStartRows := make([]AppStartRow, 0, 16)
 
 	flushPerf := func() {
-		if len(perfRows) == 0 {
-			return
+		if len(perfRows) > 0 {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := wp.perfSink.WritePerf(ctx, perfRows)
+			cancel()
+			if err != nil {
+				slog.Error("perf flush failed", "worker", workerID, "rows", len(perfRows), "err", err)
+				wp.metrics.IncDroppedBatches()
+			}
+			perfRows = perfRows[:0]
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		err := wp.perfSink.WritePerf(ctx, perfRows)
-		cancel()
-		if err != nil {
-			slog.Error("perf flush failed", "worker", workerID, "rows", len(perfRows), "err", err)
-			wp.metrics.IncDroppedBatches()
+		if len(appStartRows) > 0 {
+			// collectPerf only buffers app starts while a sink is set, and a sink is never unset in practice.
+			if sink := wp.appStartSink.Load(); sink != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				err := (*sink).WriteAppStarts(ctx, appStartRows)
+				cancel()
+				if err != nil {
+					slog.Error("app start flush failed", "worker", workerID, "rows", len(appStartRows), "err", err)
+					wp.metrics.IncDroppedBatches()
+				}
+			}
+			appStartRows = appStartRows[:0]
 		}
-		perfRows = perfRows[:0]
 	}
 
 	flush := func() {
@@ -162,8 +186,10 @@ func (wp *WorkerPool) workerLoop(workerID int) {
 			wp.metrics.AddSanitizedItems(sanitized)
 
 			rows = append(rows, normRows...)
-			perfRows = append(perfRows, wp.collectPerf(job)...)
-			if len(rows) >= wp.batchSize || len(perfRows) >= wp.batchSize {
+			newPerf, newStarts := wp.collectPerf(job)
+			perfRows = append(perfRows, newPerf...)
+			appStartRows = append(appStartRows, newStarts...)
+			if len(rows) >= wp.batchSize || len(perfRows) >= wp.batchSize || len(appStartRows) >= wp.batchSize {
 				flush()
 			}
 
@@ -173,28 +199,52 @@ func (wp *WorkerPool) workerLoop(workerID int) {
 	}
 }
 
-// collectPerf extracts and validates the perf items of a job. Invalid items (and every perf item when no
-// perf sink is configured) count as dropped; perf items never reach the telemetry sink.
-func (wp *WorkerPool) collectPerf(job BatchJob) []PerfBatchRow {
-	var out []PerfBatchRow
+// collectPerf extracts and validates the perf items of a job: "perf.samples" (or unnamed) items become perf
+// rows, "app_start" items become app-start rows, any other name is dropped. Invalid items, and items whose
+// sink is not configured, count as dropped; perf items never reach the telemetry sink.
+func (wp *WorkerPool) collectPerf(job BatchJob) ([]PerfBatchRow, []AppStartRow) {
+	var perfOut []PerfBatchRow
+	var startOut []AppStartRow
 	dropped := 0
+	env, appVersion := "", ""
+	envParsed := false
 	for _, item := range job.Envelope.Items {
 		if strings.ToLower(strings.TrimSpace(item.Type)) != PerfItemType {
 			continue
 		}
-		if wp.perfSink == nil {
+		switch strings.TrimSpace(item.Name) {
+		case "", "perf.samples":
+			if wp.perfSink == nil {
+				dropped++
+				continue
+			}
+			row, err := ParsePerfItem(job.ProjectID, job.ReceivedAt, item)
+			if err != nil {
+				dropped++
+				continue
+			}
+			perfOut = append(perfOut, row)
+		case AppStartItemName:
+			if wp.appStartSink.Load() == nil {
+				dropped++
+				continue
+			}
+			if !envParsed {
+				env, appVersion = EnvelopeEnvAndVersion(job.Envelope.Context)
+				envParsed = true
+			}
+			row, err := ParseAppStartItem(job.ProjectID, job.ReceivedAt, env, appVersion, item)
+			if err != nil {
+				dropped++
+				continue
+			}
+			startOut = append(startOut, row)
+		default:
 			dropped++
-			continue
 		}
-		row, err := ParsePerfItem(job.ProjectID, job.ReceivedAt, item)
-		if err != nil {
-			dropped++
-			continue
-		}
-		out = append(out, row)
 	}
 	wp.metrics.AddDroppedItems(dropped)
-	return out
+	return perfOut, startOut
 }
 
 // Enqueue performs non-blocking push to the ingest channel.
