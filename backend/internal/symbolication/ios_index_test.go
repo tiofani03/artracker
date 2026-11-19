@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -158,6 +159,69 @@ func TestIndexBuiltOnce(t *testing.T) {
 	fn := functionAddr(t, fresh, "main.first")
 	fresh.SymbolicateAddress(fn)
 	fresh.SymbolicateAddress(fn + 4)
+	if fresh.indexBuilds != 1 {
+		t.Fatalf("index built %d times, want 1", fresh.indexBuilds)
+	}
+}
+
+func TestSymbolicateImageAddressBelowLoadAddr(t *testing.T) {
+	s := requireDarwinFixture(t)
+	const load = uint64(0x104000000)
+	for _, pc := range []uint64{load - 1, load - 0x1000, 0} {
+		if got := s.SymbolicateImageAddress(pc, load); got.Found {
+			t.Errorf("SymbolicateImageAddress(%#x, %#x) = %+v, want not found", pc, load, got)
+		}
+	}
+}
+
+func TestIndexBuildPanicYieldsEmptyIndex(t *testing.T) {
+	s := requireDarwinFixture(t)
+	fresh, err := NewIOSSymbolicator(s.data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fresh.Close()
+	fresh.buildIndexFn = func() *addressIndex { panic("malformed dwarf") }
+
+	fn := functionAddr(t, fresh, "main.first")
+	for i := 0; i < 2; i++ {
+		if got := fresh.SymbolicateAddress(fn); got.Found {
+			t.Fatalf("call %d: got %+v, want not found after failed index build", i, got)
+		}
+	}
+	if fresh.indexBuilds != 1 {
+		t.Fatalf("index built %d times, want 1", fresh.indexBuilds)
+	}
+}
+
+func TestIndexConcurrent(t *testing.T) {
+	s := requireDarwinFixture(t)
+	fresh, err := NewIOSSymbolicator(s.data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fresh.Close()
+
+	fn := functionAddr(t, fresh, "main.second")
+	want := s.SymbolicateAddress(fn)
+
+	const workers = 16
+	var wg sync.WaitGroup
+	results := make([]ResolvedLocation, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i] = fresh.SymbolicateAddress(fn)
+		}()
+	}
+	wg.Wait()
+
+	for i, got := range results {
+		if got != want {
+			t.Errorf("worker %d: got %+v, want %+v", i, got, want)
+		}
+	}
 	if fresh.indexBuilds != 1 {
 		t.Fatalf("index built %d times, want 1", fresh.indexBuilds)
 	}

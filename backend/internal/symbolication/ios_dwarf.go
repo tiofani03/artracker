@@ -124,6 +124,8 @@ type IOSSymbolicator struct {
 	indexOnce   sync.Once
 	index       *addressIndex
 	indexBuilds int // number of times the index was built; tests assert it stays at 1
+
+	buildIndexFn func() *addressIndex // test hook replacing buildAddressIndex
 }
 
 // NewIOSSymbolicator creates a new symbolicator from Mach-O binary data.

@@ -52,8 +52,12 @@ func (s *IOSSymbolicator) TextVMAddr() uint64 {
 }
 
 // SymbolicateImageAddress symbolicates a runtime address pc of an image loaded
-// at loadAddr, i.e. SymbolicateAddress(pc - loadAddr + TextVMAddr()).
+// at loadAddr, i.e. SymbolicateAddress(pc - loadAddr + TextVMAddr()). A pc below
+// loadAddr cannot belong to the image and is reported as not found.
 func (s *IOSSymbolicator) SymbolicateImageAddress(pc, loadAddr uint64) ResolvedLocation {
+	if pc < loadAddr {
+		return ResolvedLocation{}
+	}
 	return s.SymbolicateAddress(pc - loadAddr + s.TextVMAddr())
 }
 
@@ -61,9 +65,25 @@ func (s *IOSSymbolicator) SymbolicateImageAddress(pc, loadAddr uint64) ResolvedL
 func (s *IOSSymbolicator) addressIndex() *addressIndex {
 	s.indexOnce.Do(func() {
 		s.indexBuilds++
-		s.index = s.buildAddressIndex()
+		s.index = s.safeBuildAddressIndex()
 	})
 	return s.index
+}
+
+// safeBuildAddressIndex builds the index, falling back to an empty one (every
+// lookup then reports not-found) if malformed DWARF makes the build panic. The
+// symbolicator is shared across goroutines and the Once is already consumed, so a
+// nil index would crash every later call.
+func (s *IOSSymbolicator) safeBuildAddressIndex() (idx *addressIndex) {
+	defer func() {
+		if r := recover(); r != nil {
+			idx = &addressIndex{}
+		}
+	}()
+	if s.buildIndexFn != nil {
+		return s.buildIndexFn()
+	}
+	return s.buildAddressIndex()
 }
 
 func (s *IOSSymbolicator) buildAddressIndex() *addressIndex {
@@ -162,8 +182,9 @@ func (idx *addressIndex) lookupLine(pc uint64) (lineRow, bool) {
 	return lineRow{}, false
 }
 
-// lookupFunction returns the name of the innermost subprogram whose range
-// contains pc.
+// lookupFunction returns the name of the subprogram containing pc. When ranges
+// overlap, the one starting closest below pc wins (the later in DWARF order on a
+// tie); ranges that end at or before pc are skipped.
 func (idx *addressIndex) lookupFunction(pc uint64) (string, bool) {
 	fs := idx.funcs
 	// First range starting after pc; everything before it has low <= pc.
