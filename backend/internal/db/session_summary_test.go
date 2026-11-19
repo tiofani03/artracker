@@ -32,7 +32,7 @@ func TestSessionSummaryBackfill(t *testing.T) {
 	if err := Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	body, err := migrationsFS.ReadFile("migrations/0020_session_summary.sql")
+	body, err := migrationsFS.ReadFile("migrations/0021_session_summary_backfill.sql")
 	if err != nil {
 		t.Fatalf("read migration: %v", err)
 	}
@@ -70,6 +70,15 @@ func TestSessionSummaryBackfill(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO issue_events(issue_id, session_id, user_id, environment) VALUES ($1,'s3','u3','qa')`, issueID); err != nil {
 		t.Fatal(err)
 	}
+	// Older than the 30-day backfill horizon: the migration must not scan it (the list window is 7 days).
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO telemetry_events(id, project_id, kind, name, session_id, event_timestamp)
+		VALUES (gen_random_uuid(), $1, 'event', 'tap', 's_old', now() - interval '40 days')`, pid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO issue_events(issue_id, session_id, created_at) VALUES ($1,'s_old_crash', now() - interval '40 days')`, issueID); err != nil {
+		t.Fatal(err)
+	}
 
 	want := map[string]summaryRow{
 		"s1": {events: 2, rage: true, env: "staging"},
@@ -99,6 +108,10 @@ func TestSessionSummaryBackfill(t *testing.T) {
 		t.Fatalf("first run: %v", err)
 	}
 	check("first run")
+	var old int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM session_contexts WHERE project_id = $1 AND session_id IN ('s_old', 's_old_crash')`, pid).Scan(&old); err != nil || old != 0 {
+		t.Fatalf("rows older than the backfill horizon were backfilled: n=%d err=%v", old, err)
+	}
 	if _, err := pool.Exec(ctx, string(body), pgx.QueryExecModeSimpleProtocol); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
