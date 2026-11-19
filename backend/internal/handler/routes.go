@@ -34,6 +34,8 @@ func (h *Handler) Routes(api fiber.Router) {
 		return
 	}
 
+	api.Post("/app-start/profiles", h.VerifyIngestKey, h.RateLimitIngest, h.IngestAppStartProfile)
+
 	a := api.Group("/auth")
 	a.Get("/:provider/login", h.OAuthLogin)
 	a.Get("/:provider/callback", h.OAuthCallback)

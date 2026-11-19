@@ -165,6 +165,57 @@ var openAPISpecBytes = []byte(`{
         }
       }
     },
+    "/app-start/profiles": {
+      "post": {
+        "summary": "Upload App Start Profile",
+        "description": "Uploads one sampled startup profile (spec: app start profiling) for a start already reported as an app_start perf item. The body is stored gzipped and symbolicated asynchronously. Supports Content-Encoding: gzip (at most 1MB compressed, 4MB uncompressed); a plain JSON body is accepted up to 4MB. A duplicate start_id is accepted and ignored.",
+        "operationId": "ingestAppStartProfile",
+        "tags": ["Ingestion"],
+        "parameters": [
+          {
+            "name": "X-Artracker-Key",
+            "in": "header",
+            "required": true,
+            "description": "Project client SDK key starting with art_live_",
+            "schema": { "type": "string", "example": "art_live_a892b109c3d4e5f6" }
+          },
+          {
+            "name": "Content-Encoding",
+            "in": "header",
+            "required": false,
+            "description": "Optional compression encoding",
+            "schema": { "type": "string", "enum": ["gzip"] }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AppStartProfileUpload" }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Profile stored (or already present) and queued for symbolication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "accepted" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Invalid JSON, invalid gzip stream, or a profile that breaks the wire contract (version, platform, interval, counts, indexes, sample order)" },
+          "401": { "description": "Missing or invalid client key" },
+          "413": { "description": "Payload exceeds 1MB gzip or 4MB uncompressed limit" },
+          "429": { "description": "Per-project rate limit exceeded" }
+        }
+      }
+    },
     "/sdk/validate": {
       "get": {
         "summary": "Validate SDK Client Key",
@@ -1727,6 +1778,87 @@ var openAPISpecBytes = []byte(`{
           "browser": { "type": "string", "example": "Chrome" },
           "os": { "type": "string", "example": "Android" },
           "properties": { "type": "object", "example": { "product_id": "sku_99", "price": 150000 } }
+        }
+      },
+      "AppStartProfileUpload": {
+        "type": "object",
+        "required": ["profile"],
+        "properties": {
+          "sdk": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "example": "artracker-android" },
+              "version": { "type": "string", "example": "0.4.0" }
+            }
+          },
+          "context": {
+            "type": "object",
+            "description": "Envelope context. app_version (iOS may send \"1.4.0 (217)\"), build and environment are stored with the profile.",
+            "additionalProperties": true,
+            "example": { "app_version": "3.2.0", "build": "1203", "environment": "production" }
+          },
+          "profile": {
+            "type": "object",
+            "required": ["v", "start_id", "platform", "interval_ms", "frames", "stacks", "samples"],
+            "properties": {
+              "v": { "type": "integer", "enum": [1] },
+              "start_id": { "type": "string", "maxLength": 128, "description": "Same id as the app_start perf item" },
+              "platform": { "type": "string", "enum": ["android", "ios"] },
+              "app_packages": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 128 }, "description": "Android package prefixes that count as app code" },
+              "interval_ms": { "type": "integer", "minimum": 1, "maximum": 100 },
+              "t0": { "type": "string", "example": "process_start" },
+              "frames": {
+                "type": "array",
+                "maxItems": 20000,
+                "description": "Unique frames. Android: c, m, l, f. iOS: a, i, sym.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "c": { "type": "string", "description": "Android class" },
+                    "m": { "type": "string", "description": "Android method" },
+                    "l": { "type": "integer", "description": "Android line (omit if unknown)" },
+                    "f": { "type": "string", "description": "Android source file" },
+                    "a": { "type": "string", "example": "0x1045f3a20", "description": "iOS hex address" },
+                    "i": { "type": "integer", "description": "iOS index into images" },
+                    "sym": { "type": "string", "description": "iOS dladdr name for non-app images" }
+                  }
+                }
+              },
+              "images": {
+                "type": "array",
+                "maxItems": 512,
+                "description": "iOS only: images referenced by frames",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "uuid": { "type": "string" },
+                    "name": { "type": "string" },
+                    "load": { "type": "string", "example": "0x104000000" },
+                    "app": { "type": "boolean" }
+                  }
+                }
+              },
+              "stacks": {
+                "type": "array",
+                "maxItems": 1000,
+                "description": "Unique stacks as frame indexes, root first, at most 128 frames each",
+                "items": { "type": "array", "maxItems": 128, "items": { "type": "integer" } }
+              },
+              "samples": {
+                "type": "array",
+                "maxItems": 1000,
+                "description": "Sorted by t",
+                "items": {
+                  "type": "object",
+                  "required": ["t", "s"],
+                  "properties": {
+                    "t": { "type": "integer", "minimum": 0, "maximum": 60000, "description": "ms since the start anchor" },
+                    "s": { "type": "integer", "description": "Index into stacks" }
+                  }
+                }
+              }
+            }
+          }
         }
       },
       "AnalyticsEventEnvelope": {
