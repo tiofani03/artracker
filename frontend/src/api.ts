@@ -802,7 +802,7 @@ export type HeatmapGetParams = Omit<HeatmapParams, 'platform'> & {
   aspect?: number
 }
 
-function heatmapQuery(params: Record<string, string | number | undefined>): string {
+export function heatmapQuery(params: Record<string, string | number | undefined>): string {
   const qs = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== '') qs.set(k, String(v))
@@ -822,6 +822,41 @@ export const heatmapApi = {
       method: 'PATCH',
       body: JSON.stringify({ excluded_screens: excluded }),
     }),
+}
+
+export type FlowScreen = {
+  screen: string
+  platform: string
+  sessions: number
+  views: number
+  median_ms: number
+  p75_ms: number
+  entry_sessions: number
+  exit_sessions: number
+}
+export type FlowScreensResponse = { screens: FlowScreen[]; app_versions: string[]; unrecognized_sessions: number }
+export type FlowDirection = 'next' | 'prev'
+export type FlowNode = { id: string; step: number; screen: string }
+export type FlowLink = { source: string; target: string; sessions: number }
+export type FlowPathsResponse = {
+  screen: string
+  direction: FlowDirection
+  sessions: number
+  nodes: FlowNode[]
+  links: FlowLink[]
+}
+export type FlowPathsParams = HeatmapParams & {
+  screen: string
+  platform: string
+  direction?: FlowDirection
+  steps?: number
+}
+
+export const flowApi = {
+  screens: (projectId: number, params: HeatmapParams = {}) =>
+    request<FlowScreensResponse>(`/projects/${projectId}/flow/screens${heatmapQuery(params)}`),
+  paths: (projectId: number, params: FlowPathsParams) =>
+    request<FlowPathsResponse>(`/projects/${projectId}/flow/paths${heatmapQuery(params)}`),
 }
 
 export type OrganizationMember = {
