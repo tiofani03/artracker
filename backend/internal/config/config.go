@@ -65,6 +65,8 @@ type Config struct {
 	AlertsWorker     bool
 	// HeatmapWorker gates the tap heatmap extraction worker; run it on exactly one instance.
 	HeatmapWorker bool
+	// AppStartWorker gates the app start profile symbolication worker; run it on exactly one instance.
+	AppStartWorker bool
 	// AlertsBotMode is "tenant" (each organisation connects its own bot, the
 	// default) or "shared" (one operator bot from TELEGRAM_BOT_TOKEN).
 	AlertsBotMode string
@@ -140,6 +142,13 @@ func Load() Config {
 	cfg.HeatmapWorker, heatmapRecognised = parseAlertsWorker(rawHeatmap)
 	if !heatmapRecognised {
 		slog.Warn("unrecognised HEATMAP_WORKER value, keeping the heatmap worker enabled", "value_length", len(rawHeatmap))
+	}
+
+	rawAppStart := env("APPSTART_WORKER", "")
+	var appStartRecognised bool
+	cfg.AppStartWorker, appStartRecognised = parseAlertsWorker(rawAppStart)
+	if !appStartRecognised {
+		slog.Warn("unrecognised APPSTART_WORKER value, keeping the app start worker enabled", "value_length", len(rawAppStart))
 	}
 
 	cfg.AlertsBotMode = loadAlertsBotMode()

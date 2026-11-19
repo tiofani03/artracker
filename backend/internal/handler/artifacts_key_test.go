@@ -214,3 +214,29 @@ func TestUploadSymbolsEndpoint(t *testing.T) {
 		t.Fatalf("upload via /symbols/:version: status = %d, want 201 (%s)", code, out)
 	}
 }
+
+// A mapping upload sends the release's profiles that were waiting on symbols back to the worker.
+func TestProguardUploadRequeuesAppStartProfiles(t *testing.T) {
+	e, _, project, hdr := keyFixture(t)
+	sec := e.createKey(t, project, "secret_admin", hdr).Secret
+	for id, version := range map[string]string{"match": "1.4.0", "other": "1.5.0"} {
+		if _, err := e.pool.Exec(context.Background(), `
+			INSERT INTO app_start_profiles (project_id, start_id, platform, app_version, raw, status, attempts, next_attempt_at)
+			VALUES ($1, $2, 'android', $3, '\x00', 'missing_symbols', 3, NULL)`, project, id, version); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := e.uploadWithKey(t, "/api/v1/sdk/releases/1.4.0/proguard", sec, testMapping, nil).StatusCode; got != 201 {
+		t.Fatalf("upload status = %d, want 201", got)
+	}
+
+	q := fmt.Sprintf(`SELECT count(*) FROM app_start_profiles WHERE project_id=%d AND start_id='match' AND status='pending' AND attempts=0 AND next_attempt_at IS NOT NULL`, project)
+	if n := e.count(t, q); n != 1 {
+		t.Errorf("requeued matching-version profiles = %d, want 1", n)
+	}
+	q = fmt.Sprintf(`SELECT count(*) FROM app_start_profiles WHERE project_id=%d AND start_id='other' AND status='missing_symbols'`, project)
+	if n := e.count(t, q); n != 1 {
+		t.Errorf("profiles of another version still missing_symbols = %d, want 1", n)
+	}
+}
