@@ -1,3 +1,4 @@
+import { displayScreen, screenMatches } from '../screens/name'
 import { useEffect, useMemo, useState } from 'react'
 import { flowApi, type FlowDirection, type FlowPathsResponse, type FlowScreensResponse } from '../api'
 import CustomSelect from '../components/CustomSelect'
@@ -60,7 +61,7 @@ function SankeyChart({
         className="fl-svg"
         viewBox={`-2 -6 ${CHART_W + 4} ${CHART_H + 12}`}
         role="group"
-        aria-label={`${res.direction === 'next' ? 'Screens after' : 'Screens before'} ${res.screen}`}
+        aria-label={`${res.direction === 'next' ? 'Screens after' : 'Screens before'} ${displayScreen(res.screen)}`}
       >
         <g>
           {laid.links.map((l) => {
@@ -87,7 +88,7 @@ function SankeyChart({
           {laid.nodes.map((n) => {
             const pickable = isSelectableNode(n.screen) && n.step !== 0
             const tone = isTerminal(n.screen) ? ' fl-node--drop' : n.screen === 'Other' ? ' fl-node--other' : ''
-            const label = `${truncate(n.screen, LABEL_CHARS)} · ${percentLabel(n.sessions, res.sessions)}`
+            const label = `${truncate(displayScreen(n.screen), LABEL_CHARS)} · ${percentLabel(n.sessions, res.sessions)}`
             return (
               <g
                 key={n.id}
@@ -95,7 +96,7 @@ function SankeyChart({
                 onClick={pickable ? () => onPick(n.screen) : undefined}
                 role={pickable ? 'button' : undefined}
                 tabIndex={pickable ? 0 : undefined}
-                aria-label={pickable ? `Show paths for ${n.screen}` : undefined}
+                aria-label={pickable ? `Show paths for ${displayScreen(n.screen)}` : undefined}
                 onKeyDown={
                   pickable
                     ? (e) => {
@@ -107,7 +108,7 @@ function SankeyChart({
                     : undefined
                 }
               >
-                <title>{`${n.screen}: ${n.sessions} ${n.sessions === 1 ? 'session' : 'sessions'}`}</title>
+                <title>{`${displayScreen(n.screen)}: ${n.sessions} ${n.sessions === 1 ? 'session' : 'sessions'}`}</title>
                 <rect x={n.x} y={n.y} width={NODE_WIDTH} height={Math.max(1, n.h)} rx={2} />
                 <text className="fl-label" x={n.x + NODE_WIDTH + 6} y={n.y + Math.max(1, n.h) / 2} dominantBaseline="middle">
                   {label}
@@ -157,8 +158,7 @@ function FlowView({ projectId }: { projectId: number }) {
 
   const allScreens = useMemo(() => list.data?.screens ?? [], [list.data])
   const screens = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    return q ? allScreens.filter((s) => s.screen.toLowerCase().includes(q)) : allScreens
+    return allScreens.filter((s) => screenMatches(s.screen, search))
   }, [allScreens, search])
   const unrecognized = list.data?.unrecognized_sessions ?? 0
 
@@ -251,9 +251,9 @@ function FlowView({ projectId }: { projectId: number }) {
                           type="button"
                           className="fl-row-btn"
                           aria-pressed={active}
-                          title={s.screen}
+                          title={displayScreen(s.screen)}
                         >
-                          {s.screen}
+                          {displayScreen(s.screen)}
                         </button>
                       </td>
                       <td className="fl-num">{s.sessions}</td>
@@ -300,8 +300,8 @@ function FlowView({ projectId }: { projectId: number }) {
         ) : (
           <>
             <div className="hm-toolbar">
-              <h2 className="dash-card__title hm-toolbar__title" title={selected.screen}>
-                {selected.screen}
+              <h2 className="dash-card__title hm-toolbar__title" title={displayScreen(selected.screen)}>
+                {displayScreen(selected.screen)}
               </h2>
               {pathsLoading && res && <span className="ppl-muted">Loading…</span>}
               <div className="dash-seg" role="group" aria-label="Direction">
@@ -334,7 +334,7 @@ function FlowView({ projectId }: { projectId: number }) {
               <div className={`fl-stage${pathsLoading ? ' is-loading' : ''}`}>
                 <SankeyChart res={res} onPick={pick} />
                 <p className="hm-note">
-                  {res.sessions} {res.sessions === 1 ? 'session' : 'sessions'} reached {res.screen}. Hover a band for its
+                  {res.sessions} {res.sessions === 1 ? 'session' : 'sessions'} reached {displayScreen(res.screen)}. Hover a band for its
                   share; click a screen to follow its paths. Updated about 10 minutes after a session ends.
                 </p>
               </div>

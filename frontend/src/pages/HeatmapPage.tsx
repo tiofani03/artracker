@@ -1,3 +1,4 @@
+import { displayScreen, screenMatches } from '../screens/name'
 import { useEffect, useMemo, useState } from 'react'
 import { heatmapApi, type HeatmapCell, type HeatmapOrientation, type HeatmapResponse, type HeatmapScreen, type HeatmapScreensResponse } from '../api'
 import CustomSelect from '../components/CustomSelect'
@@ -63,9 +64,7 @@ function HeatmapView({ projectId }: { projectId: number }) {
   const listLoading = list.key !== listKey
 
   const screens = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    const all = list.data?.screens ?? []
-    return q ? all.filter((s) => s.screen.toLowerCase().includes(q)) : all
+    return (list.data?.screens ?? []).filter((s) => screenMatches(s.screen, search))
   }, [list.data, search])
 
   const heatKey = selected ? `${listKey}|${screenKey(selected)}|${orientation}|${aspect}` : ''
@@ -194,8 +193,8 @@ function HeatmapView({ projectId }: { projectId: number }) {
                       setHover(null)
                     }}
                   >
-                    <span className="hm-screen__name" title={s.screen}>
-                      {s.screen}
+                    <span className="hm-screen__name" title={displayScreen(s.screen)}>
+                      {displayScreen(s.screen)}
                     </span>
                     <span className="hm-screen__meta">
                       {s.platform} · {s.sessions} {s.sessions === 1 ? 'session' : 'sessions'} · {s.taps} {s.taps === 1 ? 'tap' : 'taps'}
@@ -226,8 +225,8 @@ function HeatmapView({ projectId }: { projectId: number }) {
         ) : (
           <>
             <div className="hm-toolbar">
-              <h2 className="dash-card__title hm-toolbar__title" title={selected.screen}>
-                {selected.screen}
+              <h2 className="dash-card__title hm-toolbar__title" title={displayScreen(selected.screen)}>
+                {displayScreen(selected.screen)}
               </h2>
               {heatLoading && <span className="ppl-muted">Loading…</span>}
               {aspectOptions.length > 0 && (
