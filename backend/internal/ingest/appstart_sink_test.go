@@ -2,7 +2,9 @@ package ingest
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,5 +67,57 @@ func TestAppStartSinkIgnoresDuplicateStartID(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("count = %d, want 1", n)
+	}
+}
+
+// A sanitised hostile item must not make the batch fail for the other rows (including other projects).
+func TestAppStartSinkBatchWithSanitisedItemInsertsAllRows(t *testing.T) {
+	pool := appStartTestDB(t)
+	ctx := context.Background()
+
+	var orgID, p1, p2 int64
+	if err := pool.QueryRow(ctx, `INSERT INTO organizations(name, slug) VALUES ('Acme','acme') RETURNING id`).Scan(&orgID); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO projects(org_id, name, slug, platform) VALUES ($1,'P1','p1','android') RETURNING id`, orgID).Scan(&p1); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO projects(org_id, name, slug, platform) VALUES ($1,'P2','p2','android') RETURNING id`, orgID).Scan(&p2); err != nil {
+		t.Fatal(err)
+	}
+
+	boundary := strings.Repeat("a", 63) + "€€"
+	hostile := fmt.Sprintf(`{"v":1,"platform":"android","start_id":"h\u0000x","type":"cold","duration_ms":500,
+		"first_screen":"A\u0000B","build":%q,"device":{"model":%q,"os_version":"1\u00004","ram_mb":2000000000}}`, boundary, boundary)
+	now := time.Now().UTC()
+	item := appStartItem(hostile)
+	item.SessionID = "s\x00es"
+
+	var rows []AppStartRow
+	for i, pid := range []int64{p1, p2} {
+		good, err := ParseAppStartItem(pid, now, "production", "1.0", appStartItem(fmt.Sprintf(
+			`{"v":1,"platform":"android","start_id":"good%d","type":"cold","duration_ms":500}`, i)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		bad, err := ParseAppStartItem(pid, now, "\x00", boundary, item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, good, bad)
+	}
+	if err := NewPgxAppStartSink(pool).WriteAppStarts(ctx, rows); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM app_starts`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 4 {
+		t.Fatalf("rows = %d, want 4", n)
+	}
+	var env string
+	if err := pool.QueryRow(ctx, `SELECT environment FROM app_starts WHERE start_id='hx' AND project_id=$1`, p1).Scan(&env); err != nil || env != "production" {
+		t.Fatalf("hostile row env = %q err=%v", env, err)
 	}
 }

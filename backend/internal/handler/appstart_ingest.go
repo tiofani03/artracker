@@ -15,6 +15,9 @@ const appStartProfileShortLen = 64
 // IngestAppStartProfile handles POST /api/v1/app-start/profiles: one startup profile per start_id,
 // stored gzipped and symbolicated later by a worker. A duplicate start_id is accepted and ignored.
 func (h *Handler) IngestAppStartProfile(c *fiber.Ctx) error {
+	if h.db == nil || h.ingestSvc == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "app start ingestion unavailable")
+	}
 	projectID := c.Locals("projectID").(int64)
 	// c.Body() would gunzip on its own, without our size cap: read the raw bytes and decompress with a limit.
 	body := c.Request().Body()
@@ -69,9 +72,13 @@ func (h *Handler) IngestAppStartProfile(c *fiber.Ctx) error {
 		build = b
 	}
 	startID := ingest.CleanStoredString(upload.Profile.StartID, ingest.MaxStringIDLen)
-	env = ingest.CleanStoredString(env, appStartProfileShortLen)
+	env = ingest.CleanAppStartEnv(env)
 	version = ingest.CleanStoredString(version, appStartProfileShortLen)
 	build = ingest.CleanStoredString(build, appStartProfileShortLen)
+
+	if startID == "" {
+		return reject(fiber.StatusBadRequest, "invalid app start profile")
+	}
 
 	_, err = h.db.Exec(c.Context(), `
 		INSERT INTO app_start_profiles (project_id, start_id, platform, environment, app_version, build, image_uuids, raw)

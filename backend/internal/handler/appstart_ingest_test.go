@@ -222,3 +222,43 @@ func TestIngestAppStartProfileSanitizesStoredStrings(t *testing.T) {
 		t.Fatalf("stored %q/%q/%q/%q", startID, version, build, env)
 	}
 }
+
+func TestIngestAppStartProfileUnavailableWithoutDeps(t *testing.T) {
+	for name, h := range map[string]*Handler{
+		"no db":     {ingestSvc: ingest.NewService(ingest.Config{Workers: 1, QueueSize: 1, BatchSize: 1, FlushIntervalMs: 50}, nil, ingest.NewMemoryStorageSink())},
+		"no ingest": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			app := fiber.New(fiber.Config{ErrorHandler: ErrorHandler})
+			app.Post("/p", func(c *fiber.Ctx) error {
+				c.Locals("projectID", int64(1))
+				return h.IngestAppStartProfile(c)
+			})
+			req := httptest.NewRequest("POST", "/p", strings.NewReader(profileJSON("s1", androidCtx)))
+			resp, err := app.Test(req, -1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != fiber.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503", resp.StatusCode)
+			}
+		})
+	}
+}
+
+func TestIngestAppStartProfileEmptyEnvDefaultsToProduction(t *testing.T) {
+	app, pool, projectID := newProfileEnv(t)
+	ctxJSON := `{"app_version":"3.2.0","build":"1","environment":"\u0000"}`
+	if code := postProfile(t, app, profileTestKey, []byte(profileJSON("env-1", ctxJSON)), false); code != 202 {
+		t.Fatalf("status = %d, want 202", code)
+	}
+	var env string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT environment FROM app_start_profiles WHERE project_id=$1`, projectID).Scan(&env); err != nil {
+		t.Fatal(err)
+	}
+	if env != "production" {
+		t.Fatalf("env = %q, want production", env)
+	}
+}

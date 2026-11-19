@@ -19,6 +19,9 @@ const (
 	appStartPhaseSumSlack = 5
 	appStartMaxFirstScrn  = 255
 	appStartMaxShortStr   = 64
+	appStartMaxRAMMB      = 1 << 20 // keeps ram_mb well inside the INT column
+
+	defaultAppStartEnv = "production"
 )
 
 // ErrInvalidAppStart is returned for any app_start item that does not satisfy the wire contract.
@@ -77,19 +80,29 @@ type appStartAttributes struct {
 // EnvelopeEnvAndVersion returns context.environment (default "production", at most 64 chars) and
 // context.app_version, falling back to release_version (at most 64 chars).
 func EnvelopeEnvAndVersion(ctx map[string]any) (env, version string) {
-	env = "production"
+	env = defaultAppStartEnv
 	if ctx == nil {
 		return env, ""
 	}
-	if v, ok := ctx["environment"].(string); ok && v != "" {
-		env = truncateStr(v, 64)
+	if v, ok := ctx["environment"].(string); ok {
+		env = CleanAppStartEnv(v)
 	}
 	if v, ok := ctx["app_version"].(string); ok && v != "" {
-		version = truncateStr(v, 64)
+		version = CleanStoredString(v, appStartMaxShortStr)
 	} else if v, ok := ctx["release_version"].(string); ok && v != "" {
-		version = truncateStr(v, 64)
+		version = CleanStoredString(v, appStartMaxShortStr)
 	}
 	return env, version
+}
+
+// CleanAppStartEnv sanitises an environment name (rune-safe, no NUL, at most 64 runes) and falls back to
+// "production" when nothing is left.
+func CleanAppStartEnv(env string) string {
+	env = CleanStoredString(env, appStartMaxShortStr)
+	if env == "" {
+		return defaultAppStartEnv
+	}
+	return env
 }
 
 // SplitVersionBuild turns the iOS SDK's "1.4.0 (217)" into ("1.4.0", "217"), splitting on the last " (" only.
@@ -125,7 +138,8 @@ func ParseAppStartItem(projectID int64, receivedAt time.Time, env, appVersion st
 	if a.Type != "cold" && a.Type != "warm" && a.Type != "hot" {
 		return AppStartRow{}, fmt.Errorf("%w: type %q", ErrInvalidAppStart, a.Type)
 	}
-	if a.StartID == "" || len(a.StartID) > MaxStringIDLen {
+	startID := CleanStoredString(a.StartID, MaxStringIDLen)
+	if startID == "" || len(a.StartID) > MaxStringIDLen {
 		return AppStartRow{}, fmt.Errorf("%w: start_id length %d", ErrInvalidAppStart, len(a.StartID))
 	}
 	if a.DurationMs < 1 || a.DurationMs > appStartMaxDurationMs {
@@ -155,7 +169,7 @@ func ParseAppStartItem(projectID int64, receivedAt time.Time, env, appVersion st
 	}
 
 	version, splitBuild := SplitVersionBuild(appVersion)
-	build := strings.TrimSpace(a.Build)
+	build := strings.TrimSpace(CleanStoredString(a.Build, appStartMaxShortStr))
 	if build == "" {
 		build = splitBuild
 	}
@@ -165,7 +179,7 @@ func ParseAppStartItem(projectID int64, receivedAt time.Time, env, appVersion st
 		phases = []AppStartPhase{}
 	}
 	var ramMB *int
-	if a.Device.RAMMB > 0 {
+	if a.Device.RAMMB > 0 && a.Device.RAMMB <= appStartMaxRAMMB {
 		v := a.Device.RAMMB
 		ramMB = &v
 	}
@@ -176,18 +190,18 @@ func ParseAppStartItem(projectID int64, receivedAt time.Time, env, appVersion st
 
 	return AppStartRow{
 		ProjectID:   projectID,
-		StartID:     a.StartID,
-		SessionID:   truncateStr(strings.TrimSpace(item.SessionID), MaxStringIDLen),
+		StartID:     startID,
+		SessionID:   CleanStoredString(strings.TrimSpace(item.SessionID), MaxStringIDLen),
 		Platform:    a.Platform,
-		Environment: env,
+		Environment: CleanAppStartEnv(env),
 		Type:        a.Type,
 		DurationMs:  a.DurationMs,
 		Phases:      phases,
-		FirstScreen: truncateStr(a.FirstScreen, appStartMaxFirstScrn),
-		AppVersion:  version,
-		Build:       truncateStr(build, appStartMaxShortStr),
-		OSVersion:   truncateStr(a.Device.OSVersion, appStartMaxShortStr),
-		DeviceModel: truncateStr(a.Device.Model, appStartMaxShortStr),
+		FirstScreen: CleanStoredString(a.FirstScreen, appStartMaxFirstScrn),
+		AppVersion:  CleanStoredString(version, appStartMaxShortStr),
+		Build:       CleanStoredString(build, appStartMaxShortStr),
+		OSVersion:   CleanStoredString(a.Device.OSVersion, appStartMaxShortStr),
+		DeviceModel: CleanStoredString(a.Device.Model, appStartMaxShortStr),
 		RAMMB:       ramMB,
 		Trampoline:  a.Trampoline,
 		Profiled:    a.Profiled,

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 const appStartExampleAttrs = `{
@@ -187,5 +188,65 @@ func TestEnvelopeEnvAndVersion(t *testing.T) {
 	_, ver = EnvelopeEnvAndVersion(map[string]any{"app_version": "1.2", "release_version": "9"})
 	if ver != "1.2" {
 		t.Errorf("app_version should win: %q", ver)
+	}
+}
+
+func TestParseAppStartItemCleansStrings(t *testing.T) {
+	// 63 ASCII bytes then a 3-byte rune: byte-slicing at 64 would split the rune.
+	boundary := strings.Repeat("a", 63) + "€€"
+	attrs := fmt.Sprintf(`{"v":1,"platform":"android","start_id":"s\u0000id","type":"cold","duration_ms":500,
+		"first_screen":"Main\u0000Activity","build":%q,"device":{"model":%q,"os_version":"1\u00004","ram_mb":2000000000}}`,
+		boundary, boundary)
+	item := appStartItem(attrs)
+	item.SessionID = "ses\x00_a"
+	row, err := ParseAppStartItem(1, time.Now(), "prod\x00", boundary+"x", item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.StartID != "sid" || row.SessionID != "ses_a" || row.FirstScreen != "MainActivity" || row.OSVersion != "14" || row.Environment != "prod" {
+		t.Errorf("NUL not stripped: %+v", row)
+	}
+	for name, v := range map[string]string{"build": row.Build, "model": row.DeviceModel, "version": row.AppVersion} {
+		if !utf8.ValidString(v) || strings.ContainsRune(v, 0) {
+			t.Errorf("%s not clean: %q", name, v)
+		}
+		if utf8.RuneCountInString(v) != 64 {
+			t.Errorf("%s runes = %d, want 64", name, utf8.RuneCountInString(v))
+		}
+	}
+	if row.RAMMB != nil {
+		t.Errorf("huge ram_mb should be nil, got %d", *row.RAMMB)
+	}
+
+	ok := fmt.Sprintf(`{"v":1,"platform":"android","start_id":"s","type":"cold","duration_ms":500,"device":{"ram_mb":%d}}`, 1048576)
+	row, err = ParseAppStartItem(1, time.Now(), "production", "", appStartItem(ok))
+	if err != nil || row.RAMMB == nil || *row.RAMMB != 1048576 {
+		t.Errorf("ram_mb at the limit should be kept: %v %v", row.RAMMB, err)
+	}
+}
+
+func TestParseAppStartItemRejectsStartIDEmptyAfterCleaning(t *testing.T) {
+	attrs := `{"v":1,"platform":"android","start_id":"\u0000\u0000","type":"cold","duration_ms":500}`
+	_, err := ParseAppStartItem(1, time.Now(), "production", "", appStartItem(attrs))
+	if !errors.Is(err, ErrInvalidAppStart) {
+		t.Fatalf("err = %v, want ErrInvalidAppStart", err)
+	}
+}
+
+func TestParseAppStartItemEmptyEnvAfterCleaningIsProduction(t *testing.T) {
+	row, err := ParseAppStartItem(1, time.Now(), "\x00\x00", "", appStartItem(appStartExampleAttrs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Environment != "production" {
+		t.Errorf("environment = %q, want production", row.Environment)
+	}
+	env, _ := EnvelopeEnvAndVersion(map[string]any{"environment": "\x00"})
+	if env != "production" {
+		t.Errorf("envelope env = %q, want production", env)
+	}
+	env, _ = EnvelopeEnvAndVersion(map[string]any{"environment": ""})
+	if env != "production" {
+		t.Errorf("empty envelope env = %q, want production", env)
 	}
 }
