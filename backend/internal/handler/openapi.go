@@ -580,6 +580,29 @@ var openAPISpecBytes = []byte(`{
         }
       }
     },
+    "/projects/{projectID}/flow/paths": {
+      "get": {
+        "summary": "Get Flow Paths",
+        "description": "Sankey data of where sessions went after (direction=next) or came from before (direction=prev) a screen. Each session counts from its first visit to the screen; later screens per step beyond the top 6 are folded into Other, and sessions that ended (next) or started (prev) there continue to Exit or Start.",
+        "operationId": "getFlowPaths",
+        "tags": ["Flow"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "screen", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "platform", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "direction", "in": "query", "schema": { "type": "string", "enum": ["next", "prev"], "default": "next" } },
+          { "name": "steps", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 5, "default": 3 } },
+          { "name": "from", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default 7 days ago" },
+          { "name": "to", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default now" },
+          { "name": "app_version", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "{screen, direction, sessions (sessions that visited the screen), nodes:[{id:\"step:screen\",step,screen}], links:[{source,target,sessions}]}" },
+          "400": { "description": "Missing screen or platform, invalid direction, steps outside 1..5, or invalid date range" }
+        }
+      }
+    },
     "/projects/{projectID}/heatmap": {
       "get": {
         "summary": "Get Tap Heatmap",

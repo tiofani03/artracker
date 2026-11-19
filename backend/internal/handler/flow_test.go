@@ -7,6 +7,214 @@ import (
 	"testing"
 )
 
+type flowPathsResp struct {
+	Screen    string `json:"screen"`
+	Direction string `json:"direction"`
+	Sessions  int    `json:"sessions"`
+	Nodes     []struct {
+		ID     string `json:"id"`
+		Step   int    `json:"step"`
+		Screen string `json:"screen"`
+	} `json:"nodes"`
+	Links []struct {
+		Source   string `json:"source"`
+		Target   string `json:"target"`
+		Sessions int    `json:"sessions"`
+	} `json:"links"`
+}
+
+func flowLinkMap(links []flowLink) map[string]int {
+	m := map[string]int{}
+	for _, l := range links {
+		m[l.Source+">"+l.Target] = l.Sessions
+	}
+	return m
+}
+
+func TestBuildFlowPathsCountsAndExit(t *testing.T) {
+	nodes, links := buildFlowPaths([][]string{
+		{"Home", "Cart", "Exit"},
+		{"Home", "Exit"},
+		{"Home", "Cart", "Pay"},
+	}, 6)
+	want := map[string]int{"0:Home>1:Cart": 2, "0:Home>1:Exit": 1, "1:Cart>2:Exit": 1, "1:Cart>2:Pay": 1}
+	if got := flowLinkMap(links); !reflect.DeepEqual(got, want) {
+		t.Errorf("links = %v, want %v", got, want)
+	}
+	if len(links) != len(want) {
+		t.Errorf("duplicate links: %+v", links)
+	}
+	for _, l := range links {
+		if l.Source == "1:Exit" || l.Source == "2:Exit" {
+			t.Errorf("link out of Exit: %+v", l)
+		}
+	}
+	ids := []string{}
+	for _, n := range nodes {
+		ids = append(ids, n.ID)
+	}
+	if wantIDs := []string{"0:Home", "1:Cart", "1:Exit", "2:Pay", "2:Exit"}; !reflect.DeepEqual(ids, wantIDs) {
+		t.Errorf("node order = %v, want %v", ids, wantIDs)
+	}
+}
+
+func TestBuildFlowPathsOther(t *testing.T) {
+	var paths [][]string
+	for i := 1; i <= 8; i++ {
+		for j := 0; j < 9-i; j++ { // S1 x8 ... S8 x1
+			paths = append(paths, []string{"Home", fmt.Sprintf("S%d", i)})
+		}
+	}
+	paths = append(paths, []string{"Home", "Exit"})
+	nodes, links := buildFlowPaths(paths, 6)
+	m := flowLinkMap(links)
+	for i := 1; i <= 6; i++ {
+		if got, want := m[fmt.Sprintf("0:Home>1:S%d", i)], 9-i; got != want {
+			t.Errorf("S%d = %d, want %d", i, got, want)
+		}
+	}
+	if m["0:Home>1:Other"] != 3 { // S7 (2) + S8 (1)
+		t.Errorf("Other = %d, want 3", m["0:Home>1:Other"])
+	}
+	if m["0:Home>1:Exit"] != 1 {
+		t.Errorf("Exit = %d, want 1", m["0:Home>1:Exit"])
+	}
+	if _, ok := m["0:Home>1:S7"]; ok {
+		t.Error("S7 should be folded into Other")
+	}
+	step1 := 0
+	for _, n := range nodes {
+		if n.Step == 1 {
+			step1++
+		}
+	}
+	if step1 != 8 { // 6 screens + Other + Exit
+		t.Errorf("step 1 nodes = %d, want 8", step1)
+	}
+}
+
+func TestBuildFlowPathsOtherContinues(t *testing.T) {
+	var paths [][]string
+	for i := 1; i <= 8; i++ {
+		for j := 0; j < 9-i; j++ {
+			next := "Done"
+			if i >= 7 {
+				next = "Late"
+			}
+			paths = append(paths, []string{"Home", fmt.Sprintf("S%d", i), next})
+		}
+	}
+	_, links := buildFlowPaths(paths, 6)
+	m := flowLinkMap(links)
+	if m["1:Other>2:Late"] != 3 {
+		t.Errorf("1:Other>2:Late = %d, want 3 (links: %v)", m["1:Other>2:Late"], m)
+	}
+	if m["1:S1>2:Done"] != 8 {
+		t.Errorf("1:S1>2:Done = %d, want 8", m["1:S1>2:Done"])
+	}
+}
+
+func TestFlowPathsNext(t *testing.T) {
+	e := newTestEnv(t)
+	org := e.addOrg(t, "flow-paths")
+	uid, hdr := e.addUser(t, "flowpathsviewer")
+	e.addMember(t, org, uid, "viewer")
+	pid := e.addProject(t, org, "flow-paths-app")
+	for _, s := range []string{"s1", "s2"} {
+		e.addReplaySession(t, pid, s, "1 hour", false, false, false)
+	}
+	e.addView(t, pid, "s1", 0, "Home", "android", 1000, true, false)
+	e.addView(t, pid, "s1", 1, "Cart", "android", 1000, false, true)
+	e.addView(t, pid, "s2", 0, "Login", "android", 1000, true, false)
+	e.addView(t, pid, "s2", 1, "Home", "android", 1000, false, false)
+	e.addView(t, pid, "s2", 2, "Cart", "android", 1000, false, false)
+	e.addView(t, pid, "s2", 3, "Home", "android", 1000, false, true)
+
+	var got flowPathsResp
+	base := fmt.Sprintf("/api/v1/projects/%d/flow/paths?screen=Home&platform=android", pid)
+	if st := hmGet(t, e, hdr, base, &got); st != 200 {
+		t.Fatalf("status %d", st)
+	}
+	if got.Screen != "Home" || got.Direction != "next" || got.Sessions != 2 {
+		t.Errorf("header = %+v", got)
+	}
+	m := map[string]int{}
+	for _, l := range got.Links {
+		m[l.Source+">"+l.Target] = l.Sessions
+	}
+	want := map[string]int{"0:Home>1:Cart": 2, "1:Cart>2:Exit": 1, "1:Cart>2:Home": 1, "2:Home>3:Exit": 1}
+	if !reflect.DeepEqual(m, want) {
+		t.Errorf("links = %v, want %v", m, want)
+	}
+	if len(got.Nodes) == 0 || got.Nodes[0].ID != "0:Home" || got.Nodes[0].Step != 0 || got.Nodes[0].Screen != "Home" {
+		t.Errorf("nodes = %+v", got.Nodes)
+	}
+
+	// steps=1 truncates: only the first hop.
+	got = flowPathsResp{}
+	hmGet(t, e, hdr, base+"&steps=1", &got)
+	if len(got.Links) != 1 || got.Links[0].Source != "0:Home" || got.Links[0].Target != "1:Cart" || got.Links[0].Sessions != 2 {
+		t.Errorf("steps=1 links = %+v", got.Links)
+	}
+
+	// Other platform has no such screen.
+	got = flowPathsResp{}
+	hmGet(t, e, hdr, fmt.Sprintf("/api/v1/projects/%d/flow/paths?screen=Home&platform=ios", pid), &got)
+	if got.Sessions != 0 || got.Nodes == nil || got.Links == nil || len(got.Nodes) != 0 || len(got.Links) != 0 {
+		t.Errorf("empty result = %+v", got)
+	}
+}
+
+func TestFlowPathsPrev(t *testing.T) {
+	e := newTestEnv(t)
+	org := e.addOrg(t, "flow-prev")
+	uid, hdr := e.addUser(t, "flowprevviewer")
+	e.addMember(t, org, uid, "viewer")
+	pid := e.addProject(t, org, "flow-prev-app")
+	e.addReplaySession(t, pid, "s1", "1 hour", false, false, false)
+	e.addView(t, pid, "s1", 0, "Home", "android", 1000, true, false)
+	e.addView(t, pid, "s1", 1, "Cart", "android", 1000, false, true)
+
+	var got flowPathsResp
+	base := fmt.Sprintf("/api/v1/projects/%d/flow/paths?screen=Cart&platform=android&direction=prev", pid)
+	if st := hmGet(t, e, hdr, base, &got); st != 200 {
+		t.Fatalf("status %d", st)
+	}
+	if got.Direction != "prev" || got.Sessions != 1 {
+		t.Errorf("header = %+v", got)
+	}
+	m := map[string]int{}
+	for _, l := range got.Links {
+		m[l.Source+">"+l.Target] = l.Sessions
+	}
+	want := map[string]int{"0:Cart>1:Home": 1, "1:Home>2:Start": 1}
+	if !reflect.DeepEqual(m, want) {
+		t.Errorf("links = %v, want %v", m, want)
+	}
+}
+
+func TestFlowPathsValidation(t *testing.T) {
+	e := newTestEnv(t)
+	org := e.addOrg(t, "flow-paths-val")
+	uid, hdr := e.addUser(t, "flowpathsval")
+	e.addMember(t, org, uid, "viewer")
+	pid := e.addProject(t, org, "flow-paths-val-app")
+	base := fmt.Sprintf("/api/v1/projects/%d/flow/paths", pid)
+	for _, q := range []string{
+		"?platform=android",
+		"?screen=Home",
+		"?screen=Home&platform=android&steps=0",
+		"?screen=Home&platform=android&steps=6",
+		"?screen=Home&platform=android&steps=x",
+		"?screen=Home&platform=android&direction=up",
+		"?screen=Home&platform=android&from=garbage",
+	} {
+		if st := hmGet(t, e, hdr, base+q, nil); st != 400 {
+			t.Errorf("%s = %d, want 400", q, st)
+		}
+	}
+}
+
 // addView inserts one screen_views row for an existing replay session. entered_at is shortly before now
 // so default date ranges include it (later seq = more recent).
 func (e *testEnv) addView(t *testing.T, pid int64, sid string, seq int, screen, platform string, durMS int, entry, exit bool) {

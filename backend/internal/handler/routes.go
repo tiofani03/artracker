@@ -77,6 +77,7 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Get("/projects/:projectID/sessions/:sessionID/context", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetSessionContext)
 	api.Get("/projects/:projectID/heatmap/screens", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListHeatmapScreens)
 	api.Get("/projects/:projectID/flow/screens", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListFlowScreens)
+	api.Get("/projects/:projectID/flow/paths", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetFlowPaths)
 	api.Get("/projects/:projectID/heatmap", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetHeatmap)
 	api.Get("/projects/:projectID/heatmap-settings", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetHeatmapSettings)
 	api.Patch("/projects/:projectID/heatmap-settings", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.UpdateHeatmapSettings)
