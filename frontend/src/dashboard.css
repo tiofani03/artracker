@@ -9958,3 +9958,416 @@ select {
     max-height: 260px;
   }
 }
+
+/* ── User Flow (screen table + path Sankey) ─────────────────────────────────── */
+.fl-layout {
+  grid-template-columns: minmax(280px, 400px) minmax(0, 1fr);
+}
+.fl-table-wrap {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.fl-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.fl-table th {
+  position: sticky;
+  top: 0;
+  background: var(--color-paper-hi);
+  color: var(--color-muted);
+  font-weight: 500;
+  text-align: left;
+  padding: 6px 4px;
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+}
+.fl-table th:first-child {
+  width: 40%;
+}
+.fl-table th.fl-hm-col,
+.fl-table td.fl-hm-col {
+  width: 26px;
+  padding-left: 0;
+  padding-right: 0;
+  text-align: center;
+}
+.fl-sort {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fl-sort:hover,
+.fl-sort.is-active {
+  color: var(--color-ink);
+}
+.fl-sort:focus-visible,
+.fl-hm-link:focus-visible,
+.fl-nb__btn:focus-visible,
+.fl-focus__link:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+.fl-hm-link {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 4px;
+  color: var(--color-muted);
+}
+.fl-hm-link:hover {
+  color: var(--color-accent);
+  background: var(--color-paper-2);
+}
+.fl-tone--high {
+  color: var(--color-error);
+  font-weight: 600;
+}
+.fl-tone--mid {
+  color: var(--color-warn);
+}
+.fl-bar {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-paper-3);
+  overflow: hidden;
+}
+.fl-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-accent);
+  opacity: 0.7;
+}
+.fl-bar--cell {
+  width: 100%;
+  margin-top: 2px;
+}
+.fl-table td {
+  padding: 2px 4px;
+  color: var(--color-ink);
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+}
+.fl-table tbody tr {
+  cursor: pointer;
+}
+.fl-table tr:hover td,
+.fl-table tr.is-active td {
+  background: var(--color-accent-wash);
+}
+.fl-table tr.is-active td:first-child {
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+.fl-num {
+  text-align: right;
+  white-space: nowrap;
+}
+.fl-table th.fl-num {
+  text-align: right;
+}
+.fl-name {
+  overflow: hidden;
+}
+.fl-row-btn {
+  display: block;
+  width: 100%;
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fl-side-note {
+  margin-top: var(--space-sm);
+}
+.fl-stage.is-loading {
+  opacity: 0.6;
+}
+.fl-chart {
+  position: relative;
+  margin-bottom: var(--space-sm);
+}
+.fl-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.fl-link {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-opacity: 0.22;
+  cursor: default;
+}
+.fl-link--drop {
+  stroke: var(--color-muted);
+  stroke-opacity: 0.18;
+}
+.fl-link.is-active {
+  stroke-opacity: 0.45;
+}
+.fl-node rect {
+  fill: var(--color-accent);
+}
+.fl-node--other rect {
+  fill: var(--color-accent);
+  fill-opacity: 0.5;
+}
+.fl-node--drop rect {
+  fill: var(--color-muted);
+}
+.fl-node.is-pickable {
+  cursor: pointer;
+}
+.fl-node.is-pickable:hover rect,
+.fl-node.is-pickable:focus-visible rect {
+  fill: var(--color-accent-deep);
+}
+.fl-node:focus-visible {
+  outline: none;
+}
+.fl-node:focus-visible rect {
+  stroke: var(--color-focus);
+  stroke-width: 2px;
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+.fl-label {
+  font-size: 12px;
+  fill: var(--color-ink);
+  paint-order: stroke;
+  stroke: var(--color-paper-hi);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.fl-node--drop .fl-label {
+  fill: var(--color-muted);
+}
+/* Map view: whole-app screen graph */
+.fl-map.is-loading {
+  opacity: 0.6;
+}
+.fl-map__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+.fl-map__scroll {
+  overflow: auto;
+  max-height: 70vh;
+  margin-bottom: var(--space-sm);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: 10px;
+  background: var(--color-paper);
+}
+.fl-map__svg {
+  display: block;
+  max-width: none;
+  height: auto;
+}
+.fl-map__edge {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-opacity: 0.35;
+  transition: stroke-opacity 120ms ease;
+}
+.fl-map__edge.is-back {
+  stroke-dasharray: 5 4;
+}
+.fl-map__edge.is-drop {
+  stroke: var(--color-muted);
+  stroke-opacity: 0.3;
+}
+.fl-map__edge.is-hot {
+  stroke-opacity: 0.75;
+}
+.fl-map__edge.is-dim {
+  stroke-opacity: 0.07;
+}
+.fl-map__arrow {
+  fill: var(--color-accent);
+  fill-opacity: 0.6;
+}
+.fl-map__node rect {
+  fill: var(--color-paper-hi);
+  stroke: var(--color-accent);
+  stroke-width: 1.5px;
+}
+.fl-map__node.is-terminal rect {
+  fill: var(--color-paper-2);
+  stroke: var(--color-rule-2);
+  stroke-dasharray: 4 3;
+}
+.fl-map__node.is-pickable {
+  cursor: pointer;
+}
+.fl-map__node.is-pickable:hover rect {
+  fill: var(--color-accent-wash);
+}
+.fl-map__node:focus-visible {
+  outline: none;
+}
+.fl-map__node:focus-visible rect {
+  stroke: var(--color-focus);
+  stroke-width: 3px;
+}
+.fl-map__node.is-dim {
+  opacity: 0.35;
+}
+.fl-map__name {
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--color-ink);
+}
+.fl-map__meta {
+  font-size: 11px;
+  fill: var(--color-muted);
+}
+.fl-map__node.is-terminal .fl-map__name {
+  fill: var(--color-muted);
+}
+/* Focus view: came from → screen → went to */
+.fl-focus {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 0.9fr) minmax(0, 1fr);
+  gap: var(--space-md);
+  align-items: start;
+  margin-bottom: var(--space-sm);
+}
+.fl-focus.is-loading {
+  opacity: 0.6;
+}
+.fl-nb__title {
+  margin: 0 0 var(--space-xs);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-muted);
+}
+.fl-nb__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+.fl-nb__btn {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 8px 10px;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: 8px;
+  background: var(--color-paper-hi);
+  color: var(--color-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.fl-nb__btn:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-wash);
+}
+.fl-nb__btn.is-static {
+  cursor: default;
+  background: var(--color-paper-2);
+}
+.fl-nb__btn.is-static:hover {
+  border-color: var(--color-rule);
+}
+.fl-nb__row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  font-size: var(--text-sm);
+}
+.fl-nb__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.fl-nb__pct {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.fl-nb__sub {
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+}
+.fl-nb__item--drop .fl-nb__name,
+.fl-nb__item--other .fl-nb__name {
+  font-weight: 500;
+  color: var(--color-muted);
+}
+.fl-nb__item--drop .fl-bar > span {
+  background: var(--color-muted);
+}
+.fl-focus__card {
+  padding: var(--space-md);
+  border: var(--rule-hair) solid var(--color-accent);
+  border-radius: 10px;
+  background: var(--color-accent-wash);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+.fl-focus__name {
+  margin: 0 0 var(--space-sm);
+  font-weight: 700;
+  font-size: var(--text-md, 1rem);
+  overflow-wrap: anywhere;
+}
+.fl-stats {
+  margin: 0 0 var(--space-sm);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-xs) var(--space-sm);
+}
+.fl-stats dt {
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+}
+.fl-stats dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.fl-focus__link {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-accent);
+  text-decoration: none;
+}
+.fl-focus__link:hover {
+  text-decoration: underline;
+}
+@media (max-width: 1100px) {
+  .fl-focus {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .fl-focus__card {
+    order: -1;
+  }
+}
+@media (max-width: 820px) {
+  .fl-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .fl-table-wrap {
+    max-height: 260px;
+  }
+}

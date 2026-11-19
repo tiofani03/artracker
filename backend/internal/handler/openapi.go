@@ -560,6 +560,69 @@ var openAPISpecBytes = []byte(`{
         }
       }
     },
+    "/projects/{projectID}/flow/screens": {
+      "get": {
+        "summary": "List Flow Screens",
+        "description": "Per-screen user flow stats in the range: sessions, views, median and p75 time on screen, and how many sessions entered or left the app on that screen. Sorted by sessions, then views.",
+        "operationId": "listFlowScreens",
+        "tags": ["Flow"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "from", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default 7 days ago" },
+          { "name": "to", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default now" },
+          { "name": "platform", "in": "query", "schema": { "type": "string" } },
+          { "name": "app_version", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "{screens:[{screen,platform,sessions,views,median_ms,p75_ms,entry_sessions,exit_sessions}], app_versions:[string] (distinct non-empty versions in range and platform filter, sorted descending, max 50), unrecognized_sessions (processed sessions in range with no recognized screens; ignores app_version)}" },
+          "400": { "description": "Invalid date range" }
+        }
+      }
+    },
+    "/projects/{projectID}/flow/paths": {
+      "get": {
+        "summary": "Get Flow Paths",
+        "description": "Sankey data of where sessions went after (direction=next) or came from before (direction=prev) a screen. Each session counts from its first visit to the screen; later screens per step beyond the top 6 are folded into Other, and sessions that ended (next) or started (prev) there continue to Exit or Start.",
+        "operationId": "getFlowPaths",
+        "tags": ["Flow"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "screen", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "platform", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "direction", "in": "query", "schema": { "type": "string", "enum": ["next", "prev"], "default": "next" } },
+          { "name": "steps", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 5, "default": 3 } },
+          { "name": "from", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default 7 days ago" },
+          { "name": "to", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default now" },
+          { "name": "app_version", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "{screen, direction, sessions (sessions that visited the screen), nodes:[{id:\"step:screen\",step,screen}], links:[{source,target,sessions}]}" },
+          "400": { "description": "Missing screen or platform, invalid direction, steps outside 1..5, or invalid date range" }
+        }
+      }
+    },
+    "/projects/{projectID}/flow/transitions": {
+      "get": {
+        "summary": "Get Flow Transitions",
+        "description": "The whole-app screen graph in the range: each edge counts distinct sessions that went from one screen straight to the next (revisits count once per session). Edges from Start come from each session's first screen, edges to Exit leave its last screen. Sorted by sessions, max 300 edges.",
+        "operationId": "getFlowTransitions",
+        "tags": ["Flow"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "from", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default 7 days ago" },
+          { "name": "to", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default now" },
+          { "name": "platform", "in": "query", "schema": { "type": "string" } },
+          { "name": "app_version", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "{sessions (distinct sessions with a screen view in range), edges:[{source,target,sessions}]}" },
+          "400": { "description": "Invalid date range" }
+        }
+      }
+    },
     "/projects/{projectID}/heatmap": {
       "get": {
         "summary": "Get Tap Heatmap",

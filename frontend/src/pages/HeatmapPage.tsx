@@ -6,6 +6,7 @@ import HeatCanvas from '../components/heatmap/HeatCanvas'
 import { cellShare, MIN_RELIABLE_SESSIONS, shareLabel } from '../heatmap/grid'
 import { fetchChunkPayloads } from '../replay/parseChunk'
 import { screenFrameData } from '../replay/screen'
+import { displayScreen, screenMatches } from '../screens/name'
 
 const SEARCH_ALL = ''
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -15,15 +16,8 @@ const RANGE_OPTIONS = [
   { value: 30, label: 'Last 30 days' },
   { value: 90, label: 'Last 90 days' },
 ]
-const PLATFORM_OPTIONS = [
-  { value: '', label: 'All platforms' },
-  { value: 'ios', label: 'iOS' },
-  { value: 'android', label: 'Android' },
-]
-const ORIENTATION_OPTIONS: { value: HeatmapOrientation; label: string }[] = [
-  { value: 'portrait', label: 'Portrait' },
-  { value: 'landscape', label: 'Landscape' },
-]
+// Only portrait heatmaps are shown; landscape taps stay stored but are not selectable.
+const orientation: HeatmapOrientation = 'portrait'
 
 function screenKey(s: HeatmapScreen) {
   return `${s.platform}|${s.screen}`
@@ -33,12 +27,12 @@ type Tagged<T> = { key: string; error: string; data: T | null }
 
 function HeatmapView({ projectId }: { projectId: number }) {
   const [days, setDays] = useState(30)
-  const [platform, setPlatform] = useState('')
   const [appVersion, setAppVersion] = useState('')
-  const [orientation, setOrientation] = useState<HeatmapOrientation>('portrait')
   const [aspect, setAspect] = useState<number | ''>('')
   const [search, setSearch] = useState(SEARCH_ALL)
-  const [selected, setSelected] = useState<HeatmapScreen | null>(null)
+  const [picked, setSelected] = useState<HeatmapScreen | null>(null)
+  // ?screen=<raw name> (e.g. from User Flow) preselects that screen until the user picks another.
+  const [wanted] = useState(() => new URLSearchParams(window.location.search).get('screen') ?? '')
   const [showRage, setShowRage] = useState(false)
   const [hover, setHover] = useState<{ cell: HeatmapCell; x: number; y: number } | null>(null)
 
@@ -57,25 +51,27 @@ function HeatmapView({ projectId }: { projectId: number }) {
     setAppVersion(v)
     setAspect('')
   }
-  const listKey = `${projectId}|${days}|${platform}|${appVersion}`
+  const listKey = `${projectId}|${days}|${appVersion}`
   const [list, setList] = useState<Tagged<HeatmapScreensResponse>>({ key: '', error: '', data: null })
   useEffect(() => {
     let cancelled = false
     heatmapApi
-      .screens(projectId, { ...range, platform, app_version: appVersion })
+      .screens(projectId, { ...range, app_version: appVersion })
       .then((data) => !cancelled && setList({ key: listKey, error: '', data }))
       .catch((e: unknown) => !cancelled && setList({ key: listKey, error: e instanceof Error ? e.message : 'Request failed', data: null }))
     return () => {
       cancelled = true
     }
-  }, [projectId, range, platform, appVersion, listKey])
+  }, [projectId, range, appVersion, listKey])
   const listLoading = list.key !== listKey
 
   const screens = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    const all = list.data?.screens ?? []
-    return q ? all.filter((s) => s.screen.toLowerCase().includes(q)) : all
+    return (list.data?.screens ?? []).filter((s) => screenMatches(s.screen, search))
   }, [list.data, search])
+  const selected = useMemo(
+    () => picked ?? (wanted ? (list.data?.screens.find((s) => s.screen === wanted) ?? null) : null),
+    [picked, wanted, list.data],
+  )
 
   const heatKey = selected ? `${listKey}|${screenKey(selected)}|${orientation}|${aspect}` : ''
   const [heat, setHeat] = useState<Tagged<HeatmapResponse>>({ key: '', error: '', data: null })
@@ -141,10 +137,10 @@ function HeatmapView({ projectId }: { projectId: number }) {
     return opts
   }, [res])
 
-  // res.aspect is long side / short side (>= 1); without a screenshot, build a frame in the chosen orientation.
+  // res.aspect is long side / short side (>= 1); without a screenshot, build a portrait frame.
   const longShort = res && res.aspect >= 1 ? res.aspect : 16 / 9
-  const vw = res?.background?.vw || (orientation === 'landscape' ? longShort : 1)
-  const vh = res?.background?.vh || (orientation === 'landscape' ? 1 : longShort)
+  const vw = res?.background?.vw || 1
+  const vh = res?.background?.vh || longShort
   const bgFailed = !!bgUrl && bg?.url === bgUrl && bg.src === null
   const hasTaps = !!res && res.cells.length > 0
   const hoverText = hover && res
@@ -166,31 +162,10 @@ function HeatmapView({ projectId }: { projectId: number }) {
           <CustomSelect size="sm" ariaLabel="Date range" options={RANGE_OPTIONS} value={days} onChange={changeDays} />
           <CustomSelect
             size="sm"
-            ariaLabel="Platform"
-            options={PLATFORM_OPTIONS}
-            value={platform}
-            onChange={(v) => {
-              setPlatform(v)
-              setSelected(null)
-              setAspect('')
-            }}
-          />
-          <CustomSelect
-            size="sm"
             ariaLabel="App version"
             options={versionOptions}
             value={appVersion}
             onChange={changeVersion}
-          />
-          <CustomSelect
-            size="sm"
-            ariaLabel="Orientation"
-            options={ORIENTATION_OPTIONS}
-            value={orientation}
-            onChange={(v) => {
-              setOrientation(v)
-              setAspect('')
-            }}
           />
         </div>
         {list.error && !listLoading ? (
@@ -224,8 +199,8 @@ function HeatmapView({ projectId }: { projectId: number }) {
                       setHover(null)
                     }}
                   >
-                    <span className="hm-screen__name" title={s.screen}>
-                      {s.screen}
+                    <span className="hm-screen__name" title={displayScreen(s.screen)}>
+                      {displayScreen(s.screen)}
                     </span>
                     <span className="hm-screen__meta">
                       {s.platform} · {s.sessions} {s.sessions === 1 ? 'session' : 'sessions'} · {s.taps} {s.taps === 1 ? 'tap' : 'taps'}
@@ -256,8 +231,8 @@ function HeatmapView({ projectId }: { projectId: number }) {
         ) : (
           <>
             <div className="hm-toolbar">
-              <h2 className="dash-card__title hm-toolbar__title" title={selected.screen}>
-                {selected.screen}
+              <h2 className="dash-card__title hm-toolbar__title" title={displayScreen(selected.screen)}>
+                {displayScreen(selected.screen)}
               </h2>
               {heatLoading && <span className="ppl-muted">Loading…</span>}
               {aspectOptions.length > 0 && (

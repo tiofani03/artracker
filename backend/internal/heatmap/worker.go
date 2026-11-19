@@ -18,8 +18,8 @@ const (
 	pendingBatch = 20
 	// tickBudget bounds how long one tick keeps draining batches.
 	tickBudget = 45 * time.Second
-	// maxAttempts failures mark a session processed so it cannot block the queue forever.
-	maxAttempts = 8
+	// MaxAttempts failures mark a session processed so it cannot block the queue forever.
+	MaxAttempts = 8
 	// objectTimeout bounds one chunk download plus read.
 	objectTimeout = 60 * time.Second
 	retryBase     = time.Minute
@@ -130,7 +130,7 @@ func (w *Worker) listPending(ctx context.Context) ([]pendingSession, error) {
 }
 
 // recordFailure counts a failed attempt and schedules the retry after retryBase*2^attempts (capped at
-// retryCap). After maxAttempts the session is marked processed so it stops being picked.
+// retryCap). After MaxAttempts the session is marked processed so it stops being picked.
 func (w *Worker) recordFailure(ctx context.Context, p pendingSession, cause error) {
 	var attempts int
 	err := w.pool.QueryRow(ctx, `
@@ -143,7 +143,7 @@ func (w *Worker) recordFailure(ctx context.Context, p pendingSession, cause erro
 		w.log.Error("heatmap: record failure", "project_id", p.projectID, "session_id", p.sessionID, "err", err)
 		return
 	}
-	if attempts >= maxAttempts {
+	if attempts >= MaxAttempts {
 		if _, err := w.pool.Exec(ctx, `
 			UPDATE replay_sessions SET taps_processed_at = now(), taps_processed_chunks = chunk_count
 			WHERE project_id=$1 AND id=$2`, p.projectID, p.sessionID); err != nil {
@@ -178,7 +178,7 @@ func (w *Worker) ProcessSession(ctx context.Context, projectID int64, sessionID 
 		return fmt.Errorf("read app version: %w", err)
 	}
 
-	chunks, err := w.loadChunks(ctx, projectID, sessionID)
+	chunks, missing, err := w.loadChunks(ctx, projectID, sessionID)
 	if err != nil {
 		return err
 	}
@@ -200,14 +200,36 @@ func (w *Worker) ProcessSession(ctx context.Context, projectID int64, sessionID 
 		return fmt.Errorf("read excluded screens: %w", err)
 	}
 	res := Extract(chunks, SkipFunc(excluded))
-	if _, err := tx.Exec(ctx, `DELETE FROM screen_taps WHERE project_id=$1 AND session_id=$2`, projectID, sessionID); err != nil {
-		return fmt.Errorf("delete taps: %w", err)
+
+	// A chunk object that is gone (retention) would make the rebuilt taps a subset of what is stored.
+	// Keep the existing heatmap rows then; the flow rows are rebuilt either way.
+	keepHeatmap := false
+	if missing > 0 {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM screen_taps WHERE project_id=$1 AND session_id=$2)
+			OR EXISTS(SELECT 1 FROM screen_visits WHERE project_id=$1 AND session_id=$2)`,
+			projectID, sessionID).Scan(&keepHeatmap); err != nil {
+			return fmt.Errorf("check existing heatmap rows: %w", err)
+		}
+		if keepHeatmap {
+			w.log.Warn("heatmap: missing chunks, kept existing heatmap rows", "project_id", projectID, "session_id", sessionID, "missing", missing)
+		}
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM screen_visits WHERE project_id=$1 AND session_id=$2`, projectID, sessionID); err != nil {
-		return fmt.Errorf("delete visits: %w", err)
+	if !keepHeatmap {
+		if _, err := tx.Exec(ctx, `DELETE FROM screen_taps WHERE project_id=$1 AND session_id=$2`, projectID, sessionID); err != nil {
+			return fmt.Errorf("delete taps: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM screen_visits WHERE project_id=$1 AND session_id=$2`, projectID, sessionID); err != nil {
+			return fmt.Errorf("delete visits: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM screen_views WHERE project_id=$1 AND session_id=$2`, projectID, sessionID); err != nil {
+		return fmt.Errorf("delete views: %w", err)
 	}
 
 	batch := &pgx.Batch{}
+	if keepHeatmap {
+		res.Taps, res.Visits, res.Backgrounds = nil, nil, nil
+	}
 	for _, t := range res.Taps {
 		batch.Queue(`INSERT INTO screen_taps(project_id, session_id, screen, ts, x_norm, y_norm, vw, vh, aspect_bucket, platform, app_version, landscape, rage)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
@@ -231,9 +253,14 @@ func (w *Worker) ProcessSession(ctx context.Context, projectID int64, sessionID 
 			projectID, b.Screen, res.Platform, appVersion, b.Landscape, b.Aspect, sessionID, f.ChunkSeq, f.Index,
 			f.VW, f.VH, f.Masked, time.UnixMilli(f.TS))
 	}
-	batch.Queue(`UPDATE replay_sessions SET taps_processed_at = now(), taps_processed_chunks = $3, taps_unrecognized = $4,
+	for _, v := range ExtractFlow(chunks) {
+		batch.Queue(`INSERT INTO screen_views(project_id, session_id, seq, screen, entered_at, duration_ms, is_entry, is_exit, platform, app_version)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+			projectID, sessionID, v.Seq, v.Screen, time.UnixMilli(v.EnteredAt), v.DurationMS, v.IsEntry, v.IsExit, res.Platform, appVersion)
+	}
+	batch.Queue(`UPDATE replay_sessions SET taps_processed_at = now(), taps_processed_chunks = $3, taps_unrecognized = CASE WHEN $5 THEN taps_unrecognized ELSE $4 END,
 			taps_attempts = 0, taps_retry_at = NULL
-		WHERE project_id=$1 AND id=$2`, projectID, sessionID, chunkCount, res.Unrecognized)
+		WHERE project_id=$1 AND id=$2`, projectID, sessionID, chunkCount, res.Unrecognized, keepHeatmap)
 
 	br := tx.SendBatch(ctx, batch)
 	for i := 0; i < batch.Len(); i++ {
@@ -250,13 +277,13 @@ func (w *Worker) ProcessSession(ctx context.Context, projectID int64, sessionID 
 
 // loadChunks reads and decodes every chunk of the session. Missing objects and undecodable chunks are
 // skipped; any other storage error fails the session. If the first readable chunk is not a screen
-// chunk (a web rrweb replay) the rest is not read at all.
-func (w *Worker) loadChunks(ctx context.Context, projectID int64, sessionID string) ([]Chunk, error) {
+// chunk (a web rrweb replay) the rest is not read at all. missing counts the chunk objects that were gone.
+func (w *Worker) loadChunks(ctx context.Context, projectID int64, sessionID string) (chunks []Chunk, missing int, err error) {
 	rows, err := w.pool.Query(ctx,
 		`SELECT chunk_seq, object_key FROM replay_chunks WHERE project_id=$1 AND session_id=$2 ORDER BY chunk_seq`,
 		projectID, sessionID)
 	if err != nil {
-		return nil, fmt.Errorf("list chunks: %w", err)
+		return nil, 0, fmt.Errorf("list chunks: %w", err)
 	}
 	type ref struct {
 		seq int
@@ -267,25 +294,25 @@ func (w *Worker) loadChunks(ctx context.Context, projectID int64, sessionID stri
 		var r ref
 		if err := rows.Scan(&r.seq, &r.key); err != nil {
 			rows.Close()
-			return nil, fmt.Errorf("scan chunk: %w", err)
+			return nil, 0, fmt.Errorf("scan chunk: %w", err)
 		}
 		refs = append(refs, r)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list chunks: %w", err)
+		return nil, 0, fmt.Errorf("list chunks: %w", err)
 	}
 
-	var chunks []Chunk
 	readable := false
 	for _, r := range refs {
 		raw, err := w.readObject(ctx, r.key)
 		if errors.Is(err, storage.ErrNotFound) {
+			missing++
 			w.log.Warn("heatmap: skip missing chunk", "project_id", projectID, "session_id", sessionID, "seq", r.seq)
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("read chunk %d: %w", r.seq, err)
+			return nil, 0, fmt.Errorf("read chunk %d: %w", r.seq, err)
 		}
 		c, ok, err := DecodeChunk(r.seq, raw)
 		if err != nil {
@@ -294,14 +321,14 @@ func (w *Worker) loadChunks(ctx context.Context, projectID int64, sessionID stri
 		}
 		if !ok {
 			if !readable {
-				return nil, nil // not a screen replay: processed with 0 rows
+				return nil, 0, nil // not a screen replay: processed with 0 rows
 			}
 			continue
 		}
 		readable = true
 		chunks = append(chunks, c)
 	}
-	return chunks, nil
+	return chunks, missing, nil
 }
 
 func (w *Worker) readObject(ctx context.Context, key string) ([]byte, error) {
