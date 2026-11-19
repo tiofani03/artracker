@@ -176,10 +176,18 @@ func (f appStartFilter) where() (string, []any) {
 	return clause, []any{f.projectID, f.from, f.to, f.environment, f.platform, f.version, f.typ}
 }
 
+// appStartAllEnvironments is the environment query value that opts out of the production default.
+const appStartAllEnvironments = "all"
+
 // resolveAppStartScope lists the environments seen in the range and settles the effective environment:
-// an explicit one is kept, otherwise production when present, otherwise ” (all). It also lists the
+// an explicit one is kept, "all" means every environment (effective ""), otherwise production when present,
+// otherwise ” (all). It also lists the
 // app versions seen under that environment and platform, newest first.
 func (h *Handler) resolveAppStartScope(ctx context.Context, projectID int64, from, to time.Time, environment, platform string) (appStartScope, error) {
+	allEnvs := environment == appStartAllEnvironments
+	if allEnvs {
+		environment = ""
+	}
 	scope := appStartScope{Environment: environment, Environments: []string{}, Versions: []string{}}
 	rows, err := h.db.Query(ctx,
 		`SELECT DISTINCT environment FROM app_starts WHERE project_id = $1 AND started_at >= $2 AND started_at < $3`,
@@ -200,7 +208,7 @@ func (h *Handler) resolveAppStartScope(ctx context.Context, projectID int64, fro
 	}
 	rows.Close()
 	sort.Strings(scope.Environments)
-	if scope.Environment == "" {
+	if scope.Environment == "" && !allEnvs {
 		for _, env := range scope.Environments {
 			if env == "production" {
 				scope.Environment = "production"

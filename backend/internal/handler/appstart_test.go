@@ -226,6 +226,25 @@ func TestAppStartEnvironmentDefault(t *testing.T) {
 	}
 }
 
+func TestAppStartEnvironmentAll(t *testing.T) {
+	s := newStartsEnv(t, "as-envall")
+	s.e.addAppStart(t, s.pid, startSeed{startID: "s1", env: "staging", version: "1.0.0", duration: 100})
+	s.e.addAppStart(t, s.pid, startSeed{startID: "p1", env: "production", version: "2.0.0", duration: 300})
+	s.e.addAppStart(t, s.pid, startSeed{startID: "p2", env: "production", version: "2.0.0", duration: 300})
+
+	var got summaryResp
+	hmGet(t, s.e, s.hdr, s.path("/summary?environment=all"), &got)
+	if got.Environment != "" || got.Count != 3 || len(got.Environments) != 2 || len(got.Versions) != 2 {
+		t.Fatalf("environment=all: %+v", got)
+	}
+	// Without the parameter production is still the default.
+	got = summaryResp{}
+	hmGet(t, s.e, s.hdr, s.path("/summary"), &got)
+	if got.Environment != "production" || got.Count != 2 {
+		t.Fatalf("default: %+v", got)
+	}
+}
+
 func TestAppStartByVersionLatest10(t *testing.T) {
 	s := newStartsEnv(t, "as-ver")
 	for i := 1; i <= 12; i++ {

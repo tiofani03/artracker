@@ -1569,7 +1569,7 @@ The issue page shows "Raw trace" when no matching artifact exists for the event'
 | \`GET\` | \`/projects/:projectId/app-starts\` | List of starts. \`sort\` (\`slowest\` or \`recent\`), \`limit\`, \`cursor\` plus the summary filters | viewer |
 | \`GET\` | \`/projects/:projectId/app-starts/:startId\` | One start with its phases, device and, when profiled, the symbolicated profile and its status | viewer |
 
-For the App Start endpoints, \`environment\` defaults to \`production\` when it has data in the range, otherwise all environments.
+For the App Start endpoints, \`environment\` defaults to \`production\` when it has data in the range, otherwise all environments. Pass \`environment=all\` to include every environment explicitly.
 
 ### API keys
 

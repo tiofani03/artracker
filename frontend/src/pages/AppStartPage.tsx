@@ -16,6 +16,8 @@ import { Link, navigate } from '../router'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const PAGE_SIZE = 20
+// Sent as environment=all: every environment, instead of the backend's production default.
+const ALL_ENVIRONMENTS = 'all'
 
 const RANGE_OPTIONS = [
   { value: 7, label: 'Last 7 days' },
@@ -279,9 +281,13 @@ function AppStartView({ projectId }: { projectId: number }) {
 
   const envOptions = useMemo(() => {
     const names = new Set(s?.environments ?? [])
-    if (environment) names.add(environment)
+    if (environment && environment !== ALL_ENVIRONMENTS) names.add(environment)
     if (s?.environment) names.add(s.environment)
-    return [...names].map((n) => ({ value: n, label: n }))
+    if (names.size === 0) return []
+    return [
+      { value: ALL_ENVIRONMENTS, label: 'All environments' },
+      ...[...names].map((n) => ({ value: n, label: n })),
+    ]
   }, [s, environment])
   const versionOptions = useMemo(() => {
     const vs = new Set(s?.versions ?? [])
@@ -296,7 +302,7 @@ function AppStartView({ projectId }: { projectId: number }) {
           size="sm"
           ariaLabel="Environment"
           options={envOptions}
-          value={environment || s?.environment || ''}
+          value={environment || s?.environment || ALL_ENVIRONMENTS}
           onChange={setEnvironment}
         />
       )}
@@ -317,7 +323,7 @@ function AppStartView({ projectId }: { projectId: number }) {
   }
 
   if (s.count === 0 && fresh) {
-    const filtered = type !== 'cold' || appVersion !== '' || ramTier !== '' || environment !== ''
+    const filtered = type !== 'cold' || appVersion !== '' || ramTier !== '' || (environment !== '' && environment !== ALL_ENVIRONMENTS)
     return (
       <>
         {filters}
