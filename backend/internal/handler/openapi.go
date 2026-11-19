@@ -674,6 +674,94 @@ var openAPISpecBytes = []byte(`{
         }
       }
     },
+    "/projects/{projectID}/app-starts/summary": {
+      "get": {
+        "summary": "Get App Start Summary",
+        "description": "Start-time percentiles, phase medians, daily trend and per-version breakdown for one start type, plus the effective environment and the environments and versions seen in the range.",
+        "operationId": "getAppStartSummary",
+        "tags": ["App Start"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "from", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default 30 days ago" },
+          { "name": "to", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default now" },
+          { "name": "environment", "in": "query", "schema": { "type": "string" }, "description": "Default: production when present in the range, otherwise all environments" },
+          { "name": "platform", "in": "query", "schema": { "type": "string" } },
+          { "name": "app_version", "in": "query", "schema": { "type": "string" } },
+          { "name": "type", "in": "query", "schema": { "type": "string", "enum": ["cold", "warm", "hot"] }, "description": "Default cold" },
+          { "name": "ram_tier", "in": "query", "schema": { "type": "string", "enum": ["low", "mid", "high"] }, "description": "low < 4096 MB, mid 4096-8192 MB, high > 8192 MB; starts without RAM are excluded when set" }
+        ],
+        "responses": {
+          "200": { "description": "{environment, environments, versions, count, p50, p75, p90, p95, profiled_pct (0-100), phases:[{name,median_ms}], daily:[{day,p50,p90,count}], by_version:[{version,p50,p90,count}] (latest 10)}" },
+          "400": { "description": "Invalid date range, type or ram_tier" }
+        }
+      }
+    },
+    "/projects/{projectID}/app-starts/functions": {
+      "get": {
+        "summary": "List App Start Functions",
+        "description": "Slowest functions across symbolicated start profiles (top 50): app code ranked by attributed time, or every function ranked by self time when app_only=false.",
+        "operationId": "listAppStartFunctions",
+        "tags": ["App Start"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "from", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default 30 days ago" },
+          { "name": "to", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default now" },
+          { "name": "environment", "in": "query", "schema": { "type": "string" }, "description": "Default: production when present in the range, otherwise all environments" },
+          { "name": "platform", "in": "query", "schema": { "type": "string" } },
+          { "name": "app_version", "in": "query", "schema": { "type": "string" } },
+          { "name": "app_only", "in": "query", "schema": { "type": "boolean" }, "description": "Default true" }
+        ],
+        "responses": {
+          "200": { "description": "{environment, environments, versions, profiles, functions:[{function,is_app,starts_pct (0-100),median_total_ms,p90_total_ms,median_self_ms,median_attributed_ms,example_start_id}]}" },
+          "400": { "description": "Invalid date range" }
+        }
+      }
+    },
+    "/projects/{projectID}/app-starts": {
+      "get": {
+        "summary": "List App Starts",
+        "description": "Individual starts, slowest or most recent first, paged with an opaque cursor.",
+        "operationId": "listAppStarts",
+        "tags": ["App Start"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "from", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default 30 days ago" },
+          { "name": "to", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default now" },
+          { "name": "environment", "in": "query", "schema": { "type": "string" }, "description": "Default: production when present in the range, otherwise all environments" },
+          { "name": "platform", "in": "query", "schema": { "type": "string" } },
+          { "name": "app_version", "in": "query", "schema": { "type": "string" } },
+          { "name": "type", "in": "query", "schema": { "type": "string", "enum": ["cold", "warm", "hot"] }, "description": "Default cold" },
+          { "name": "ram_tier", "in": "query", "schema": { "type": "string", "enum": ["low", "mid", "high"] }, "description": "low < 4096 MB, mid 4096-8192 MB, high > 8192 MB; starts without RAM are excluded when set" },
+          { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["slowest", "recent"] }, "description": "Default slowest" },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "Default 50, max 200" },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" }, "description": "next_cursor of the previous page" }
+        ],
+        "responses": {
+          "200": { "description": "{starts:[{start_id,type,platform,app_version,build,device_model,os_version,first_screen,session_id,duration_ms,profiled,started_at}], next_cursor (omitted on the last page)}" },
+          "400": { "description": "Invalid date range, type, ram_tier, sort or cursor" }
+        }
+      }
+    },
+    "/projects/{projectID}/app-starts/{startID}": {
+      "get": {
+        "summary": "Get App Start",
+        "description": "One start with its phases and symbolicated profile. A profile without a start row returns an empty row carrying only start_id.",
+        "operationId": "getAppStart",
+        "tags": ["App Start"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "startID", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Start row fields plus {phases:[{name,ms}], ram_mb, trampoline, profile: null | {status, data: {interval_ms,frames,stacks,samples} | null}}" },
+          "404": { "description": "Neither a start nor a profile exists for the id" }
+        }
+      }
+    },
     "/projects/{projectID}/heatmap": {
       "get": {
         "summary": "Get Tap Heatmap",
