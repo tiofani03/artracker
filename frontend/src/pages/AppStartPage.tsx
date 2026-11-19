@@ -317,14 +317,16 @@ function AppStartView({ projectId }: { projectId: number }) {
   }
 
   if (s.count === 0 && fresh) {
+    const filtered = type !== 'cold' || appVersion !== '' || ramTier !== '' || environment !== ''
     return (
       <>
         {filters}
         <section className="dash-card fb-card ppl-pad">
-          <h2 className="dash-card__title">No app starts yet</h2>
+          <h2 className="dash-card__title">{filtered ? 'No matching app starts' : 'No app starts yet'}</h2>
           <p className="ppl-muted">
-            No app starts yet. Update to the latest Artracker SDK; enable startup profiling to see slow functions and
-            flamegraphs.
+            {filtered
+              ? 'No app starts match these filters.'
+              : 'No app starts yet. Update to the latest Artracker SDK; enable startup profiling to see slow functions and flamegraphs.'}
           </p>
         </section>
       </>

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { SymbolicatedProfile } from '../../api'
-import { boxStats, layoutFlame, toPixels, type FlameBox } from '../../appstart/flame'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ProfileFrame, SymbolicatedProfile } from '../../api'
+import { boxStats, layoutFlame, toPixels, type FlameBox, type PixelBox } from '../../appstart/flame'
 import { formatMs } from '../../appstart/format'
 
 const ROW_H = 18
@@ -9,6 +9,43 @@ const CHAR_PX = 6.5
 const FALLBACK_WIDTH = 800
 
 type Hover = { box: FlameBox; x: number; y: number }
+
+type BoxesProps = {
+  pixels: PixelBox[]
+  frames: ProfileFrame[]
+  zoom: FlameBox | null
+  onZoom: (box: PixelBox) => void
+  onHover: (box: PixelBox, clientX: number, clientY: number) => void
+}
+
+// Memoised so tooltip movement (parent re-render on every mousemove) does not re-render every box.
+const FlameBoxes = memo(function FlameBoxes({ pixels, frames, zoom, onZoom, onHover }: BoxesProps) {
+  return (
+    <>
+      {pixels.map((b) => {
+        const frame = frames[b.frame]
+        const maxChars = Math.floor((b.w - 8) / CHAR_PX)
+        const name = frame?.function ?? '?'
+        const zoomed = zoom && zoom.depth === b.depth && zoom.start === b.start && zoom.frame === b.frame
+        return (
+          <g
+            key={`${b.depth}:${b.start}:${b.frame}`}
+            className={`as-flame__box ${frame?.is_app ? 'is-app' : 'is-lib'}${zoomed ? ' is-zoomed' : ''}`}
+            onClick={() => onZoom(b)}
+            onMouseMove={(e) => onHover(b, e.clientX, e.clientY)}
+          >
+            <rect x={b.x} y={b.depth * ROW_H} width={Math.max(b.w - 1, 0.5)} height={ROW_H - 1} />
+            {b.w >= LABEL_MIN_PX && maxChars > 0 && (
+              <text x={b.x + 4} y={b.depth * ROW_H + ROW_H / 2 + 0.5} dominantBaseline="middle">
+                {name.length > maxChars ? `${name.slice(0, Math.max(maxChars - 1, 1))}…` : name}
+              </text>
+            )}
+          </g>
+        )
+      })}
+    </>
+  )
+})
 
 /** Icicle-style flamegraph (depth 0 on top). Click a box to zoom to it; double-click or Esc resets. */
 export default function Flamegraph({
@@ -63,7 +100,20 @@ export default function Flamegraph({
     return () => window.removeEventListener('keydown', onKey)
   }, [zoom, reset])
 
-  const stats = useMemo(() => (hover ? boxStats(profile, hover.box) : null), [profile, hover])
+  const onZoom = useCallback(
+    (b: PixelBox) => {
+      setZoom(b)
+      onSelect?.(b)
+    },
+    [onSelect],
+  )
+  const onHover = useCallback((box: PixelBox, clientX: number, clientY: number) => {
+    const rect = wrapRef.current?.getBoundingClientRect()
+    if (rect) setHover({ box, x: clientX - rect.left, y: clientY - rect.top })
+  }, [])
+
+  const hoverBox = hover?.box ?? null
+  const stats = useMemo(() => (hoverBox ? boxStats(profile, hoverBox) : null), [profile, hoverBox])
   const hoverFrame = hover ? profile.frames[hover.box.frame] : null
 
   if (boxes.length === 0) return <p className="ppl-muted">The profile has no samples.</p>
@@ -78,32 +128,7 @@ export default function Flamegraph({
         onDoubleClick={reset}
         onMouseLeave={() => setHover(null)}
       >
-        {pixels.map((b) => {
-          const frame = profile.frames[b.frame]
-          const maxChars = Math.floor((b.w - 8) / CHAR_PX)
-          const name = frame?.function ?? '?'
-          return (
-            <g
-              key={`${b.depth}:${b.start}:${b.frame}`}
-              className={`as-flame__box ${frame?.is_app ? 'is-app' : 'is-lib'}${zoom && zoom.depth === b.depth && zoom.start === b.start && zoom.frame === b.frame ? ' is-zoomed' : ''}`}
-              onClick={() => {
-                setZoom(b)
-                onSelect?.(b)
-              }}
-              onMouseMove={(e) => {
-                const rect = wrapRef.current?.getBoundingClientRect()
-                if (rect) setHover({ box: b, x: e.clientX - rect.left, y: e.clientY - rect.top })
-              }}
-            >
-              <rect x={b.x} y={b.depth * ROW_H} width={Math.max(b.w - 1, 0.5)} height={ROW_H - 1} />
-              {b.w >= LABEL_MIN_PX && maxChars > 0 && (
-                <text x={b.x + 4} y={b.depth * ROW_H + ROW_H / 2 + 0.5} dominantBaseline="middle">
-                  {name.length > maxChars ? `${name.slice(0, Math.max(maxChars - 1, 1))}…` : name}
-                </text>
-              )}
-            </g>
-          )
-        })}
+        <FlameBoxes pixels={pixels} frames={profile.frames} zoom={zoom} onZoom={onZoom} onHover={onHover} />
       </svg>
       {hover && hoverFrame && stats && (
         <div className="as-flame__tip" style={{ left: Math.min(hover.x + 12, Math.max(width - 260, 0)), top: hover.y + 16 }}>

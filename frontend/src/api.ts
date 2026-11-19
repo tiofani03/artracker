@@ -920,6 +920,7 @@ export type AppStartRow = {
   type: AppStartType
   platform: string
   app_version: string
+  build?: string
   device_model: string
   os_version: string
   first_screen: string

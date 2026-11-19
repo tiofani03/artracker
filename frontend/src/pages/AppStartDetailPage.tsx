@@ -89,7 +89,7 @@ function DetailView({ projectId, startId }: { projectId: number; startId: string
             <dl className="as-facts">
               <Fact label="Type" value={detail.type} />
               <Fact label="Duration" value={formatMs(detail.duration_ms)} />
-              <Fact label="Version" value={detail.app_version} />
+              <Fact label="Version" value={detail.build ? `${detail.app_version} (${detail.build})` : detail.app_version} />
               <Fact label="Device" value={detail.device_model} />
               <Fact label="OS" value={`${detail.platform} ${detail.os_version}`.trim()} />
               <Fact label="RAM" value={detail.ram_mb ? `${(detail.ram_mb / 1024).toFixed(1)} GB` : ''} />
