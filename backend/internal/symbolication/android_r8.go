@@ -16,6 +16,12 @@ type ProguardMethodMapping struct {
 	StartLine    int
 	EndLine      int
 	TargetLine   int
+	// OrigStart/OrigEnd are the original source line range (":10:12" after the signature).
+	OrigStart int
+	OrigEnd   int
+	// OrigClass is set when the original name is qualified (an inlined method
+	// from another class), e.g. "com.lib.Util" for "com.lib.Util.inlined".
+	OrigClass string
 }
 
 // ProguardClassMapping represents the de-obfuscation map for a single Java/Kotlin class.
@@ -41,8 +47,9 @@ func ParseProguardMapping(data []byte) (*ProguardRetracer, error) {
 
 	// Regex for class line: "com.example.original.ClassName -> a.b.c:"
 	classLineRegex := regexp.MustCompile(`^([\w\.\$]+)\s+->\s+([\w\.\$]+):$`)
-	// Regex for method line: "12:15:void doSomething() -> a" or "void doSomething() -> a"
-	methodLineRegex := regexp.MustCompile(`^(?:(\d+):(\d+):)?(?:[\w\.\$\[\]]+)\s+([\w\.\$<>]+\([^\)]*\))\s+->\s+([\w\$]+)$`)
+	// Regex for method line: "12:15:void doSomething() -> a", "void doSomething() -> a"
+	// or with an original range "1:3:void foo():10:12 -> a".
+	methodLineRegex := regexp.MustCompile(`^(?:(\d+):(\d+):)?[\w.$\[\]]+\s+([\w.$<>]+)\(([^)]*)\)(?::(\d+)(?::(\d+))?)?\s+->\s+([\w$<>]+)$`)
 	// Regex for field line: "int count -> a"
 	fieldLineRegex := regexp.MustCompile(`^(?:[\w\.\$\[\]]+)\s+([\w\$]+)\s+->\s+([\w\$]+)$`)
 
@@ -58,22 +65,27 @@ func ParseProguardMapping(data []byte) (*ProguardRetracer, error) {
 				continue
 			}
 			// Parse member
-			if m := methodLineRegex.FindStringSubmatch(trimmed); len(m) >= 5 {
-				startLine := 0
-				endLine := 0
-				if m[1] != "" {
-					startLine, _ = strconv.Atoi(m[1])
+			if m := methodLineRegex.FindStringSubmatch(trimmed); m != nil {
+				startLine, _ := strconv.Atoi(m[1])
+				endLine, _ := strconv.Atoi(m[2])
+				origStart, _ := strconv.Atoi(m[5])
+				origEnd, _ := strconv.Atoi(m[6])
+				origName := m[3]
+				obfMethod := m[7]
+
+				origClass := ""
+				if dot := strings.LastIndex(origName, "."); dot != -1 {
+					origClass = origName[:dot]
+					origName = origName[dot+1:]
 				}
-				if m[2] != "" {
-					endLine, _ = strconv.Atoi(m[2])
-				}
-				origMethod := m[3]
-				obfMethod := m[4]
 
 				currentClass.Methods[obfMethod] = append(currentClass.Methods[obfMethod], ProguardMethodMapping{
-					OriginalName: origMethod,
+					OriginalName: origName,
 					StartLine:    startLine,
 					EndLine:      endLine,
+					OrigStart:    origStart,
+					OrigEnd:      origEnd,
+					OrigClass:    origClass,
 				})
 			} else if f := fieldLineRegex.FindStringSubmatch(trimmed); len(f) >= 3 {
 				origField := f[1]
@@ -144,6 +156,78 @@ func (r *ProguardRetracer) RetraceMethod(obfClass, obfMethod string, lineNum int
 	return origClass, first, lineNum
 }
 
+// RetracedFrame is one original (de-obfuscated) frame.
+type RetracedFrame struct {
+	Class, Method, File string
+	Line                int
+}
+
+// RetraceFrame returns the original frames for one obfuscated frame, innermost
+// (inlined callee) first. ok is false when obfClass is not in the mapping, in
+// which case the caller keeps the frame as-is.
+//
+// When the class is known but no mapping entry matches the line, the class is
+// still retraced and a single frame with the unchanged method and line is returned.
+func (r *ProguardRetracer) RetraceFrame(obfClass, obfMethod, file string, line int) (frames []RetracedFrame, ok bool) {
+	if r == nil {
+		return nil, false
+	}
+	classMapping, ok := r.classMap[obfClass]
+	if !ok {
+		return nil, false
+	}
+
+	var kept []ProguardMethodMapping
+	for _, m := range classMapping.Methods[obfMethod] {
+		if line > 0 && m.StartLine <= line && line <= m.EndLine {
+			kept = append(kept, m)
+		}
+	}
+	if len(kept) == 0 {
+		// No ranged match (or no line to match): entries without a line range apply.
+		for _, m := range classMapping.Methods[obfMethod] {
+			if m.StartLine == 0 && m.EndLine == 0 {
+				kept = append(kept, m)
+			}
+		}
+	}
+	if len(kept) == 0 {
+		kept = []ProguardMethodMapping{{OriginalName: obfMethod}}
+	}
+
+	for _, m := range kept {
+		class := classMapping.OriginalClass
+		if m.OrigClass != "" {
+			class = m.OrigClass
+		}
+		origLine := line
+		switch {
+		case m.OrigStart > 0 && m.OrigEnd > 0 && m.OrigStart != m.OrigEnd && m.StartLine <= line:
+			origLine = m.OrigStart + (line - m.StartLine)
+		case m.OrigStart > 0:
+			origLine = m.OrigStart
+		}
+		resolvedFile := file
+		if file == "" || file == "SourceFile" {
+			resolvedFile = simpleClassName(class) + ".kt"
+		}
+		frames = append(frames, RetracedFrame{Class: class, Method: m.OriginalName, File: resolvedFile, Line: origLine})
+	}
+	return frames, true
+}
+
+// simpleClassName returns the outermost simple class name (no package, no $inner suffix).
+func simpleClassName(class string) string {
+	simple := class
+	if idx := strings.LastIndex(class, "."); idx != -1 {
+		simple = class[idx+1:]
+	}
+	if dollarIdx := strings.Index(simple, "$"); dollarIdx != -1 {
+		simple = simple[:dollarIdx]
+	}
+	return simple
+}
+
 // androidStackFrameRegex matches:
 // "at com.example.a.b(SourceFile:42)"
 // "at a.b.c(Native Method)"
@@ -182,13 +266,7 @@ func (r *ProguardRetracer) RetraceStackTrace(stackTrace string) string {
 
 			origClass, origMethod, resolvedLine := r.RetraceMethod(obfClass, obfMethod, lineNum)
 
-			origSimple := origClass
-			if idx := strings.LastIndex(origClass, "."); idx != -1 {
-				origSimple = origClass[idx+1:]
-			}
-			if dollarIdx := strings.Index(origSimple, "$"); dollarIdx != -1 {
-				origSimple = origSimple[:dollarIdx]
-			}
+			origSimple := simpleClassName(origClass)
 			resolvedSource := origSimple + ".kt"
 			if strings.HasSuffix(sourceFile, ".java") {
 				resolvedSource = origSimple + ".java"

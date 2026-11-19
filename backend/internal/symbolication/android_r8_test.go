@@ -1,6 +1,7 @@
 package symbolication
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -55,5 +56,61 @@ com.example.artracker.exception.AuthException -> x.y.z:
 	}
 	if !strings.Contains(retraced, "android.view.View.performClick(View.java:7125)") {
 		t.Errorf("Expected framework frame preserved, got:\n%s", retraced)
+	}
+}
+
+const inlineMapping = `com.example.Shop -> a.b:
+    1:3:void com.example.Cart.load():40:42 -> a
+    1:3:void start():12 -> a
+    4:4:void start():13 -> a
+    void boot() -> b
+`
+
+func TestRetraceFrameInline(t *testing.T) {
+	r, err := ParseProguardMapping([]byte(inlineMapping))
+	if err != nil {
+		t.Fatalf("ParseProguardMapping failed: %v", err)
+	}
+
+	got, ok := r.RetraceFrame("a.b", "a", "SourceFile", 2)
+	want := []RetracedFrame{
+		{Class: "com.example.Cart", Method: "load", File: "Cart.kt", Line: 41},
+		{Class: "com.example.Shop", Method: "start", File: "Shop.kt", Line: 12},
+	}
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Errorf("RetraceFrame(a.b, a, SourceFile, 2) = %+v, %v; want %+v, true", got, ok, want)
+	}
+
+	got, ok = r.RetraceFrame("a.b", "a", "SourceFile", 4)
+	want = []RetracedFrame{{Class: "com.example.Shop", Method: "start", File: "Shop.kt", Line: 13}}
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Errorf("RetraceFrame(a.b, a, SourceFile, 4) = %+v, %v; want %+v, true", got, ok, want)
+	}
+
+	if got, ok := r.RetraceFrame("x.y", "z", "SourceFile", 1); ok || got != nil {
+		t.Errorf("RetraceFrame(x.y, z, SourceFile, 1) = %+v, %v; want nil, false", got, ok)
+	}
+}
+
+func TestRetraceFrameNoRange(t *testing.T) {
+	r, err := ParseProguardMapping([]byte(inlineMapping))
+	if err != nil {
+		t.Fatalf("ParseProguardMapping failed: %v", err)
+	}
+	got, ok := r.RetraceFrame("a.b", "b", "", 0)
+	want := []RetracedFrame{{Class: "com.example.Shop", Method: "boot", File: "Shop.kt", Line: 0}}
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Errorf("RetraceFrame(a.b, b, \"\", 0) = %+v, %v; want %+v, true", got, ok, want)
+	}
+}
+
+func TestParseProguardMappingKeepsRangedLines(t *testing.T) {
+	r, err := ParseProguardMapping([]byte(inlineMapping))
+	if err != nil {
+		t.Fatalf("ParseProguardMapping failed: %v", err)
+	}
+	_, method, _ := r.RetraceMethod("a.b", "a", 2)
+	if method != "load" {
+		t.Errorf("RetraceMethod(a.b, a, 2) method = %q, want load", method)
 	}
 }
