@@ -57,7 +57,7 @@ function SankeyChart({
       <svg
         className="fl-svg"
         viewBox={`-2 -6 ${CHART_W + 4} ${CHART_H + 12}`}
-        role="img"
+        role="group"
         aria-label={`${res.direction === 'next' ? 'Screens after' : 'Screens before'} ${res.screen}`}
       >
         <g>

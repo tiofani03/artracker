@@ -10075,6 +10075,12 @@ select {
 .fl-node:focus-visible {
   outline: none;
 }
+.fl-node:focus-visible rect {
+  stroke: var(--color-focus);
+  stroke-width: 2px;
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
 .fl-label {
   font-size: 12px;
   fill: var(--color-ink);
