@@ -128,6 +128,32 @@ func TestApplyFillsEmptyUserOnly(t *testing.T) {
 	}
 }
 
+func TestApplyAccumulatesSessionSummary(t *testing.T) {
+	e, pid, st := newPeopleEnv(t)
+	ts := time.Now().UTC()
+	ctx := context.Background()
+	for i, d := range []people.SessionDelta{
+		{EventCount: 3, Environment: "", HasRageClick: true},
+		{EventCount: 2, Environment: "staging", HasDeadClick: true},
+		{EventCount: 1, Environment: "prod2"},
+	} {
+		d.ProjectID, d.SessionID, d.FirstSeen, d.LastSeen = pid, "s1", ts, ts.Add(time.Duration(i)*time.Second)
+		if err := st.Apply(ctx, people.Batch{Sessions: []people.SessionDelta{d}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var events int64
+	var rage, dead bool
+	var env string
+	if err := e.pool.QueryRow(ctx, `SELECT event_count, has_rage_click, has_dead_click, environment FROM session_contexts
+        WHERE project_id=$1 AND session_id='s1'`, pid).Scan(&events, &rage, &dead, &env); err != nil {
+		t.Fatal(err)
+	}
+	if events != 6 || !rage || !dead || env != "staging" {
+		t.Fatalf("events=%d rage=%v dead=%v env=%q", events, rage, dead, env)
+	}
+}
+
 func TestTouchFromReplay(t *testing.T) {
 	e, pid, st := newPeopleEnv(t)
 	ts := time.Now().UTC()
