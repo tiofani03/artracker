@@ -560,7 +560,7 @@ ARTracker.reset()
           { name: 'attributes.platform', type: 'string', required: true, desc: '"android" or "ios".' },
           { name: 'attributes.start_id', type: 'string (UUID)', required: true, desc: 'Unique per start. Links the item to its profile upload.' },
           { name: 'attributes.type', type: 'string', required: true, desc: '"cold", "warm" or "hot".' },
-          { name: 'attributes.duration_ms', type: 'integer', required: true, desc: 'Total start time in milliseconds. Equals the sum of the phases.' },
+          { name: 'attributes.duration_ms', type: 'integer', required: true, desc: 'Total start time in milliseconds, 1 to 60000. The phases must sum to it within 5 ms.' },
           { name: 'attributes.phases', type: 'array<{ name, ms }>', required: false, desc: 'Contiguous phases in order. A phase whose boundary is unavailable is omitted and its time merged into the next one.' },
           { name: 'attributes.first_screen', type: 'string', required: false, desc: 'Activity or view controller that drew the first frame.' },
           { name: 'attributes.trampoline', type: 'boolean', required: false, desc: 'Android: a splash or trampoline Activity was given up, so `activity_create` counts from the first Activity.' },
@@ -663,7 +663,7 @@ All times are milliseconds. Phases are contiguous and listed in order; their sum
     ],
     params: [
       { name: 'sdk', type: 'object', required: false, desc: 'Client library identifier, e.g. `{ name: "artracker-android", version: "1.2.0" }`.' },
-      { name: 'context', type: 'object', required: true, desc: '`app_version`, `build` and `environment`. The version selects the mapping or dSYM used to symbolicate.' },
+      { name: 'context', type: 'object', required: false, desc: '`app_version`, `build` and `environment`. Optional, but `app_version` is needed to find the mapping or dSYM that symbolicates the profile.' },
       {
         name: 'profile',
         type: 'object',
@@ -671,14 +671,14 @@ All times are milliseconds. Phases are contiguous and listed in order; their sum
         desc: 'The sampled profile, in a compact frame / stack / sample form.',
         children: [
           { name: 'profile.v', type: 'integer', required: true, desc: 'Schema version. Always 1.' },
-          { name: 'profile.start_id', type: 'string (UUID)', required: true, desc: 'Same value as the `app_start` item.' },
+          { name: 'profile.start_id', type: 'string (UUID)', required: true, desc: 'Same value as the `app_start` item. Up to 128 characters.' },
           { name: 'profile.platform', type: 'string', required: true, desc: '"android" or "ios".' },
           { name: 'profile.app_packages', type: 'array<string>', required: false, desc: 'Android: package prefixes treated as app code.' },
-          { name: 'profile.interval_ms', type: 'integer', required: true, desc: 'Sampling interval (10 by default, doubles when sampling gets expensive). Samples carry real times.' },
+          { name: 'profile.interval_ms', type: 'integer', required: true, desc: 'Sampling interval in milliseconds, 1 to 100 (10 by default, doubles when sampling gets expensive). Samples carry real times.' },
           { name: 'profile.t0', type: 'string', required: true, desc: 'Origin of sample times. "process_start" for a cold start.' },
           { name: 'profile.frames', type: 'array', required: true, desc: 'Unique frames. Android: `{ c, m, l, f }` (class, method, line, file). iOS: `{ a, i, sym }` (address, index into `images`, name from dladdr for non-app images).' },
           { name: 'profile.images', type: 'array', required: false, desc: 'iOS only: `{ uuid, name, load, app }` for the images that frames reference. App-image frames are symbolicated server-side.' },
-          { name: 'profile.stacks', type: 'array<array<integer>>', required: true, desc: 'Unique stacks as frame indexes, root first. At most 128 frames each; deeper stacks lose the frames nearest the root.' },
+          { name: 'profile.stacks', type: 'array<array<integer>>', required: true, desc: 'Unique stacks as frame indexes, root first. At most 128 frames each: the SDK drops the root-most frames beyond 128, and the server rejects deeper stacks with 400.' },
           { name: 'profile.samples', type: 'array<{ t, s }>', required: true, desc: '`t` is milliseconds since the start anchor, `s` the stack index. At most 1000 samples, in time order.' },
         ],
       },
@@ -727,7 +727,7 @@ All times are milliseconds. Phases are contiguous and listed in order; their sum
 | Status | Meaning |
 | :--- | :--- |
 | \`202\` | Stored and queued for symbolication. A duplicate \`start_id\` also returns \`202\` and is ignored, so retries are safe. |
-| \`400\` | Invalid JSON or gzip, or a profile that breaks the wire contract (version, platform, interval, counts, indexes, sample order). |
+| \`400\` | Empty body, invalid JSON or gzip, or a profile that breaks the wire contract: version other than 1, platform not \`android\` or \`ios\`, \`start_id\` empty or over 128 characters, \`interval_ms\` outside 1-100, more than 1000 samples or 128 frames per stack, a frame or stack index out of range, or samples out of time order. |
 | \`401\` | Missing or invalid client key. |
 | \`413\` | Over the size limit. The SDK deletes the file and never retries it. |
 | \`429\` | Per-project rate limit exceeded. |
@@ -1568,6 +1568,8 @@ The issue page shows "Raw trace" when no matching artifact exists for the event'
 | \`GET\` | \`/projects/:projectId/app-starts/functions\` | Top 50 slowest functions across profiled starts. Filters: \`platform\`, \`version\`, \`from\`, \`to\`, \`app_only\`, \`environment\` | viewer |
 | \`GET\` | \`/projects/:projectId/app-starts\` | List of starts. \`sort\` (\`slowest\` or \`recent\`), \`limit\`, \`cursor\` plus the summary filters | viewer |
 | \`GET\` | \`/projects/:projectId/app-starts/:startId\` | One start with its phases, device and, when profiled, the symbolicated profile and its status | viewer |
+
+For the App Start endpoints, \`environment\` defaults to \`production\` when it has data in the range, otherwise all environments.
 
 ### API keys
 
