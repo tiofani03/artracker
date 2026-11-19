@@ -6,17 +6,34 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/tiofani03/artracker/backend/internal/ingest"
+	"github.com/tiofani03/artracker/backend/internal/people"
 )
 
-// addTelemetryAt inserts a telemetry row for a session at an absolute timestamp.
+// addTelemetryAt inserts a telemetry row for a session at an absolute timestamp, with the default environment.
 func (e *testEnv) addTelemetryAt(t *testing.T, pid int64, session, user, name, level string, ts time.Time) {
 	t.Helper()
-	if _, err := e.pool.Exec(context.Background(), `
-		INSERT INTO telemetry_events(id, project_id, kind, name, level, session_id, user_id, event_timestamp)
-		VALUES (gen_random_uuid(), $1, 'event', $2, $3, $4, $5, $6)`,
-		pid, name, level, session, user, ts); err != nil {
+	e.addTelemetryEnvAt(t, pid, session, user, name, level, "", ts)
+}
+
+// addTelemetryEnvAt inserts a raw telemetry row and feeds the same row through ingest's per-session aggregation
+// (people.Aggregate + Store.Apply), as a flushed batch would. env "" keeps the column default.
+func (e *testEnv) addTelemetryEnvAt(t *testing.T, pid int64, session, user, name, level, env string, ts time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := e.pool.Exec(ctx, `
+		INSERT INTO telemetry_events(id, project_id, kind, name, level, session_id, user_id, environment, event_timestamp)
+		VALUES (gen_random_uuid(), $1, 'event', $2, $3, $4, $5, COALESCE(NULLIF($6, ''), 'production'), $7)`,
+		pid, name, level, session, user, env, ts); err != nil {
+		t.Fatal(err)
+	}
+	row := ingest.TelemetryRow{ProjectID: pid, Kind: "event", Name: name, Level: level, SessionID: session,
+		UserID: user, Environment: env, EventTimestamp: ts, Attributes: []byte("{}")}
+	if err := people.NewStore(e.pool).Apply(ctx, people.Aggregate([]ingest.TelemetryRow{row})); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -142,8 +159,7 @@ func TestListSessionsHasReplayFalseWhenNoChunks(t *testing.T) {
 
 func TestListSessionsCrashOnlySession(t *testing.T) {
 	s := newSessionListEnv(t, "crash")
-	issue := s.mcpAddIssue(t, s.pid, "NPE", "crash", "open", 1)
-	s.mcpAddEvent(t, issue, mcpTestEvent{user: "carol", session: "ses_crash_001", ageMins: 5})
+	s.addTelemetryAt(t, s.pid, "ses_crash_001", "carol", "crash", "fatal", time.Now().Add(-5*time.Minute))
 
 	items, _ := s.list(t, "")
 	if len(items) != 1 || items[0].ID != "ses_crash_001" {
@@ -190,8 +206,7 @@ func TestListSessionsTelemetryWindow(t *testing.T) {
 func TestListSessionsTelemetryOtherProject(t *testing.T) {
 	s := newSessionListEnv(t, "otherp")
 	s.addTelemetryAt(t, s.other, "ses_oth_0001", "budi", "tap", "", time.Now().Add(-time.Minute))
-	issue := s.mcpAddIssue(t, s.other, "NPE", "crash", "open", 1)
-	s.mcpAddEvent(t, issue, mcpTestEvent{session: "ses_oth_0002", ageMins: 5})
+	s.addTelemetryAt(t, s.other, "ses_oth_0002", "", "crash", "fatal", time.Now().Add(-5*time.Minute))
 
 	wantIDs(t, s.ids(t, ""))
 }
@@ -203,15 +218,63 @@ func TestListSessionsIgnoresReplayChunkEvents(t *testing.T) {
 	wantIDs(t, s.ids(t, ""))
 }
 
-// A crash-only session takes its environment from the issue event, not a hard-coded default.
+// A crash-only session takes its environment from the crash row, not a hard-coded default.
 func TestListSessionsCrashOnlyEnvironment(t *testing.T) {
 	s := newSessionListEnv(t, "crashenv")
-	issue := s.mcpAddIssue(t, s.pid, "NPE", "crash", "open", 1)
-	s.mcpAddEvent(t, issue, mcpTestEvent{user: "carol", session: "ses_crash_env", ageMins: 5})
-	if _, err := s.pool.Exec(context.Background(), `UPDATE issue_events SET environment = 'staging' WHERE session_id = 'ses_crash_env'`); err != nil {
-		t.Fatal(err)
-	}
+	s.addTelemetryEnvAt(t, s.pid, "ses_crash_env", "carol", "crash", "fatal", "staging", time.Now().Add(-5*time.Minute))
 
 	wantIDs(t, s.ids(t, "environment=staging"), "ses_crash_env")
 	wantIDs(t, s.ids(t, "environment=production"))
+}
+
+// Demo data written by seed-mock bypasses the ingest workers; its sessions must still be listed.
+func TestListSessionsIncludesSeededMockSessions(t *testing.T) {
+	s := newSessionListEnv(t, "seed")
+	// seed-mock also writes analytics `events`, which has no FK to projects and outlives the per-test TRUNCATE.
+	cleanEvents := func() { _, _ = s.pool.Exec(context.Background(), `DELETE FROM events WHERE project_id = $1`, s.pid) }
+	cleanEvents()
+	t.Cleanup(cleanEvents)
+	resp := s.do(t, "POST", fmt.Sprintf("/api/v1/projects/%d/seed-mock", s.pid), nil, s.hdr)
+	if resp.StatusCode != 200 {
+		t.Fatalf("seed-mock status %d", resp.StatusCode)
+	}
+	rows, err := s.pool.Query(context.Background(), `
+		SELECT DISTINCT session_id FROM telemetry_events
+		WHERE project_id = $1 AND session_id <> '' AND name <> 'replay_chunk' AND event_timestamp >= now() - interval '7 days'
+		ORDER BY 1`, s.pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		want = append(want, id)
+	}
+	rows.Close()
+	if len(want) == 0 {
+		t.Fatal("seed-mock wrote no session telemetry")
+	}
+	listed := map[string]bool{}
+	for _, id := range s.ids(t, "limit=100") {
+		listed[id] = true
+	}
+	for _, id := range want {
+		if !listed[id] {
+			t.Errorf("seeded session %s not listed", id)
+		}
+	}
+}
+
+// The list must not aggregate raw telemetry per request: on a busy project that scan outgrew the handler's timeout.
+func TestBuildSessionListQueryDoesNotScanTelemetry(t *testing.T) {
+	q, _ := buildSessionListQuery(1, sessionListFilter{}, time.Now(), 10, 0)
+	if strings.Contains(q, "telemetry_events") || strings.Contains(q, "issue_events") {
+		t.Fatal("list query reads raw telemetry / crash rows")
+	}
+	if !strings.Contains(q, "session_contexts") {
+		t.Fatal("list query must read session_contexts")
+	}
 }

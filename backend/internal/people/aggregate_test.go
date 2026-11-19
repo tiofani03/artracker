@@ -122,3 +122,32 @@ func TestAggregateCapsMergedTraitsAndRecordsTime(t *testing.T) {
 		t.Fatalf("TraitsAt = %v", p.TraitsAt)
 	}
 }
+
+func TestAggregateSessionSummary(t *testing.T) {
+	t1 := time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)
+	env := func(r ingest.TelemetryRow, e string) ingest.TelemetryRow { r.Environment = e; return r }
+	rows := []ingest.TelemetryRow{
+		env(row("s1", "u1", "event", "tap", "info", t1, ""), ""),
+		env(row("s1", "u1", "event", "rage_click", "", t1.Add(time.Second), ""), "staging"),
+		env(row("s1", "u1", "event", "rage_tap", "", t1.Add(2*time.Second), ""), "prod2"),
+		env(row("s1", "u1", "event", ReplayChunkEventName, "", t1.Add(3*time.Second), ""), "other"),
+		env(row("s1", "u1", "log", "x", "fatal", t1.Add(4*time.Second), ""), ""),
+		env(row("s2", "", "event", ReplayChunkEventName, "", t1, ""), "staging"),
+	}
+	b := Aggregate(rows)
+	s1 := findSession(b, "s1")
+	if s1 == nil || s1.EventCount != 4 || !s1.HasRageClick || s1.HasDeadClick || !s1.HasError || s1.Environment != "staging" {
+		t.Fatalf("bad s1: %+v", s1)
+	}
+	s2 := findSession(b, "s2")
+	if s2 == nil || s2.EventCount != 0 || s2.HasError || s2.Environment != "" {
+		t.Fatalf("bad s2: %+v", s2)
+	}
+}
+
+func TestAggregateDeadClick(t *testing.T) {
+	b := Aggregate([]ingest.TelemetryRow{row("s1", "", "event", "dead_click", "", time.Now(), "")})
+	if s := findSession(b, "s1"); s == nil || !s.HasDeadClick || s.HasRageClick || s.EventCount != 1 {
+		t.Fatalf("bad s1: %+v", s)
+	}
+}

@@ -67,15 +67,20 @@ func splitTraits(m map[string]any) (set []byte, deleted []string) {
 }
 
 const upsertSessionSQL = `
-INSERT INTO session_contexts (project_id, session_id, user_id, first_seen, last_seen, has_error, context)
-VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+INSERT INTO session_contexts (project_id, session_id, user_id, first_seen, last_seen, has_error, context,
+                              environment, event_count, has_rage_click, has_dead_click)
+VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11)
 ON CONFLICT (project_id, session_id) DO UPDATE SET
-    user_id    = CASE WHEN session_contexts.user_id = '' THEN EXCLUDED.user_id ELSE session_contexts.user_id END,
-    first_seen = LEAST(session_contexts.first_seen, EXCLUDED.first_seen),
-    last_seen  = GREATEST(session_contexts.last_seen, EXCLUDED.last_seen),
-    has_error  = session_contexts.has_error OR EXCLUDED.has_error,
-    context    = CASE WHEN EXCLUDED.context <> '{}'::jsonb THEN EXCLUDED.context ELSE session_contexts.context END,
-    updated_at = now()`
+    user_id        = CASE WHEN session_contexts.user_id = '' THEN EXCLUDED.user_id ELSE session_contexts.user_id END,
+    first_seen     = LEAST(session_contexts.first_seen, EXCLUDED.first_seen),
+    last_seen      = GREATEST(session_contexts.last_seen, EXCLUDED.last_seen),
+    has_error      = session_contexts.has_error OR EXCLUDED.has_error,
+    context        = CASE WHEN EXCLUDED.context <> '{}'::jsonb THEN EXCLUDED.context ELSE session_contexts.context END,
+    environment    = CASE WHEN session_contexts.environment = '' THEN EXCLUDED.environment ELSE session_contexts.environment END,
+    event_count    = session_contexts.event_count + EXCLUDED.event_count,
+    has_rage_click = session_contexts.has_rage_click OR EXCLUDED.has_rage_click,
+    has_dead_click = session_contexts.has_dead_click OR EXCLUDED.has_dead_click,
+    updated_at     = now()`
 
 // The trait merge only applies when this batch's newest $identify ($9) is not older than the stored one, and a
 // merge that would exceed MaxTraitKeys keeps updating existing keys but adds no new ones.
@@ -129,7 +134,7 @@ func (s *Store) Apply(ctx context.Context, b Batch) error {
 
 	for _, d := range sessions {
 		if _, err := tx.Exec(ctx, upsertSessionSQL, d.ProjectID, d.SessionID, d.UserID, d.FirstSeen, d.LastSeen,
-			d.HasError, jsonObject(d.Context)); err != nil {
+			d.HasError, jsonObject(d.Context), d.Environment, d.EventCount, d.HasRageClick, d.HasDeadClick); err != nil {
 			return fmt.Errorf("upsert session context: %w", err)
 		}
 	}
