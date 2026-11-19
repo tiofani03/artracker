@@ -114,3 +114,42 @@ func TestParseProguardMappingKeepsRangedLines(t *testing.T) {
 		t.Errorf("RetraceMethod(a.b, a, 2) method = %q, want load", method)
 	}
 }
+
+func TestRetraceStackTraceInlineFrames(t *testing.T) {
+	r, err := ParseProguardMapping([]byte(inlineMapping))
+	if err != nil {
+		t.Fatalf("ParseProguardMapping failed: %v", err)
+	}
+	got := r.RetraceStackTrace("java.lang.IllegalStateException: boom\n    at a.b.a(SourceFile:2)\n    at android.view.View.performClick(View.java:7125)")
+	want := "java.lang.IllegalStateException: boom\n" +
+		"    at com.example.Cart.load(Cart.kt:41)\n" +
+		"    at com.example.Shop.start(Shop.kt:12)\n" +
+		"    at android.view.View.performClick(View.java:7125)"
+	if got != want {
+		t.Errorf("RetraceStackTrace =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestRetraceFrameEqualOrigRange(t *testing.T) {
+	r, err := ParseProguardMapping([]byte("com.example.Shop -> a.b:\n    4:4:void start():13:13 -> a\n"))
+	if err != nil {
+		t.Fatalf("ParseProguardMapping failed: %v", err)
+	}
+	got, ok := r.RetraceFrame("a.b", "a", "SourceFile", 4)
+	want := []RetracedFrame{{Class: "com.example.Shop", Method: "start", File: "Shop.kt", Line: 13}}
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Errorf("RetraceFrame = %+v, %v; want %+v, true", got, ok, want)
+	}
+}
+
+func TestRetraceFrameLineZeroAgainstRangedEntries(t *testing.T) {
+	r, err := ParseProguardMapping([]byte(inlineMapping))
+	if err != nil {
+		t.Fatalf("ParseProguardMapping failed: %v", err)
+	}
+	got, ok := r.RetraceFrame("a.b", "a", "SourceFile", 0)
+	want := []RetracedFrame{{Class: "com.example.Shop", Method: "a", File: "Shop.kt", Line: 0}}
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Errorf("RetraceFrame = %+v, %v; want %+v, true", got, ok, want)
+	}
+}

@@ -144,6 +144,9 @@ func (r *ProguardRetracer) RetraceMethod(obfClass, obfMethod string, lineNum int
 			if parenIdx := strings.Index(cleanName, "("); parenIdx != -1 {
 				cleanName = cleanName[:parenIdx]
 			}
+			if m.OrigClass != "" {
+				origClass = m.OrigClass
+			}
 			return origClass, cleanName, lineNum
 		}
 	}
@@ -152,6 +155,9 @@ func (r *ProguardRetracer) RetraceMethod(obfClass, obfMethod string, lineNum int
 	first := methods[0].OriginalName
 	if parenIdx := strings.Index(first, "("); parenIdx != -1 {
 		first = first[:parenIdx]
+	}
+	if methods[0].OrigClass != "" {
+		origClass = methods[0].OrigClass
 	}
 	return origClass, first, lineNum
 }
@@ -264,24 +270,32 @@ func (r *ProguardRetracer) RetraceStackTrace(stackTrace string) string {
 				lineNum, _ = strconv.Atoi(matches[4])
 			}
 
-			origClass, origMethod, resolvedLine := r.RetraceMethod(obfClass, obfMethod, lineNum)
-
-			origSimple := simpleClassName(origClass)
-			resolvedSource := origSimple + ".kt"
-			if strings.HasSuffix(sourceFile, ".java") {
-				resolvedSource = origSimple + ".java"
+			// One output line per original frame, innermost (inlined callee) first.
+			frames, ok := r.RetraceFrame(obfClass, obfMethod, sourceFile, lineNum)
+			if !ok {
+				frames = []RetracedFrame{{Class: obfClass, Method: obfMethod, Line: lineNum}}
 			}
 
-			var locPart string
-			if resolvedLine > 0 {
-				locPart = fmt.Sprintf("(%s:%d)", filepath.Base(resolvedSource), resolvedLine)
-			} else if sourceFile != "" {
-				locPart = fmt.Sprintf("(%s)", sourceFile)
-			} else {
-				locPart = "()"
-			}
+			out := make([]string, 0, len(frames))
+			for _, f := range frames {
+				origSimple := simpleClassName(f.Class)
+				resolvedSource := origSimple + ".kt"
+				if strings.HasSuffix(sourceFile, ".java") {
+					resolvedSource = origSimple + ".java"
+				}
 
-			lines[i] = fmt.Sprintf("    at %s.%s%s", origClass, origMethod, locPart)
+				var locPart string
+				if f.Line > 0 {
+					locPart = fmt.Sprintf("(%s:%d)", filepath.Base(resolvedSource), f.Line)
+				} else if sourceFile != "" {
+					locPart = fmt.Sprintf("(%s)", sourceFile)
+				} else {
+					locPart = "()"
+				}
+
+				out = append(out, fmt.Sprintf("    at %s.%s%s", f.Class, f.Method, locPart))
+			}
+			lines[i] = strings.Join(out, "\n")
 		}
 	}
 
