@@ -10155,6 +10155,91 @@ select {
 .fl-node--drop .fl-label {
   fill: var(--color-muted);
 }
+/* Map view: whole-app screen graph */
+.fl-map.is-loading {
+  opacity: 0.6;
+}
+.fl-map__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+.fl-map__scroll {
+  overflow: auto;
+  max-height: 70vh;
+  margin-bottom: var(--space-sm);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: 10px;
+  background: var(--color-paper);
+}
+.fl-map__svg {
+  display: block;
+  max-width: none;
+  height: auto;
+}
+.fl-map__edge {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-opacity: 0.35;
+  transition: stroke-opacity 120ms ease;
+}
+.fl-map__edge.is-back {
+  stroke-dasharray: 5 4;
+}
+.fl-map__edge.is-drop {
+  stroke: var(--color-muted);
+  stroke-opacity: 0.3;
+}
+.fl-map__edge.is-hot {
+  stroke-opacity: 0.75;
+}
+.fl-map__edge.is-dim {
+  stroke-opacity: 0.07;
+}
+.fl-map__arrow {
+  fill: var(--color-accent);
+  fill-opacity: 0.6;
+}
+.fl-map__node rect {
+  fill: var(--color-paper-hi);
+  stroke: var(--color-accent);
+  stroke-width: 1.5px;
+}
+.fl-map__node.is-terminal rect {
+  fill: var(--color-paper-2);
+  stroke: var(--color-rule-2);
+  stroke-dasharray: 4 3;
+}
+.fl-map__node.is-pickable {
+  cursor: pointer;
+}
+.fl-map__node.is-pickable:hover rect {
+  fill: var(--color-accent-wash);
+}
+.fl-map__node:focus-visible {
+  outline: none;
+}
+.fl-map__node:focus-visible rect {
+  stroke: var(--color-focus);
+  stroke-width: 3px;
+}
+.fl-map__node.is-dim {
+  opacity: 0.35;
+}
+.fl-map__name {
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--color-ink);
+}
+.fl-map__meta {
+  font-size: 11px;
+  fill: var(--color-muted);
+}
+.fl-map__node.is-terminal .fl-map__name {
+  fill: var(--color-muted);
+}
 /* Focus view: came from → screen → went to */
 .fl-focus {
   display: grid;

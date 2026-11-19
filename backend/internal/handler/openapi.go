@@ -603,6 +603,26 @@ var openAPISpecBytes = []byte(`{
         }
       }
     },
+    "/projects/{projectID}/flow/transitions": {
+      "get": {
+        "summary": "Get Flow Transitions",
+        "description": "The whole-app screen graph in the range: each edge counts distinct sessions that went from one screen straight to the next (revisits count once per session). Edges from Start come from each session's first screen, edges to Exit leave its last screen. Sorted by sessions, max 300 edges.",
+        "operationId": "getFlowTransitions",
+        "tags": ["Flow"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "from", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default 7 days ago" },
+          { "name": "to", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default now" },
+          { "name": "platform", "in": "query", "schema": { "type": "string" } },
+          { "name": "app_version", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "{sessions (distinct sessions with a screen view in range), edges:[{source,target,sessions}]}" },
+          "400": { "description": "Invalid date range" }
+        }
+      }
+    },
     "/projects/{projectID}/heatmap": {
       "get": {
         "summary": "Get Tap Heatmap",

@@ -345,3 +345,80 @@ func TestFlowScreensFilters(t *testing.T) {
 		t.Errorf("cross-org status = %d, want 403/404", st)
 	}
 }
+
+type flowTransitionsResp struct {
+	Sessions int `json:"sessions"`
+	Edges    []struct {
+		Source   string `json:"source"`
+		Target   string `json:"target"`
+		Sessions int    `json:"sessions"`
+	} `json:"edges"`
+}
+
+func TestFlowTransitions(t *testing.T) {
+	e := newTestEnv(t)
+	org := e.addOrg(t, "flow-tr")
+	uid, hdr := e.addUser(t, "flowtr")
+	e.addMember(t, org, uid, "viewer")
+	pid := e.addProject(t, org, "flow-tr-app")
+	for _, s := range []string{"s1", "s2", "s3"} {
+		e.addReplaySession(t, pid, s, "1 hour", false, false, false)
+	}
+	// s1: Home → Cart → Home → Cart (revisits count once per session), s2: Home → Cart, s3: Login → Home
+	e.addView(t, pid, "s1", 0, "Home", "android", 1000, true, false)
+	e.addView(t, pid, "s1", 1, "Cart", "android", 1000, false, false)
+	e.addView(t, pid, "s1", 2, "Home", "android", 1000, false, false)
+	e.addView(t, pid, "s1", 3, "Cart", "android", 1000, false, true)
+	e.addView(t, pid, "s2", 0, "Home", "android", 1000, true, false)
+	e.addView(t, pid, "s2", 1, "Cart", "android", 1000, false, true)
+	e.addView(t, pid, "s3", 0, "Login", "android", 1000, true, false)
+	e.addView(t, pid, "s3", 1, "Home", "android", 1000, false, true)
+
+	var got flowTransitionsResp
+	if st := hmGet(t, e, hdr, fmt.Sprintf("/api/v1/projects/%d/flow/transitions", pid), &got); st != 200 {
+		t.Fatalf("status %d", st)
+	}
+	if got.Sessions != 3 {
+		t.Errorf("sessions = %d, want 3", got.Sessions)
+	}
+	edges := map[string]int{}
+	for _, ed := range got.Edges {
+		edges[ed.Source+">"+ed.Target] = ed.Sessions
+	}
+	want := map[string]int{
+		"Start>Home":  2,
+		"Start>Login": 1,
+		"Home>Cart":   2,
+		"Cart>Home":   1,
+		"Login>Home":  1,
+		"Cart>Exit":   2,
+		"Home>Exit":   1,
+	}
+	if !reflect.DeepEqual(edges, want) {
+		t.Errorf("edges = %v, want %v", edges, want)
+	}
+	if len(got.Edges) > 0 && got.Edges[0].Sessions < got.Edges[len(got.Edges)-1].Sessions {
+		t.Errorf("edges not sorted by sessions desc: %+v", got.Edges)
+	}
+
+	// app_version filter narrows to matching sessions only
+	if _, err := e.pool.Exec(context.Background(), `UPDATE screen_views SET app_version='2.0' WHERE project_id=$1 AND session_id='s3'`, pid); err != nil {
+		t.Fatal(err)
+	}
+	var v2 flowTransitionsResp
+	if st := hmGet(t, e, hdr, fmt.Sprintf("/api/v1/projects/%d/flow/transitions?app_version=2.0", pid), &v2); st != 200 {
+		t.Fatalf("status %d", st)
+	}
+	if v2.Sessions != 1 || len(v2.Edges) != 3 {
+		t.Errorf("app_version filter: sessions=%d edges=%+v, want 1 session and 3 edges", v2.Sessions, v2.Edges)
+	}
+
+	// empty range → empty arrays, bad date → 400
+	var none flowTransitionsResp
+	if st := hmGet(t, e, hdr, fmt.Sprintf("/api/v1/projects/%d/flow/transitions?from=2001-01-01&to=2001-01-02", pid), &none); st != 200 || none.Sessions != 0 || none.Edges == nil || len(none.Edges) != 0 {
+		t.Errorf("empty range: status %d resp %+v", st, none)
+	}
+	if st := hmGet(t, e, hdr, fmt.Sprintf("/api/v1/projects/%d/flow/transitions?from=garbage", pid), nil); st != 400 {
+		t.Errorf("bad date = %d, want 400", st)
+	}
+}

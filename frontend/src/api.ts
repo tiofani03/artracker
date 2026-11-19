@@ -838,6 +838,8 @@ export type FlowScreensResponse = { screens: FlowScreen[]; app_versions: string[
 export type FlowDirection = 'next' | 'prev'
 export type FlowNode = { id: string; step: number; screen: string }
 export type FlowLink = { source: string; target: string; sessions: number }
+export type FlowEdge = { source: string; target: string; sessions: number }
+export type FlowTransitionsResponse = { sessions: number; edges: FlowEdge[] }
 export type FlowPathsResponse = {
   screen: string
   direction: FlowDirection
@@ -857,6 +859,8 @@ export const flowApi = {
     request<FlowScreensResponse>(`/projects/${projectId}/flow/screens${heatmapQuery(params)}`),
   paths: (projectId: number, params: FlowPathsParams) =>
     request<FlowPathsResponse>(`/projects/${projectId}/flow/paths${heatmapQuery(params)}`),
+  transitions: (projectId: number, params: HeatmapParams = {}) =>
+    request<FlowTransitionsResponse>(`/projects/${projectId}/flow/transitions${heatmapQuery(params)}`),
 }
 
 export type OrganizationMember = {

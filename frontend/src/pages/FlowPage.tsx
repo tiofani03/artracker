@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { flowApi, type FlowDirection, type FlowPathsResponse, type FlowScreen, type FlowScreensResponse } from '../api'
+import {
+  flowApi,
+  type FlowDirection,
+  type FlowPathsResponse,
+  type FlowScreen,
+  type FlowScreensResponse,
+  type FlowTransitionsResponse,
+} from '../api'
 import CustomSelect from '../components/CustomSelect'
 import DashboardShell from '../components/DashboardShell'
 import {
@@ -14,6 +21,7 @@ import {
   type SortKey,
 } from '../flow/focus'
 import { formatDuration } from '../flow/format'
+import { layoutMap, MAP_NODE_H, MAP_NODE_W } from '../flow/map'
 import { layoutSankey, NODE_WIDTH, type LaidLink } from '../flow/sankey'
 import {
   exitRateLabel,
@@ -310,7 +318,143 @@ function SortHeader({
   )
 }
 
-type ViewMode = 'focus' | 'paths'
+type ViewMode = 'focus' | 'paths' | 'map'
+
+const MIN_SESSION_OPTIONS = [1, 2, 5, 10, 25, 50].map((n) => ({ value: n, label: n === 1 ? 'All transitions' : `≥ ${n} sessions` }))
+const MAP_LABEL_CHARS = 19
+
+function MapView({
+  projectId,
+  range,
+  appVersion,
+  listKey,
+  screenSessions,
+  onOpen,
+}: {
+  projectId: number
+  range: { from: string; to: string }
+  appVersion: string
+  listKey: string
+  /** Distinct sessions per screen (from the screen list); edge sums would count revisits twice. */
+  screenSessions: Map<string, number>
+  onOpen: (screen: string) => void
+}) {
+  const [minSessions, setMinSessions] = useState(1)
+  const [hover, setHover] = useState<string | null>(null)
+  const [state, setState] = useState<Tagged<FlowTransitionsResponse>>({ key: '', error: '', data: null })
+  useEffect(() => {
+    let cancelled = false
+    flowApi
+      .transitions(projectId, { ...range, app_version: appVersion })
+      .then((data) => !cancelled && setState({ key: listKey, error: '', data }))
+      .catch((e: unknown) => !cancelled && setState({ key: listKey, error: e instanceof Error ? e.message : 'Request failed', data: null }))
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, range, appVersion, listKey])
+  const loading = state.key !== listKey
+  const data = state.data
+  const map = useMemo(() => layoutMap(data?.edges ?? [], minSessions), [data, minSessions])
+  const total = data?.sessions ?? 0
+  const touches = (e: { source: string; target: string }) => !hover || e.source === hover || e.target === hover
+
+  return (
+    <div className={`fl-map${loading && data ? ' is-loading' : ''}`}>
+      <div className="fl-map__bar">
+        <CustomSelect size="sm" ariaLabel="Minimum sessions per transition" options={MIN_SESSION_OPTIONS} value={minSessions} onChange={setMinSessions} />
+        {data && (
+          <span className="ppl-muted">
+            {sessionsLabel(total)} · {map.nodes.filter((n) => isSelectableNode(n.screen)).length} screens · {map.edges.length} transitions
+          </span>
+        )}
+      </div>
+      {state.key === listKey && state.error ? (
+        <p className="ppl-muted ppl-pad">Couldn't load the map: {state.error}</p>
+      ) : !data ? (
+        <p className="ppl-muted ppl-pad">Loading…</p>
+      ) : map.nodes.length === 0 ? (
+        <p className="ppl-muted ppl-pad">
+          {data.edges.length === 0 ? 'No transitions in this range.' : 'No transition reaches this minimum. Lower it to see the map.'}
+        </p>
+      ) : (
+        <div className="fl-map__scroll">
+          <svg
+            className="fl-map__svg"
+            width={map.width}
+            height={map.height}
+            viewBox={`0 0 ${map.width} ${map.height}`}
+            role="group"
+            aria-label="Screen map"
+            onMouseLeave={() => setHover(null)}
+          >
+            <defs>
+              <marker id="fl-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+                <path d="M0,0 L8,4 L0,8 Z" className="fl-map__arrow" />
+              </marker>
+            </defs>
+            <g>
+              {map.edges.map((e) => (
+                <path
+                  key={`${e.source}>${e.target}`}
+                  className={`fl-map__edge${e.back ? ' is-back' : ''}${isTerminal(e.target) || isTerminal(e.source) ? ' is-drop' : ''}${touches(e) ? '' : ' is-dim'}${hover && touches(e) ? ' is-hot' : ''}`}
+                  d={e.d}
+                  strokeWidth={e.width}
+                  markerEnd="url(#fl-arrow)"
+                >
+                  <title>{`${neighbourLabel(e.source)} → ${neighbourLabel(e.target)}: ${sessionsLabel(e.sessions)} (${percentLabel(e.sessions, total)} of all)`}</title>
+                </path>
+              ))}
+            </g>
+            <g>
+              {map.nodes.map((n) => {
+                const pickable = isSelectableNode(n.screen)
+                const name = n.screen === 'Start' ? 'Session start' : n.screen === 'Exit' ? 'Left the app' : displayScreen(n.screen)
+                const sessions = screenSessions.get(n.screen) ?? n.sessions
+                return (
+                  <g
+                    key={n.screen}
+                    className={`fl-map__node${pickable ? ' is-pickable' : ' is-terminal'}${hover && hover !== n.screen ? ' is-dim' : ''}`}
+                    transform={`translate(${n.x},${n.y})`}
+                    onMouseEnter={() => setHover(n.screen)}
+                    onFocus={() => setHover(n.screen)}
+                    onBlur={() => setHover(null)}
+                    onClick={pickable ? () => onOpen(n.screen) : undefined}
+                    role={pickable ? 'button' : undefined}
+                    tabIndex={pickable ? 0 : undefined}
+                    aria-label={pickable ? `Focus ${name}, ${sessionsLabel(sessions)}` : undefined}
+                    onKeyDown={
+                      pickable
+                        ? (ev) => {
+                            if (ev.key === 'Enter' || ev.key === ' ') {
+                              ev.preventDefault()
+                              onOpen(n.screen)
+                            }
+                          }
+                        : undefined
+                    }
+                  >
+                    <title>{`${name}: ${sessionsLabel(sessions)}`}</title>
+                    <rect width={MAP_NODE_W} height={MAP_NODE_H} rx={8} />
+                    <text className="fl-map__name" x={10} y={16}>
+                      {truncate(name, MAP_LABEL_CHARS)}
+                    </text>
+                    <text className="fl-map__meta" x={10} y={31}>
+                      {sessionsLabel(sessions)}
+                    </text>
+                  </g>
+                )
+              })}
+            </g>
+          </svg>
+        </div>
+      )}
+      <p className="hm-note">
+        Each arrow counts sessions that went straight from one screen to the next; dashed arrows go back to an earlier screen.
+        Hover a screen to highlight its transitions, click it to focus. Updated about 10 minutes after a session ends.
+      </p>
+    </div>
+  )
+}
 
 function FlowView({ projectId }: { projectId: number }) {
   const [days, setDays] = useState(30)
@@ -350,6 +494,7 @@ function FlowView({ projectId }: { projectId: number }) {
   )
   const maxMedian = useMemo(() => Math.max(1, ...allScreens.map((s) => s.median_ms)), [allScreens])
   const unrecognized = list.data?.unrecognized_sessions ?? 0
+  const screenSessions = useMemo(() => new Map(allScreens.map((s) => [s.screen, s.sessions])), [allScreens])
 
   const selected = useMemo(() => resolveSelection(allScreens, picked), [allScreens, picked])
   const stats = useMemo(
@@ -494,8 +639,8 @@ function FlowView({ projectId }: { projectId: number }) {
         ) : (
           <>
             <div className="hm-toolbar">
-              <h2 className="dash-card__title hm-toolbar__title" title={displayScreen(selected.screen)}>
-                {displayScreen(selected.screen)}
+              <h2 className="dash-card__title hm-toolbar__title" title={mode === 'map' ? 'App map' : displayScreen(selected.screen)}>
+                {mode === 'map' ? 'App map' : displayScreen(selected.screen)}
               </h2>
               <div className="dash-seg" role="group" aria-label="View">
                 <button
@@ -513,6 +658,14 @@ function FlowView({ projectId }: { projectId: number }) {
                   onClick={() => setMode('paths')}
                 >
                   Explore paths
+                </button>
+                <button
+                  type="button"
+                  className={`dash-seg__btn${mode === 'map' ? ' is-active' : ''}`}
+                  aria-pressed={mode === 'map'}
+                  onClick={() => setMode('map')}
+                >
+                  Map
                 </button>
               </div>
               {mode === 'paths' && (
@@ -540,7 +693,19 @@ function FlowView({ projectId }: { projectId: number }) {
                 </>
               )}
             </div>
-            {mode === 'focus' ? (
+            {mode === 'map' ? (
+              <MapView
+                projectId={projectId}
+                range={range}
+                appVersion={appVersion}
+                listKey={listKey}
+                screenSessions={screenSessions}
+                onOpen={(screen) => {
+                  pick(screen)
+                  setMode('focus')
+                }}
+              />
+            ) : mode === 'focus' ? (
               <>
                 <FocusView stats={stats} prev={prev} next={next} onPick={pick} />
                 <p className="hm-note">

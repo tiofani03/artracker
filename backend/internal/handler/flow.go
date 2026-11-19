@@ -340,3 +340,76 @@ func (h *Handler) GetFlowPaths(c *fiber.Ctx) error {
 	nodes, links := buildFlowPaths(paths, flowTopN)
 	return c.JSON(fiber.Map{"screen": screen, "direction": direction, "sessions": len(paths), "nodes": nodes, "links": links})
 }
+
+// flowMaxEdges caps the transition graph; the busiest edges are kept.
+const flowMaxEdges = 300
+
+type flowEdge struct {
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	Sessions int    `json:"sessions"`
+}
+
+// GetFlowTransitions handles GET /api/v1/projects/:projectID/flow/transitions: the whole-app screen graph.
+// Each edge counts distinct sessions that moved from one screen straight to the next (revisits count once
+// per session); "Start" edges come from each session's first screen and "Exit" edges go from its last one.
+// A transition is in range when the screen it leaves was entered in range. sessions is the number of
+// distinct sessions with a view in range.
+func (h *Handler) GetFlowTransitions(c *fiber.Ctx) error {
+	projectID := c.Locals("projectID").(int64)
+	from, to, err := heatmapRange(c)
+	if err != nil {
+		return err
+	}
+	platform := strings.TrimSpace(c.Query("platform"))
+	version := strings.TrimSpace(c.Query("app_version"))
+
+	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	defer cancel()
+
+	rows, err := h.db.Query(ctx, `
+		WITH v AS (
+			SELECT session_id, seq, screen, is_entry, is_exit
+			  FROM screen_views
+			 WHERE project_id = $1 AND entered_at >= $2 AND entered_at < $3
+			   AND ($4 = '' OR platform = $4) AND ($5 = '' OR app_version = $5)
+		)
+		SELECT source, target, sessions FROM (
+			SELECT a.screen AS source, b.screen AS target, count(DISTINCT a.session_id)::int AS sessions
+			  FROM v a
+			  JOIN screen_views b ON b.project_id = $1 AND b.session_id = a.session_id AND b.seq = a.seq + 1
+			 GROUP BY a.screen, b.screen
+			UNION ALL
+			SELECT $6, screen, count(DISTINCT session_id)::int FROM v WHERE is_entry GROUP BY screen
+			UNION ALL
+			SELECT screen, $7, count(DISTINCT session_id)::int FROM v WHERE is_exit GROUP BY screen
+		) e
+		ORDER BY sessions DESC, source, target
+		LIMIT $8`, projectID, from, to, platform, version, flowStart, flowExit, flowMaxEdges)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	edges := []flowEdge{}
+	for rows.Next() {
+		var e flowEdge
+		if err := rows.Scan(&e.Source, &e.Target, &e.Sessions); err != nil {
+			return err
+		}
+		edges = append(edges, e)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	rows.Close()
+
+	var sessions int
+	if err := h.db.QueryRow(ctx, `
+		SELECT count(DISTINCT session_id)::int FROM screen_views
+		 WHERE project_id = $1 AND entered_at >= $2 AND entered_at < $3
+		   AND ($4 = '' OR platform = $4) AND ($5 = '' OR app_version = $5)`,
+		projectID, from, to, platform, version).Scan(&sessions); err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"sessions": sessions, "edges": edges})
+}
