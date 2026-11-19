@@ -147,9 +147,68 @@ func TestRetraceFrameLineZeroAgainstRangedEntries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseProguardMapping failed: %v", err)
 	}
+	// No line to match: the first mapping wins (as RetraceMethod does), never an inline chain, line unchanged.
 	got, ok := r.RetraceFrame("a.b", "a", "SourceFile", 0)
-	want := []RetracedFrame{{Class: "com.example.Shop", Method: "a", File: "Shop.kt", Line: 0}}
+	want := []RetracedFrame{{Class: "com.example.Cart", Method: "load", File: "Cart.kt", Line: 0}}
 	if !ok || !reflect.DeepEqual(got, want) {
 		t.Errorf("RetraceFrame = %+v, %v; want %+v, true", got, ok, want)
+	}
+}
+
+func TestRetraceStackTraceUnknownSourceKeepsOriginalName(t *testing.T) {
+	r, err := ParseProguardMapping([]byte(inlineMapping))
+	if err != nil {
+		t.Fatalf("ParseProguardMapping failed: %v", err)
+	}
+	got := r.RetraceStackTrace("java.lang.IllegalStateException: boom\n    at a.b.b(Unknown Source)")
+	want := "java.lang.IllegalStateException: boom\n    at com.example.Shop.boot(Unknown Source)"
+	if got != want {
+		t.Errorf("RetraceStackTrace =\n%s\nwant\n%s", got, want)
+	}
+	// Ranged entries, no line: single frame, the original method name rather than the obfuscated one.
+	got = r.RetraceStackTrace("    at a.b.a(Unknown Source)")
+	want = "    at com.example.Cart.load(Unknown Source)"
+	if got != want {
+		t.Errorf("RetraceStackTrace(ranged, no line) = %q, want %q", got, want)
+	}
+}
+
+func TestRetraceFrameAmbiguousUnrangedOverloadsSingleFrame(t *testing.T) {
+	r, err := ParseProguardMapping([]byte("com.example.Shop -> a.b:\n    void foo() -> a\n    void bar(int) -> a\n"))
+	if err != nil {
+		t.Fatalf("ParseProguardMapping failed: %v", err)
+	}
+	for _, line := range []int{0, 7} {
+		got, ok := r.RetraceFrame("a.b", "a", "SourceFile", line)
+		want := []RetracedFrame{{Class: "com.example.Shop", Method: "foo", File: "Shop.kt", Line: line}}
+		if !ok || !reflect.DeepEqual(got, want) {
+			t.Errorf("line %d: RetraceFrame = %+v, %v; want %+v, true", line, got, ok, want)
+		}
+	}
+	if got := r.RetraceStackTrace("    at a.b.a(SourceFile:7)"); got != "    at com.example.Shop.foo(Shop.kt:7)" {
+		t.Errorf("RetraceStackTrace = %q", got)
+	}
+}
+
+func TestRetraceFrameAgreeingUnrangedOverloadsSingleFrame(t *testing.T) {
+	r, err := ParseProguardMapping([]byte("com.example.Shop -> a.b:\n    void foo() -> a\n    void foo(int) -> a\n"))
+	if err != nil {
+		t.Fatalf("ParseProguardMapping failed: %v", err)
+	}
+	got, ok := r.RetraceFrame("a.b", "a", "SourceFile", 9)
+	want := []RetracedFrame{{Class: "com.example.Shop", Method: "foo", File: "Shop.kt", Line: 9}}
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Errorf("RetraceFrame = %+v, %v; want %+v, true", got, ok, want)
+	}
+}
+
+func TestRetraceFrameLineOutsideRangesSingleFrame(t *testing.T) {
+	r, err := ParseProguardMapping([]byte(inlineMapping))
+	if err != nil {
+		t.Fatalf("ParseProguardMapping failed: %v", err)
+	}
+	got, ok := r.RetraceFrame("a.b", "a", "SourceFile", 99)
+	if !ok || len(got) != 1 || got[0].Line != 99 {
+		t.Errorf("RetraceFrame = %+v, %v; want one frame with line 99", got, ok)
 	}
 }

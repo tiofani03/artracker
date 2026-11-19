@@ -189,16 +189,9 @@ func (r *ProguardRetracer) RetraceFrame(obfClass, obfMethod, file string, line i
 			kept = append(kept, m)
 		}
 	}
-	if len(kept) == 0 {
-		// No ranged match (or no line to match): entries without a line range apply.
-		for _, m := range classMapping.Methods[obfMethod] {
-			if m.StartLine == 0 && m.EndLine == 0 {
-				kept = append(kept, m)
-			}
-		}
-	}
-	if len(kept) == 0 {
-		kept = []ProguardMethodMapping{{OriginalName: obfMethod}}
+	matched := len(kept) > 0
+	if !matched {
+		kept = fallbackCandidates(classMapping, obfMethod, line)
 	}
 
 	for _, m := range kept {
@@ -208,6 +201,8 @@ func (r *ProguardRetracer) RetraceFrame(obfClass, obfMethod, file string, line i
 		}
 		origLine := line
 		switch {
+		case !matched:
+			// The line did not select this entry: keep it unchanged.
 		case m.OrigStart > 0 && m.OrigEnd > 0 && m.OrigStart != m.OrigEnd && m.StartLine <= line:
 			origLine = m.OrigStart + (line - m.StartLine)
 		case m.OrigStart > 0:
@@ -220,6 +215,30 @@ func (r *ProguardRetracer) RetraceFrame(obfClass, obfMethod, file string, line i
 		frames = append(frames, RetracedFrame{Class: class, Method: m.OriginalName, File: resolvedFile, Line: origLine})
 	}
 	return frames, true
+}
+
+// fallbackCandidates picks the single frame to emit when no ranged entry matched the line (line is left
+// unchanged by the caller). Inline chains only come from ranged entries that match the line, so this never
+// returns more than one entry: the first candidate, which is also what RetraceMethod returns and is the
+// shared mapping whenever all candidates agree on (class, original name). Candidates are the unranged entries
+// when there is a line to look at, else every entry; with no entry at all the obfuscated name is kept.
+func fallbackCandidates(cm *ProguardClassMapping, obfMethod string, line int) []ProguardMethodMapping {
+	all := cm.Methods[obfMethod]
+	var cands []ProguardMethodMapping
+	if line > 0 {
+		for _, m := range all {
+			if m.StartLine == 0 && m.EndLine == 0 {
+				cands = append(cands, m)
+			}
+		}
+	}
+	if len(cands) == 0 {
+		cands = all
+	}
+	if len(cands) == 0 {
+		return []ProguardMethodMapping{{OriginalName: obfMethod}}
+	}
+	return cands[:1]
 }
 
 // simpleClassName returns the outermost simple class name (no package, no $inner suffix).
