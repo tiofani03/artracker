@@ -1,7 +1,9 @@
 export function formatMs(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)} ms`
-  const s = ms / 1000
-  return `${s.toFixed(s < 10 ? 2 : 1)} s`
+  const rounded = Math.round(ms)
+  if (rounded < 1000) return `${rounded} ms`
+  const s = rounded / 1000
+  const twoDecimals = s.toFixed(2)
+  return `${Number(twoDecimals) < 10 ? twoDecimals : s.toFixed(1)} s`
 }
 
 const PHASE_LABELS: Record<string, string> = {

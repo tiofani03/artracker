@@ -53,9 +53,15 @@ export function layoutFlame(p: SymbolicatedProfile): FlameBox[] {
 
 export function boxStats(p: SymbolicatedProfile, box: FlameBox): { totalMs: number; selfMs: number } {
   const weights = sampleWeights(p)
+  let totalMs = 0
   let selfMs = 0
+  // Samples are sorted by t (the backend guarantees it), so the box covers a contiguous run of them.
   p.samples.forEach((s, i) => {
-    if (s.t >= box.start && s.t < box.end && p.stacks[s.s].length === box.depth + 1) selfMs += weights[i]
+    if (s.t < box.start || s.t >= box.end) return
+    const stack = p.stacks[s.s]
+    if (stack.length <= box.depth || stack[box.depth] !== box.frame) return
+    totalMs += weights[i]
+    if (stack.length === box.depth + 1) selfMs += weights[i]
   })
-  return { totalMs: box.end - box.start, selfMs }
+  return { totalMs, selfMs }
 }

@@ -68,6 +68,17 @@ describe('boxStats', () => {
   it('reports total and self for a leaf box', () => {
     expect(boxStats(p, { depth: 1, start: 0, end: 20, frame: 1 })).toEqual({ totalMs: 20, selfMs: 20 })
   })
+  it('reports total as summed sample weight, not wall-clock extent', () => {
+    const sparse: SymbolicatedProfile = {
+      interval_ms: 10,
+      frames: frames(1),
+      stacks: [[0]],
+      samples: [{ t: 0, s: 0 }, { t: 500, s: 0 }],
+    }
+    const [box] = layoutFlame(sparse)
+    expect(box.end - box.start).toBe(510)
+    expect(boxStats(sparse, box)).toEqual({ totalMs: 110, selfMs: 110 })
+  })
   it('reports self as only the samples where the box is the top frame', () => {
     expect(boxStats(p, { depth: 0, start: 0, end: 40, frame: 0 })).toEqual({ totalMs: 40, selfMs: 10 })
   })

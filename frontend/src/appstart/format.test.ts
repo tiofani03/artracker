@@ -11,6 +11,11 @@ describe('formatMs', () => {
   it('formats seconds with one decimal from 10 s', () => {
     expect(formatMs(12000)).toBe('12.0 s')
   })
+  it('rounds before choosing the unit', () => {
+    expect(formatMs(999.6)).toBe('1.00 s')
+    expect(formatMs(999.4)).toBe('999 ms')
+    expect(formatMs(9996)).toBe('10.0 s')
+  })
 })
 
 describe('phaseLabel', () => {
