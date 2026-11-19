@@ -8,13 +8,16 @@ import {
   exitRateLabel,
   isSelectableNode,
   isTerminal,
+  labelPad,
   linkLabel,
   linkPath,
   mirrorX,
   percentLabel,
   resolveSelection,
   screenKey,
+  sessionsLabel,
   truncate,
+  unrecognizedLead,
   type ScreenRef,
 } from '../flow/view'
 
@@ -28,11 +31,9 @@ const RANGE_OPTIONS = [
 const STEP_OPTIONS = [1, 2, 3, 4, 5].map((n) => ({ value: n, label: `${n} ${n === 1 ? 'step' : 'steps'}` }))
 
 // Sankey drawing area (viewBox units). Labels sit to the right of each node, so the
-// layout leaves LABEL_PAD free on the right for the last column.
+// layout leaves labelPad(direction) free on the right for the last column.
 const CHART_W = 900
 const CHART_H = 360
-const LABEL_PAD = 170
-const LAYOUT_W = CHART_W - LABEL_PAD
 const LABEL_CHARS = 24
 
 type Tagged<T> = { key: string; error: string; data: T | null }
@@ -46,9 +47,10 @@ function SankeyChart({
 }) {
   const [hover, setHover] = useState<{ link: LaidLink; x: number; y: number } | null>(null)
   const laid = useMemo(() => {
-    const out = layoutSankey(res.nodes, res.links, LAYOUT_W, CHART_H)
+    const layoutW = CHART_W - labelPad(res.direction)
+    const out = layoutSankey(res.nodes, res.links, layoutW, CHART_H)
     if (res.direction !== 'prev') return out
-    return { ...out, nodes: out.nodes.map((n) => ({ ...n, x: mirrorX(n.x, LAYOUT_W, NODE_WIDTH) })) }
+    return { ...out, nodes: out.nodes.map((n) => ({ ...n, x: mirrorX(n.x, layoutW, NODE_WIDTH) })) }
   }, [res])
   const byId = useMemo(() => new Map(laid.nodes.map((n) => [n.id, n])), [laid])
 
@@ -266,7 +268,7 @@ function FlowView({ projectId }: { projectId: number }) {
         )}
         {unrecognized > 0 && allScreens.length > 0 && !listLoading && (
           <p className="hm-note fl-side-note">
-            {unrecognized} {unrecognized === 1 ? 'session' : 'sessions'} without screen names are not shown.
+            {sessionsLabel(unrecognized)} without screen names {unrecognized === 1 ? 'is' : 'are'} not shown.
           </p>
         )}
       </aside>
@@ -276,8 +278,8 @@ function FlowView({ projectId }: { projectId: number }) {
           <div className="hm-empty ppl-pad">
             {unrecognized > 0 ? (
               <p className="ppl-muted">
-                {unrecognized} sessions have no recognizable screen names — your SDK sends <code>App</code> as the screen
-                name. Send real screen names to see flows.
+                {unrecognizedLead(unrecognized)} no recognizable screen names or replay data. If your SDK sends{' '}
+                <code>App</code> as the screen name, send real screen names to see flows.
               </p>
             ) : (
               <p className="ppl-muted">
@@ -289,7 +291,7 @@ function FlowView({ projectId }: { projectId: number }) {
         ) : !selected ? (
           listLoading ? (
             <p className="ppl-muted ppl-pad">Loading…</p>
-          ) : (
+          ) : list.error ? null : (
             <div className="hm-empty ppl-pad">
               <h2 className="dash-card__title">Pick a screen</h2>
               <p className="ppl-muted">Choose a screen on the left to see where users go next.</p>

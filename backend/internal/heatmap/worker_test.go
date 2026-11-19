@@ -302,7 +302,7 @@ func TestFailingSessionBacksOffThenGivesUp(t *testing.T) {
 		t.Fatalf("retried early: attempts=%d err=%v", attempts, err)
 	}
 	// after the maximum number of attempts the session is marked processed
-	for i := 0; i < maxAttempts-1; i++ {
+	for i := 0; i < MaxAttempts-1; i++ {
 		if _, err := f.pool.Exec(ctx, `UPDATE replay_sessions SET taps_retry_at = now() - interval '1 second' WHERE project_id=$1`, f.pid); err != nil {
 			t.Fatal(err)
 		}
@@ -313,8 +313,8 @@ func TestFailingSessionBacksOffThenGivesUp(t *testing.T) {
 	if err := f.pool.QueryRow(ctx, q, f.pid, sid).Scan(&attempts, &retryAt, &processed); err != nil {
 		t.Fatal(err)
 	}
-	if attempts != maxAttempts || !processed {
-		t.Fatalf("attempts=%d processed=%v, want %d/true", attempts, processed, maxAttempts)
+	if attempts != MaxAttempts || !processed {
+		t.Fatalf("attempts=%d processed=%v, want %d/true", attempts, processed, MaxAttempts)
 	}
 	if n, err := f.w.ProcessPending(ctx); err != nil || n != 0 {
 		t.Fatalf("given-up session picked again: n=%d err=%v", n, err)

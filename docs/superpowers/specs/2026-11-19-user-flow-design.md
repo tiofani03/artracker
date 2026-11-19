@@ -123,8 +123,8 @@ applies to the heatmap only, so admins don't assume the screen is hidden everywh
   Computed on read with SQL over `screen_views` (self-join on `seq`), 5 s timeout like the heatmap.
 - `platform` is required on `paths` (screen names are platform-specific). Projects are single-platform
   (`projects.platform` check constraint), so in practice the UI passes the project's platform.
-- `unrecognized_sessions` counts processed screenshot sessions in the date range with zero `screen_views`;
-  it ignores the app-version filter (such sessions have no row carrying a version).
+- `unrecognized_sessions` counts processed screenshot sessions in the date range with zero `screen_views`,
+  excluding sessions the worker gave up on (`taps_attempts >= heatmap.MaxAttempts`); it ignores the app-version filter (such sessions have no row carrying a version).
 
 ### Dashboard
 
@@ -147,8 +147,8 @@ demo mode (like Heatmap).
   path explorer. Default selection: the screen with the most entry sessions.
 - Right: hand-written SVG Sankey (no chart library is in the project; heatmap also draws by hand). Columns
   are steps; link width = sessions; `Exit` styled as drop-off; clicking a node re-centres on that screen.
-- Empty states: no screenshot replay; sessions exist but have no recognized screen names ("your SDK sends
-  `App` as the screen name — set real screen names to see flows"); processing pending.
+- Empty states: no screenshot replay; sessions exist but have no recognized screen names ("no recognizable
+  screen names or replay data; if your SDK sends `App` as the screen name, send real screen names to see flows"); processing pending.
 
 ### Rollout / backfill
 

@@ -81,3 +81,25 @@ export function truncate(text: string, max: number): string {
   if (text.length <= max) return text
   return `${text.slice(0, Math.max(0, max - 1))}…`
 }
+
+/** "1 session" / "2 sessions". */
+export function sessionsLabel(n: number): string {
+  return `${n} ${n === 1 ? 'session' : 'sessions'}`
+}
+
+/** Subject and verb for the empty state about sessions with no recognizable screens ("1 session has", "2 sessions have"). */
+export function unrecognizedLead(n: number): string {
+  return `${sessionsLabel(n)} ${n === 1 ? 'has' : 'have'}`
+}
+
+/** Free space (viewBox units) the chart keeps to the right of its last column for node labels. */
+export const LABEL_PAD_NEXT = 170
+/**
+ * For direction=prev the step-0 node, whose label is the longest, is the rightmost column,
+ * so it needs room for a full-length label ("<24 chars>… · 100%").
+ */
+export const LABEL_PAD_PREV = 210
+
+export function labelPad(direction: 'next' | 'prev'): number {
+  return direction === 'prev' ? LABEL_PAD_PREV : LABEL_PAD_NEXT
+}

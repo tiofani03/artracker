@@ -18,8 +18,8 @@ const (
 	pendingBatch = 20
 	// tickBudget bounds how long one tick keeps draining batches.
 	tickBudget = 45 * time.Second
-	// maxAttempts failures mark a session processed so it cannot block the queue forever.
-	maxAttempts = 8
+	// MaxAttempts failures mark a session processed so it cannot block the queue forever.
+	MaxAttempts = 8
 	// objectTimeout bounds one chunk download plus read.
 	objectTimeout = 60 * time.Second
 	retryBase     = time.Minute
@@ -130,7 +130,7 @@ func (w *Worker) listPending(ctx context.Context) ([]pendingSession, error) {
 }
 
 // recordFailure counts a failed attempt and schedules the retry after retryBase*2^attempts (capped at
-// retryCap). After maxAttempts the session is marked processed so it stops being picked.
+// retryCap). After MaxAttempts the session is marked processed so it stops being picked.
 func (w *Worker) recordFailure(ctx context.Context, p pendingSession, cause error) {
 	var attempts int
 	err := w.pool.QueryRow(ctx, `
@@ -143,7 +143,7 @@ func (w *Worker) recordFailure(ctx context.Context, p pendingSession, cause erro
 		w.log.Error("heatmap: record failure", "project_id", p.projectID, "session_id", p.sessionID, "err", err)
 		return
 	}
-	if attempts >= maxAttempts {
+	if attempts >= MaxAttempts {
 		if _, err := w.pool.Exec(ctx, `
 			UPDATE replay_sessions SET taps_processed_at = now(), taps_processed_chunks = chunk_count
 			WHERE project_id=$1 AND id=$2`, p.projectID, p.sessionID); err != nil {

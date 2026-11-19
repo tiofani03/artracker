@@ -5,12 +5,17 @@ import {
   exitRateLabel,
   isSelectableNode,
   isTerminal,
+  labelPad,
+  LABEL_PAD_NEXT,
+  LABEL_PAD_PREV,
   linkLabel,
   linkPath,
   mirrorX,
   percentLabel,
   resolveSelection,
+  sessionsLabel,
   truncate,
+  unrecognizedLead,
 } from './view'
 
 function row(screen: string, sessions: number, entry: number, exit = 0, platform = 'ios'): FlowScreen {
@@ -106,5 +111,25 @@ describe('truncate', () => {
   it('keeps short text and shortens long text', () => {
     expect(truncate('Home', 10)).toBe('Home')
     expect(truncate('ProductViewController', 10)).toBe('ProductVi…')
+  })
+})
+
+describe('sessionsLabel / unrecognizedLead', () => {
+  it('uses singular for 1', () => {
+    expect(sessionsLabel(1)).toBe('1 session')
+    expect(unrecognizedLead(1)).toBe('1 session has')
+  })
+  it('uses plural otherwise', () => {
+    expect(sessionsLabel(2)).toBe('2 sessions')
+    expect(unrecognizedLead(2)).toBe('2 sessions have')
+  })
+})
+
+describe('labelPad', () => {
+  it('keeps next mode unchanged and gives prev mode room for the step-0 label', () => {
+    expect(labelPad('next')).toBe(LABEL_PAD_NEXT)
+    expect(LABEL_PAD_NEXT).toBe(170)
+    expect(labelPad('prev')).toBe(LABEL_PAD_PREV)
+    expect(LABEL_PAD_PREV).toBeGreaterThan(LABEL_PAD_NEXT)
   })
 })

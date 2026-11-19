@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+
+	"github.com/tiofani03/artracker/backend/internal/heatmap"
 )
 
 type flowPathsResp struct {
@@ -258,6 +260,12 @@ func TestFlowScreensList(t *testing.T) {
 	e.addView(t, pid, "s2", 1, "Cart", "android", 5000, false, false)
 	e.addView(t, pid, "s2", 2, "Home", "android", 10000, false, true)
 	if _, err := e.pool.Exec(context.Background(), `UPDATE replay_sessions SET taps_processed_at = now() WHERE project_id=$1 AND id='s3'`, pid); err != nil {
+		t.Fatal(err)
+	}
+
+	// A processed session the worker gave up on (attempts exhausted) is not "unrecognized".
+	e.addReplaySession(t, pid, "s4", "1 hour", false, false, false)
+	if _, err := e.pool.Exec(context.Background(), `UPDATE replay_sessions SET taps_processed_at = now(), taps_attempts = $3 WHERE project_id=$1 AND id=$2`, pid, "s4", heatmap.MaxAttempts); err != nil {
 		t.Fatal(err)
 	}
 

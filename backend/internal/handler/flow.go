@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+
+	"github.com/tiofani03/artracker/backend/internal/heatmap"
 )
 
 type flowScreen struct {
@@ -89,13 +91,16 @@ func (h *Handler) ListFlowScreens(c *fiber.Ctx) error {
 	}
 
 	// Processed sessions that produced no screen_views: their screens were not recognized.
+	// Sessions the worker gave up on (attempts exhausted) are excluded: they lack data
+	// for other reasons, which is not an SDK naming problem.
 	var unrec int
 	if err := h.db.QueryRow(ctx, `
 		SELECT count(*)::int FROM replay_sessions r
 		 WHERE r.project_id = $1 AND r.taps_processed_at IS NOT NULL
+		   AND r.taps_attempts < $4
 		   AND r.start_time >= $2 AND r.start_time < $3
 		   AND NOT EXISTS (SELECT 1 FROM screen_views v WHERE v.project_id = r.project_id AND v.session_id = r.id)`,
-		projectID, from, to).Scan(&unrec); err != nil {
+		projectID, from, to, heatmap.MaxAttempts).Scan(&unrec); err != nil {
 		return err
 	}
 	return c.JSON(fiber.Map{"screens": screens, "app_versions": versions, "unrecognized_sessions": unrec})
