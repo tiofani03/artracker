@@ -863,6 +863,104 @@ export const flowApi = {
     request<FlowTransitionsResponse>(`/projects/${projectId}/flow/transitions${heatmapQuery(params)}`),
 }
 
+export type AppStartType = 'cold' | 'warm' | 'hot'
+export type RamTier = 'low' | 'mid' | 'high'
+export type AppStartParams = {
+  from?: string
+  to?: string
+  environment?: string
+  platform?: string
+  app_version?: string
+  type?: AppStartType
+  ram_tier?: RamTier | ''
+}
+export type AppStartListParams = AppStartParams & {
+  sort?: 'slowest' | 'recent'
+  limit?: number
+  cursor?: string
+}
+
+export type AppStartScope = {
+  environment: string
+  environments: string[]
+  versions: string[]
+}
+export type AppStartPhaseMedian = { name: string; median_ms: number }
+export type AppStartDaily = { day: string; p50: number; p90: number; count: number }
+export type AppStartByVersion = { version: string; p50: number; p90: number; count: number }
+export type AppStartSummary = AppStartScope & {
+  count: number
+  p50: number
+  p75: number
+  p90: number
+  p95: number
+  profiled_pct: number
+  phases: AppStartPhaseMedian[]
+  daily: AppStartDaily[]
+  by_version: AppStartByVersion[]
+}
+
+export type AppStartFunction = {
+  function: string
+  is_app: boolean
+  starts_pct: number
+  median_total_ms: number
+  p90_total_ms: number
+  median_self_ms: number
+  median_attributed_ms: number
+  example_start_id: string
+}
+export type AppStartFunctionsResponse = AppStartScope & {
+  profiles: number
+  functions: AppStartFunction[]
+}
+
+export type AppStartRow = {
+  start_id: string
+  type: AppStartType
+  platform: string
+  app_version: string
+  device_model: string
+  os_version: string
+  first_screen: string
+  session_id: string
+  duration_ms: number
+  profiled: boolean
+  started_at: string
+}
+// `starts` and `next_cursor` are not pinned by the Task 9 interface block; the backend must match these names.
+export type AppStartListResponse = {
+  starts: AppStartRow[]
+  next_cursor?: string
+}
+
+export type ProfileFrame = { function: string; file?: string; line?: number; is_app: boolean; resolved: boolean }
+export type SymbolicatedProfile = {
+  interval_ms: number
+  frames: ProfileFrame[]
+  stacks: number[][]
+  samples: { t: number; s: number }[]
+}
+export type AppStartDetail = AppStartRow & {
+  phases: { name: string; ms: number }[]
+  ram_mb: number | null
+  trampoline: boolean
+  profile: { status: string; data: SymbolicatedProfile | null } | null
+}
+
+export const appStartApi = {
+  summary: (projectId: number, params: AppStartParams = {}) =>
+    request<AppStartSummary>(`/projects/${projectId}/app-starts/summary${heatmapQuery(params)}`),
+  functions: (projectId: number, params: AppStartParams & { app_only?: boolean } = {}) =>
+    request<AppStartFunctionsResponse>(
+      `/projects/${projectId}/app-starts/functions${heatmapQuery({ ...params, app_only: params.app_only === undefined ? undefined : String(params.app_only) })}`,
+    ),
+  list: (projectId: number, params: AppStartListParams = {}) =>
+    request<AppStartListResponse>(`/projects/${projectId}/app-starts${heatmapQuery(params)}`),
+  get: (projectId: number, startId: string) =>
+    request<AppStartDetail>(`/projects/${projectId}/app-starts/${encodeURIComponent(startId)}`),
+}
+
 export type OrganizationMember = {
   user_id: number
   email: string
