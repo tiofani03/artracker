@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // MachOInfo contains parsed metadata about a Mach-O or dSYM binary.
@@ -119,6 +120,10 @@ type IOSSymbolicator struct {
 	dwarfData *dwarf.Data
 	UUID      string
 	Arch      string
+
+	indexOnce   sync.Once
+	index       *addressIndex
+	indexBuilds int // number of times the index was built; tests assert it stays at 1
 }
 
 // NewIOSSymbolicator creates a new symbolicator from Mach-O binary data.
@@ -153,8 +158,46 @@ func (s *IOSSymbolicator) Close() error {
 	return nil
 }
 
-// SymbolicateAddress looks up an instruction pointer (targetPC) in the DWARF debug information.
+// SymbolicateAddress looks up an instruction pointer (targetPC) in the DWARF debug
+// information. targetPC is an address in the binary's own (unslid) address space.
+// It uses the sorted address index, which is built on first use.
 func (s *IOSSymbolicator) SymbolicateAddress(targetPC uint64) ResolvedLocation {
+	if s.dwarfData == nil {
+		return ResolvedLocation{}
+	}
+
+	idx := s.addressIndex()
+	fnName := s.findFunctionName(targetPC)
+	if row, ok := idx.lookupLine(targetPC); ok {
+		return ResolvedLocation{
+			File:     row.file,
+			Line:     row.line,
+			Function: fnName,
+			Found:    true,
+		}
+	}
+
+	// Fall back to the subprogram ranges if the line table didn't resolve.
+	if fnName != "" {
+		return ResolvedLocation{
+			Function: fnName,
+			Found:    true,
+		}
+	}
+
+	return ResolvedLocation{}
+}
+
+func (s *IOSSymbolicator) findFunctionName(targetPC uint64) string {
+	if name, ok := s.addressIndex().lookupFunction(targetPC); ok {
+		return DemangleSwift(name)
+	}
+	return ""
+}
+
+// symbolicateAddressLinear is the original linear-scan implementation of
+// SymbolicateAddress. It is kept only as the oracle for the index tests.
+func (s *IOSSymbolicator) symbolicateAddressLinear(targetPC uint64) ResolvedLocation {
 	if s.dwarfData == nil {
 		return ResolvedLocation{}
 	}
@@ -196,7 +239,7 @@ func (s *IOSSymbolicator) SymbolicateAddress(targetPC uint64) ResolvedLocation {
 				return ResolvedLocation{
 					File:     prevEntry.File.Name,
 					Line:     prevEntry.Line,
-					Function: s.findFunctionName(targetPC),
+					Function: s.findFunctionNameLinear(targetPC),
 					Found:    true,
 				}
 			}
@@ -204,7 +247,7 @@ func (s *IOSSymbolicator) SymbolicateAddress(targetPC uint64) ResolvedLocation {
 	}
 
 	// Fallback to checking subprograms if line table didn't resolve
-	fnName := s.findFunctionName(targetPC)
+	fnName := s.findFunctionNameLinear(targetPC)
 	if fnName != "" {
 		return ResolvedLocation{
 			Function: fnName,
@@ -215,7 +258,7 @@ func (s *IOSSymbolicator) SymbolicateAddress(targetPC uint64) ResolvedLocation {
 	return ResolvedLocation{}
 }
 
-func (s *IOSSymbolicator) findFunctionName(targetPC uint64) string {
+func (s *IOSSymbolicator) findFunctionNameLinear(targetPC uint64) string {
 	reader := s.dwarfData.Reader()
 	for {
 		entry, err := reader.Next()
