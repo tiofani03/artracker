@@ -87,7 +87,7 @@ func main() {
 		ErrorHandler:          handler.ErrorHandler,
 	})
 
-	app.Use(handler.LimitBody(4<<20, "/api/v1/sdk/releases/"))
+	app.Use(handler.LimitBody(4<<20, "/api/v1/sdk/releases/", "/api/v1/symbols"))
 	app.Use(recover.New())
 	app.Use(fiberlogger.New(fiberlogger.Config{
 		Format: "${time} ${status} ${latency} ${method} ${path}\n",

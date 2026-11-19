@@ -7,12 +7,12 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// LimitBody lets only requests under uploadPrefix (release symbol uploads) use
+// LimitBody lets only requests under uploadPrefixes (release symbol uploads) use
 // the server-wide body limit, which is raised for them. Every other route keeps
 // defaultMax. It needs fiber.Config{StreamRequestBody: true}: a body larger
 // than the read buffer is then not read before the handler runs, so an
 // oversized request is refused without buffering it.
-func LimitBody(defaultMax int, uploadPrefix string) fiber.Handler {
+func LimitBody(defaultMax int, uploadPrefixes ...string) fiber.Handler {
 	refuse := func(c *fiber.Ctx) error {
 		// The rest of the body is never read; close the connection so the server
 		// does not parse those bytes as the next request.
@@ -20,8 +20,11 @@ func LimitBody(defaultMax int, uploadPrefix string) fiber.Handler {
 		return fiber.NewError(fiber.StatusRequestEntityTooLarge, "request body too large")
 	}
 	return func(c *fiber.Ctx) error {
-		if strings.HasPrefix(c.Path(), uploadPrefix) {
-			return c.Next()
+		path := c.Path()
+		for _, prefix := range uploadPrefixes {
+			if strings.HasPrefix(path, prefix) {
+				return c.Next()
+			}
 		}
 		req := c.Request()
 		switch cl := req.Header.ContentLength(); {

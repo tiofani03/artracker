@@ -13,9 +13,10 @@ import (
 
 func limitBodyApp() *fiber.App {
 	app := fiber.New(fiber.Config{BodyLimit: 64 << 20, StreamRequestBody: true, ErrorHandler: ErrorHandler})
-	app.Use(LimitBody(4<<20, "/api/v1/sdk/releases/"))
+	app.Use(LimitBody(4<<20, "/api/v1/sdk/releases/", "/api/v1/symbols"))
 	app.Post("/api/v1/ingest", func(c *fiber.Ctx) error { return c.SendString(strconv.Itoa(len(c.Body()))) })
 	app.Post("/api/v1/sdk/releases/:v/proguard", func(c *fiber.Ctx) error { return c.SendString(strconv.Itoa(len(c.Body()))) })
+	app.Post("/api/v1/symbols", func(c *fiber.Ctx) error { return c.SendString(strconv.Itoa(len(c.Body()))) })
 	return app
 }
 
@@ -52,6 +53,8 @@ func TestLimitBody(t *testing.T) {
 		{"small chunked body to ingest", "/api/v1/ingest", 1024, true, 200, "1024"},
 		{"big body to upload route", "/api/v1/sdk/releases/1.0/proguard", five, false, 200, strconv.Itoa(five)},
 		{"big chunked body to upload route", "/api/v1/sdk/releases/1.0/proguard", five, true, 200, strconv.Itoa(five)},
+		{"big body to symbols route", "/api/v1/symbols", five, false, 200, strconv.Itoa(five)},
+		{"big chunked body to symbols route", "/api/v1/symbols", five, true, 200, strconv.Itoa(five)},
 	}
 	for _, c := range cases {
 		code, body := postBody(t, app, c.path, c.n, c.chunked)
