@@ -418,3 +418,134 @@ func TestProcessPendingNewestFirstAndDrains(t *testing.T) {
 		t.Fatalf("drain: n=%d err=%v", n, err)
 	}
 }
+
+// flowBody is a screen chunk with one frame per "Screen@ts" entry and no touches.
+func flowBody(frames ...string) string {
+	var fr []string
+	for _, e := range frames {
+		name, tsStr, _ := strings.Cut(e, "@")
+		fr = append(fr, fmt.Sprintf(`{"ts":%s,"screen":%q,"w":200,"h":400,"vw":400,"vh":800,"mime":"image/jpeg","masked":0,"data":"AAAA"}`, tsStr, name))
+	}
+	return `{"format":"artracker-screen-v1","platform":"android","frames":[` + strings.Join(fr, ",") + `],"touches":[]}`
+}
+
+func TestProcessSessionWritesScreenViews(t *testing.T) {
+	f := newWFix(t)
+	const t0 = 1699999000000
+	f.addChunk(t, 0, flowBody(fmt.Sprintf("Home@%d", t0), fmt.Sprintf("Cart@%d", t0+5000)), true)
+	if err := f.w.ProcessSession(context.Background(), f.pid, sid); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := f.pool.Query(context.Background(), `SELECT seq, screen, duration_ms, is_entry, is_exit, platform, app_version, source
+		FROM screen_views WHERE project_id=$1 AND session_id=$2 ORDER BY seq`, f.pid, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	type row struct {
+		seq             int
+		screen          string
+		dur             int
+		entry, exit     bool
+		plat, ver, srcs string
+	}
+	var got []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.seq, &r.screen, &r.dur, &r.entry, &r.exit, &r.plat, &r.ver, &r.srcs); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, r)
+	}
+	if len(got) != 2 {
+		t.Fatalf("rows = %d, want 2: %+v", len(got), got)
+	}
+	if got[0].seq != 0 || got[0].screen != "Home" || got[0].dur != 5000 || !got[0].entry || got[0].exit {
+		t.Fatalf("row 0 = %+v", got[0])
+	}
+	if got[1].seq != 1 || got[1].screen != "Cart" || got[1].entry || !got[1].exit {
+		t.Fatalf("row 1 = %+v", got[1])
+	}
+	for _, r := range got {
+		if r.plat != "android" || r.ver != "4.57.0" || r.srcs != "replay" {
+			t.Fatalf("row = %+v", r)
+		}
+	}
+}
+
+func TestProcessSessionScreenViewsIdempotent(t *testing.T) {
+	f := newWFix(t)
+	const t0 = 1699999000000
+	f.addChunk(t, 0, flowBody(fmt.Sprintf("Home@%d", t0), fmt.Sprintf("Cart@%d", t0+5000)), true)
+	for i := 0; i < 2; i++ {
+		if err := f.w.ProcessSession(context.Background(), f.pid, sid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := f.count(t, "screen_views"); n != 2 {
+		t.Fatalf("screen_views = %d, want 2", n)
+	}
+}
+
+func TestProcessSessionMissingChunkKeepsHeatmapRows(t *testing.T) {
+	f := newWFix(t)
+	ctx := context.Background()
+	const t0 = 1699999000000
+	f.addChunk(t, 0, chunkBody("Home", t0, t0+1000), true)
+	f.addChunk(t, 1, chunkBody("Cart", t0+5000, t0+6000), true)
+	if err := f.w.ProcessSession(ctx, f.pid, sid); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.count(t, "screen_taps"); n != 2 {
+		t.Fatalf("taps = %d, want 2", n)
+	}
+	visits := f.count(t, "screen_visits")
+	if err := os.Remove(filepath.Join(f.dir, filepath.FromSlash(fmt.Sprintf("projects/%d/sessions/%s/chunk_0.gz", f.pid, sid)))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pool.Exec(ctx, `UPDATE replay_sessions SET taps_processed_at = NULL WHERE project_id=$1 AND id=$2`, f.pid, sid); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.w.ProcessSession(ctx, f.pid, sid); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.count(t, "screen_taps"); n != 2 {
+		t.Fatalf("taps after missing chunk = %d, want 2", n)
+	}
+	if n := f.count(t, "screen_visits"); n != visits {
+		t.Fatalf("visits = %d, want %d", n, visits)
+	}
+	var views int
+	var screen string
+	if err := f.pool.QueryRow(ctx, `SELECT count(*), COALESCE(min(screen),'') FROM screen_views WHERE project_id=$1`, f.pid).Scan(&views, &screen); err != nil {
+		t.Fatal(err)
+	}
+	if views != 1 || screen != "Cart" {
+		t.Fatalf("views = %d screen = %q, want 1 Cart", views, screen)
+	}
+	var processed bool
+	if err := f.pool.QueryRow(ctx, `SELECT taps_processed_at IS NOT NULL FROM replay_sessions WHERE project_id=$1 AND id=$2`, f.pid, sid).Scan(&processed); err != nil || !processed {
+		t.Fatalf("processed = %v err=%v", processed, err)
+	}
+}
+
+func TestProcessSessionExcludedScreenStillInFlow(t *testing.T) {
+	f := newWFix(t)
+	ctx := context.Background()
+	const t0 = 1699999000000
+	if _, err := f.pool.Exec(ctx, `UPDATE projects SET heatmap_excluded_screens = '{Cart}' WHERE id=$1`, f.pid); err != nil {
+		t.Fatal(err)
+	}
+	f.addChunk(t, 0, chunkBody("Home", t0), true)
+	f.addChunk(t, 1, chunkBody("Cart", t0+5000, t0+6000), true)
+	if err := f.w.ProcessSession(ctx, f.pid, sid); err != nil {
+		t.Fatal(err)
+	}
+	var taps, cartViews int
+	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM screen_taps WHERE project_id=$1 AND screen='Cart'`, f.pid).Scan(&taps); err != nil || taps != 0 {
+		t.Fatalf("cart taps = %d err=%v", taps, err)
+	}
+	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM screen_views WHERE project_id=$1 AND screen='Cart'`, f.pid).Scan(&cartViews); err != nil || cartViews != 1 {
+		t.Fatalf("cart views = %d err=%v", cartViews, err)
+	}
+}
