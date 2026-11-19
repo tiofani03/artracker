@@ -22,7 +22,16 @@ type SessionDelta struct {
 	LastSeen  time.Time
 	HasError  bool
 	Context   map[string]any // nil unless a session-start row was seen
+
+	// Session-list summary. Replay chunk upload rows are not counted.
+	Environment  string // first non-empty environment in event-time order
+	EventCount   int64
+	HasRageClick bool
+	HasDeadClick bool
 }
+
+// ReplayChunkEventName is the telemetry item SDKs send per replay chunk upload; it is bookkeeping, not user activity.
+const ReplayChunkEventName = "replay_chunk"
 
 // ProfileDelta is what one flushed batch says about one identified user.
 type ProfileDelta struct {
@@ -90,6 +99,18 @@ func Aggregate(rows []ingest.TelemetryRow) Batch {
 			}
 			if start {
 				s.Context = ctx
+			}
+			if r.Name != ReplayChunkEventName {
+				s.EventCount++
+				if s.Environment == "" {
+					s.Environment = r.Environment
+				}
+				switch r.Name {
+				case "rage_click", "rage_tap":
+					s.HasRageClick = true
+				case "dead_click":
+					s.HasDeadClick = true
+				}
 			}
 		}
 
