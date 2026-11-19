@@ -17,6 +17,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/tiofani03/artracker/backend/internal/analytics"
+	"github.com/tiofani03/artracker/backend/internal/appstart"
 	"github.com/tiofani03/artracker/backend/internal/auth"
 	"github.com/tiofani03/artracker/backend/internal/config"
 	"github.com/tiofani03/artracker/backend/internal/db"
@@ -203,6 +204,23 @@ func main() {
 		}()
 		log.Info("heatmap worker started")
 	}
+	appStartCtx, stopAppStart := context.WithCancel(context.Background())
+	defer stopAppStart()
+	var appStartWG sync.WaitGroup
+	switch {
+	case pool == nil:
+		log.Info("app start worker disabled", "reason", "no database")
+	case !cfg.AppStartWorker:
+		log.Info("app start worker disabled", "reason", "APPSTART_WORKER=false")
+	default:
+		aw := appstart.NewWorker(pool, h.SymbolLoader(), log)
+		appStartWG.Add(1)
+		go func() {
+			defer appStartWG.Done()
+			aw.Run(appStartCtx)
+		}()
+		log.Info("app start worker started")
+	}
 	ingestSvc.WithIssueProcessor(h.IssueService())
 	if peopleStore := h.PeopleStore(); peopleStore != nil {
 		ingestSvc.AddRowProcessor(people.NewProcessor(peopleStore))
@@ -237,5 +255,7 @@ func main() {
 	alertsWG.Wait()
 	stopHeatmap()
 	heatmapWG.Wait()
+	stopAppStart()
+	appStartWG.Wait()
 	log.Info("bye")
 }

@@ -43,6 +43,9 @@ artracker/
 - **User Flow**: screen-to-screen paths and time on screen for mobile projects, derived from screenshot
   replay like the heatmap, so it also appears about 10 minutes after a session ends. The heatmap exclusion
   list does not apply: excluded screens still show up in User Flow.
+- **App Start**: cold, warm and hot start times per version and device with a phase breakdown, plus optional
+  startup profiling (main-thread sampling, symbolicated server-side) that ranks the slowest app functions and
+  shows a flamegraph per start. Mobile only.
 - **Analytics**: event log, funnels (including saved funnels) and retention.
 - **Alerts**: per-project rules for new issues, regressions and issue spikes, delivered to Telegram
   (see [Alerts](#alerts-telegram)).
@@ -248,6 +251,7 @@ Production `.env` needs the following. Compose refuses to run without `POSTGRES_
 - `ALERTS_MASTER_KEY`, or `ALERTS_BOT_MODE=shared` (see [Alerts](#alerts-telegram))
 - the `R2_*` variables if you want session replay (`REPLAY_LOCAL_DIR` keeps chunks on the container's own disk and is meant for development)
 - `HEATMAP_WORKER` (default `true`): runs the tap-heatmap worker, which reads finished screenshot replays and writes the tap data. With more than one API instance, set `HEATMAP_WORKER=false` on every instance except one
+- `APPSTART_WORKER` (default `true`): runs the app-start profile symbolication worker, which symbolicates uploaded startup profiles and deletes them after 30 days. With more than one API instance, set `APPSTART_WORKER=false` on every instance except one
 
 To reprocess a project's heatmap data (for example after removing a screen from the exclusion list, or after
 a storage outage that made sessions fail), reset its sessions and the worker re-extracts them on its next ticks:

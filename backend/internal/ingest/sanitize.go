@@ -44,18 +44,7 @@ func (s *Sanitizer) SanitizeAndNormalize(job BatchJob) ([]TelemetryRow, int, int
 	sanitizedCount := 0
 
 	// Extract envelope-level context
-	envStr := "production"
-	releaseVer := ""
-	if job.Envelope.Context != nil {
-		if envVal, ok := job.Envelope.Context["environment"].(string); ok && envVal != "" {
-			envStr = truncateStr(envVal, 64)
-		}
-		if verVal, ok := job.Envelope.Context["app_version"].(string); ok && verVal != "" {
-			releaseVer = truncateStr(verVal, 64)
-		} else if verVal, ok := job.Envelope.Context["release_version"].(string); ok && verVal != "" {
-			releaseVer = truncateStr(verVal, 64)
-		}
-	}
+	envStr, releaseVer := EnvelopeEnvAndVersion(job.Envelope.Context)
 
 	// Serialize SDK meta once per batch
 	var sdkMetaBytes []byte

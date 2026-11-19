@@ -14,6 +14,7 @@ import (
 	"github.com/tiofani03/artracker/backend/internal/config"
 	"github.com/tiofani03/artracker/backend/internal/ingest"
 	"github.com/tiofani03/artracker/backend/internal/storage"
+	"github.com/tiofani03/artracker/backend/internal/symbolication"
 )
 
 // Handler carries the dependencies every route needs.
@@ -28,6 +29,7 @@ type Handler struct {
 	alertsSvc    *alerts.Service
 	replaySwitch replaySwitchCache
 	mcpLimiter   *ingest.ProjectRateLimiter
+	symbolLoader *symbolication.Loader // nil when the database is disabled
 
 	// in-memory artwork store, used only when the database is disabled (SKIP_DB)
 	mu     sync.RWMutex
@@ -35,13 +37,21 @@ type Handler struct {
 	mem    []Artwork
 }
 
+// symbolLoaderCapacity bounds how many parsed ProGuard mappings and dSYMs stay in memory.
+const symbolLoaderCapacity = 8
+
 func New(pool *pgxpool.Pool, cfg config.Config, issuer *auth.Issuer, providers map[string]OAuthProvider) *Handler {
+	var symLoader *symbolication.Loader
+	if pool != nil {
+		symLoader = symbolication.NewLoader(pool, symbolLoaderCapacity)
+	}
 	return &Handler{
-		db:         pool,
-		cfg:        cfg,
-		issuer:     issuer,
-		providers:  providers,
-		mcpLimiter: newMCPLimiter(),
+		symbolLoader: symLoader,
+		db:           pool,
+		cfg:          cfg,
+		issuer:       issuer,
+		providers:    providers,
+		mcpLimiter:   newMCPLimiter(),
 		ingestSvc: ingest.NewService(ingest.Config{
 			Workers:         cfg.IngestWorkers,
 			QueueSize:       cfg.IngestQueueSize,
@@ -89,6 +99,12 @@ func (h *Handler) WithReplayStore(s storage.ReplayStore) *Handler {
 // AnalyticsService returns the analytics service.
 func (h *Handler) AnalyticsService() *analytics.Service {
 	return h.analyticsSvc
+}
+
+// SymbolLoader returns the shared symbolication artifact loader (nil when the
+// database is disabled).
+func (h *Handler) SymbolLoader() *symbolication.Loader {
+	return h.symbolLoader
 }
 
 // Health reports liveness plus database reachability and ingest/analytics buffer health.

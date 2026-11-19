@@ -33,8 +33,14 @@ func NewDecompressor() *Decompressor {
 	}
 }
 
-// Gunzip decompresses a gzip byte slice safely with zip-bomb protection.
+// Gunzip decompresses a gzip byte slice safely with zip-bomb protection (MaxUncompressedBytes).
 func (d *Decompressor) Gunzip(compressed []byte) ([]byte, error) {
+	return d.GunzipLimit(compressed, MaxUncompressedBytes)
+}
+
+// GunzipLimit decompresses a gzip byte slice and returns ErrPayloadTooLarge when the output
+// would exceed max bytes.
+func (d *Decompressor) GunzipLimit(compressed []byte, max int64) ([]byte, error) {
 	if len(compressed) == 0 {
 		return nil, ErrInvalidGzip
 	}
@@ -51,14 +57,14 @@ func (d *Decompressor) Gunzip(compressed []byte) ([]byte, error) {
 	buf.Reset()
 	defer d.bufPool.Put(buf)
 
-	// Read at most MaxUncompressedBytes + 1 to detect oversize
-	limited := io.LimitReader(zr, MaxUncompressedBytes+1)
+	// Read at most max + 1 to detect oversize
+	limited := io.LimitReader(zr, max+1)
 	n, err := buf.ReadFrom(limited)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, errors.Join(ErrInvalidGzip, err)
 	}
 
-	if n > MaxUncompressedBytes {
+	if n > max {
 		return nil, ErrPayloadTooLarge
 	}
 

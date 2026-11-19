@@ -107,6 +107,12 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
         demoAllowed: true,
       },
       {
+        to: '/dashboard/app-start',
+        label: 'App Start',
+        icon: 'M13 2 4 14h7l-1 8 9-12h-7l1-8Z',
+        demoAllowed: true,
+      },
+      {
         to: '/dashboard/logs',
         label: 'Event Log',
         icon: 'M4 6h16M4 12h16M4 18h10',

@@ -31,20 +31,21 @@ func main() {
 	defer pool.Close()
 
 	// Find all projects
-	rows, err := pool.Query(ctx, `SELECT id, name FROM projects ORDER BY id`)
+	rows, err := pool.Query(ctx, `SELECT id, name, platform FROM projects ORDER BY id`)
 	if err != nil {
 		log.Fatalf("failed to query projects: %v", err)
 	}
 	defer rows.Close()
 
 	type Proj struct {
-		ID   int64
-		Name string
+		ID       int64
+		Name     string
+		Platform string
 	}
 	var projects []Proj
 	for rows.Next() {
 		var p Proj
-		if err := rows.Scan(&p.ID, &p.Name); err == nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Platform); err == nil {
 			projects = append(projects, p)
 		}
 	}
@@ -58,6 +59,8 @@ func main() {
 		log.Printf("===> Seeding rich mock data for Project %d (%s)...", p.ID, p.Name)
 		if err := seedProject(ctx, pool, p.ID); err != nil {
 			log.Printf("ERROR seeding project %d: %v", p.ID, err)
+		} else if err := seedAppStarts(ctx, pool, p.ID, p.Platform, rand.New(rand.NewSource(p.ID*42+7)), time.Now().UTC()); err != nil {
+			log.Printf("ERROR seeding app starts for project %d: %v", p.ID, err)
 		} else {
 			log.Printf("SUCCESS: Project %d (%s) seeded completely!", p.ID, p.Name)
 		}

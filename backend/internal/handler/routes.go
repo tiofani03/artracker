@@ -34,6 +34,8 @@ func (h *Handler) Routes(api fiber.Router) {
 		return
 	}
 
+	api.Post("/app-start/profiles", h.VerifyIngestKey, h.RateLimitIngest, h.IngestAppStartProfile)
+
 	a := api.Group("/auth")
 	a.Get("/:provider/login", h.OAuthLogin)
 	a.Get("/:provider/callback", h.OAuthCallback)
@@ -82,6 +84,11 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Get("/projects/:projectID/heatmap", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetHeatmap)
 	api.Get("/projects/:projectID/heatmap-settings", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetHeatmapSettings)
 	api.Patch("/projects/:projectID/heatmap-settings", h.RequireAuth, h.RequireProjectRole(auth.RoleAdmin), h.UpdateHeatmapSettings)
+	// Static app-starts paths must stay before /:startID.
+	api.Get("/projects/:projectID/app-starts/summary", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.AppStartSummary)
+	api.Get("/projects/:projectID/app-starts/functions", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.AppStartFunctions)
+	api.Get("/projects/:projectID/app-starts", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListAppStarts)
+	api.Get("/projects/:projectID/app-starts/:startID", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetAppStart)
 	api.Get("/projects/:projectID/people", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.ListPeople)
 	api.Get("/projects/:projectID/people/:userID", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.GetPerson)
 	api.Post("/projects/:projectID/seed-mock", h.RequireAuth, h.RequireProjectRole(auth.RoleViewer), h.SeedProjectMockData)

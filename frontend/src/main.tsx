@@ -13,6 +13,8 @@ import IssuesPage from './pages/IssuesPage'
 import PeoplePage from './pages/PeoplePage'
 import HeatmapPage from './pages/HeatmapPage'
 import FlowPage from './pages/FlowPage'
+import AppStartPage from './pages/AppStartPage'
+import AppStartDetailPage from './pages/AppStartDetailPage'
 import IssueDetailPage from './pages/IssueDetailPage'
 import InviteAcceptPage from './pages/InviteAcceptPage'
 import { Redirect, useLocation } from './router'
@@ -41,6 +43,7 @@ function Routes() {
   const path = useLocation().replace(/\/+$/, '') || '/'
   if (path.startsWith('/invite/')) return <InviteAcceptPage />
   if (path.startsWith('/dashboard/issues/')) return <IssueDetailPage />
+  if (path.startsWith('/dashboard/app-start/')) return <AppStartDetailPage />
   switch (path) {
     case '/login':
       return <LoginPage />
@@ -63,6 +66,8 @@ function Routes() {
       return <DashboardPage section="alerts" />
     case '/dashboard/issues':
       return <IssuesPage />
+    case '/dashboard/app-start':
+      return <AppStartPage />
     case '/dashboard/people':
       return <PeoplePage />
     case '/dashboard/heatmap':

@@ -164,3 +164,15 @@ func TestHeatmapWorkerFlag(t *testing.T) {
 		})
 	}
 }
+
+func TestAppStartWorkerFlag(t *testing.T) {
+	cases := map[string]bool{"": true, "false": false, "0": false}
+	for v, want := range cases {
+		t.Run(v, func(t *testing.T) {
+			t.Setenv("APPSTART_WORKER", v)
+			if got := Load().AppStartWorker; got != want {
+				t.Errorf("APPSTART_WORKER=%q -> %v, want %v", v, got, want)
+			}
+		})
+	}
+}

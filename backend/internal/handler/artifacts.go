@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/tiofani03/artracker/backend/internal/appstart"
 	"github.com/tiofani03/artracker/backend/internal/issues"
 	"github.com/tiofani03/artracker/backend/internal/symbolication"
 )
@@ -121,6 +123,8 @@ func (h *Handler) UploadDSYM(c *fiber.Ctx) error {
 		return err
 	}
 
+	h.requeueAppStartProfiles(ctx, projectID, "", meta.UUID)
+
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"status":          "stored",
 		"id":              artifactID,
@@ -207,6 +211,8 @@ func (h *Handler) UploadProguard(c *fiber.Ctx) error {
 		return err
 	}
 
+	h.requeueAppStartProfiles(ctx, projectID, version, "")
+
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"status":          "stored",
 		"id":              artifactID,
@@ -217,6 +223,15 @@ func (h *Handler) UploadProguard(c *fiber.Ctx) error {
 		"size_bytes":      len(body),
 		"checksum":        checksum,
 	})
+}
+
+// requeueAppStartProfiles sends app start profiles that were waiting on symbols back to the worker once a
+// matching artifact is stored: version for a mapping, debugUUID for a dSYM. The upload already succeeded,
+// so a failure only logs.
+func (h *Handler) requeueAppStartProfiles(ctx context.Context, projectID int64, version, debugUUID string) {
+	if err := appstart.Requeue(ctx, h.db, projectID, version, debugUUID); err != nil {
+		slog.Warn("requeue app start profiles failed", "err", err, "project_id", projectID, "version", version, "debug_uuid", debugUUID)
+	}
 }
 
 // ListReleaseArtifacts handles GET /api/v1/projects/:projectID/releases/:version/artifacts.
@@ -388,6 +403,8 @@ func (h *Handler) UploadSymbols(c *fiber.Ctx) error {
 			return err
 		}
 
+		h.requeueAppStartProfiles(ctx, projectID, "", meta.UUID)
+
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 			"status":          "stored",
 			"id":              artifactID,
@@ -496,6 +513,8 @@ func (h *Handler) UploadSymbols(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+
+	h.requeueAppStartProfiles(ctx, projectID, version, "")
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"status":          "stored",

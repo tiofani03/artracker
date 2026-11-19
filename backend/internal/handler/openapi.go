@@ -165,6 +165,57 @@ var openAPISpecBytes = []byte(`{
         }
       }
     },
+    "/app-start/profiles": {
+      "post": {
+        "summary": "Upload App Start Profile",
+        "description": "Uploads one sampled startup profile (spec: app start profiling) for a start already reported as an app_start perf item. The body is stored gzipped and symbolicated asynchronously. Supports Content-Encoding: gzip (at most 1MB compressed, 4MB uncompressed); a plain JSON body is accepted up to 4MB. A duplicate start_id is accepted and ignored.",
+        "operationId": "ingestAppStartProfile",
+        "tags": ["Ingestion"],
+        "parameters": [
+          {
+            "name": "X-Artracker-Key",
+            "in": "header",
+            "required": true,
+            "description": "Project client SDK key starting with art_live_",
+            "schema": { "type": "string", "example": "art_live_a892b109c3d4e5f6" }
+          },
+          {
+            "name": "Content-Encoding",
+            "in": "header",
+            "required": false,
+            "description": "Optional compression encoding",
+            "schema": { "type": "string", "enum": ["gzip"] }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AppStartProfileUpload" }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Profile stored (or already present) and queued for symbolication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "accepted" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Invalid JSON, invalid gzip stream, or a profile that breaks the wire contract (version, platform, interval, counts, indexes, sample order)" },
+          "401": { "description": "Missing or invalid client key" },
+          "413": { "description": "Payload exceeds 1MB gzip or 4MB uncompressed limit" },
+          "429": { "description": "Per-project rate limit exceeded" }
+        }
+      }
+    },
     "/sdk/validate": {
       "get": {
         "summary": "Validate SDK Client Key",
@@ -620,6 +671,94 @@ var openAPISpecBytes = []byte(`{
         "responses": {
           "200": { "description": "{sessions (distinct sessions with a screen view in range), edges:[{source,target,sessions}]}" },
           "400": { "description": "Invalid date range" }
+        }
+      }
+    },
+    "/projects/{projectID}/app-starts/summary": {
+      "get": {
+        "summary": "Get App Start Summary",
+        "description": "Start-time percentiles, phase medians, daily trend and per-version breakdown for one start type, plus the effective environment and the environments and versions seen in the range.",
+        "operationId": "getAppStartSummary",
+        "tags": ["App Start"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "from", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default 30 days ago" },
+          { "name": "to", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default now" },
+          { "name": "environment", "in": "query", "schema": { "type": "string" }, "description": "Default: production when present in the range, otherwise all environments. Pass all to include every environment explicitly" },
+          { "name": "platform", "in": "query", "schema": { "type": "string" } },
+          { "name": "app_version", "in": "query", "schema": { "type": "string" } },
+          { "name": "type", "in": "query", "schema": { "type": "string", "enum": ["cold", "warm", "hot"] }, "description": "Default cold" },
+          { "name": "ram_tier", "in": "query", "schema": { "type": "string", "enum": ["low", "mid", "high"] }, "description": "low < 4096 MB, mid 4096-8192 MB, high > 8192 MB; starts without RAM are excluded when set" }
+        ],
+        "responses": {
+          "200": { "description": "{environment, environments, versions, count, p50, p75, p90, p95, profiled_pct (0-100), phases:[{name,median_ms}], daily:[{day,p50,p90,count}], by_version:[{version,p50,p90,count}] (latest 10)}" },
+          "400": { "description": "Invalid date range, type or ram_tier" }
+        }
+      }
+    },
+    "/projects/{projectID}/app-starts/functions": {
+      "get": {
+        "summary": "List App Start Functions",
+        "description": "Slowest functions across symbolicated start profiles (top 50): app code ranked by attributed time, or every function ranked by self time when app_only=false.",
+        "operationId": "listAppStartFunctions",
+        "tags": ["App Start"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "from", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default 30 days ago" },
+          { "name": "to", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default now" },
+          { "name": "environment", "in": "query", "schema": { "type": "string" }, "description": "Default: production when present in the range, otherwise all environments. Pass all to include every environment explicitly" },
+          { "name": "platform", "in": "query", "schema": { "type": "string" } },
+          { "name": "app_version", "in": "query", "schema": { "type": "string" } },
+          { "name": "app_only", "in": "query", "schema": { "type": "boolean" }, "description": "Default true" }
+        ],
+        "responses": {
+          "200": { "description": "{environment, environments, versions, profiles, functions:[{function,is_app,starts_pct (0-100),median_total_ms,p90_total_ms,median_self_ms,median_attributed_ms,example_start_id}]}" },
+          "400": { "description": "Invalid date range" }
+        }
+      }
+    },
+    "/projects/{projectID}/app-starts": {
+      "get": {
+        "summary": "List App Starts",
+        "description": "Individual starts, slowest or most recent first, paged with an opaque cursor.",
+        "operationId": "listAppStarts",
+        "tags": ["App Start"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "from", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default 30 days ago" },
+          { "name": "to", "in": "query", "schema": { "type": "string" }, "description": "RFC3339 or YYYY-MM-DD; default now" },
+          { "name": "environment", "in": "query", "schema": { "type": "string" }, "description": "Default: production when present in the range, otherwise all environments. Pass all to include every environment explicitly" },
+          { "name": "platform", "in": "query", "schema": { "type": "string" } },
+          { "name": "app_version", "in": "query", "schema": { "type": "string" } },
+          { "name": "type", "in": "query", "schema": { "type": "string", "enum": ["cold", "warm", "hot"] }, "description": "Default cold" },
+          { "name": "ram_tier", "in": "query", "schema": { "type": "string", "enum": ["low", "mid", "high"] }, "description": "low < 4096 MB, mid 4096-8192 MB, high > 8192 MB; starts without RAM are excluded when set" },
+          { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["slowest", "recent"] }, "description": "Default slowest" },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "Default 50, max 200" },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" }, "description": "next_cursor of the previous page" }
+        ],
+        "responses": {
+          "200": { "description": "{starts:[{start_id,type,platform,app_version,build,device_model,os_version,first_screen,session_id,duration_ms,profiled,started_at}], next_cursor (omitted on the last page)}" },
+          "400": { "description": "Invalid date range, type, ram_tier, sort or cursor" }
+        }
+      }
+    },
+    "/projects/{projectID}/app-starts/{startID}": {
+      "get": {
+        "summary": "Get App Start",
+        "description": "One start with its phases and symbolicated profile. A profile without a start row returns an empty row carrying only start_id.",
+        "operationId": "getAppStart",
+        "tags": ["App Start"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "startID", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Start row fields plus {phases:[{name,ms}], ram_mb, trampoline, profile: null | {status, data: {interval_ms,frames,stacks,samples} | null}}" },
+          "404": { "description": "Neither a start nor a profile exists for the id" }
         }
       }
     },
@@ -1527,9 +1666,10 @@ var openAPISpecBytes = []byte(`{
       },
       "RawItem": {
         "type": "object",
+        "description": "One telemetry item. Mobile SDKs send two kinds of perf items: perf.samples (per-session performance samples) and app_start (one app launch). An app_start item has type perf, name app_start and an attributes object shaped as { v: 1, platform: android|ios, start_id: uuid unique per start, type: cold|warm|hot, duration_ms, phases: [{ name, ms }] (contiguous, in order, summing to duration_ms), first_screen, trampoline, profiled (a profile upload for the same start_id follows), build, device: { model, os_version, ram_mb, cores } }. Missing values are omitted, never 0. app_version comes from the batch context.",
         "required": ["type"],
         "properties": {
-          "type": { "type": "string", "enum": ["event", "log", "session"] },
+          "type": { "type": "string", "enum": ["event", "log", "session", "perf"] },
           "name": { "type": "string", "maxLength": 255, "example": "checkout_completed" },
           "level": { "type": "string", "enum": ["debug", "info", "warn", "error", "fatal"] },
           "message": { "type": "string", "maxLength": 4096 },
@@ -1727,6 +1867,87 @@ var openAPISpecBytes = []byte(`{
           "browser": { "type": "string", "example": "Chrome" },
           "os": { "type": "string", "example": "Android" },
           "properties": { "type": "object", "example": { "product_id": "sku_99", "price": 150000 } }
+        }
+      },
+      "AppStartProfileUpload": {
+        "type": "object",
+        "required": ["profile"],
+        "properties": {
+          "sdk": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "example": "artracker-android" },
+              "version": { "type": "string", "example": "0.4.0" }
+            }
+          },
+          "context": {
+            "type": "object",
+            "description": "Envelope context. app_version (iOS may send \"1.4.0 (217)\"), build and environment are stored with the profile.",
+            "additionalProperties": true,
+            "example": { "app_version": "3.2.0", "build": "1203", "environment": "production" }
+          },
+          "profile": {
+            "type": "object",
+            "required": ["v", "start_id", "platform", "interval_ms", "frames", "stacks", "samples"],
+            "properties": {
+              "v": { "type": "integer", "enum": [1] },
+              "start_id": { "type": "string", "maxLength": 128, "description": "Same id as the app_start perf item" },
+              "platform": { "type": "string", "enum": ["android", "ios"] },
+              "app_packages": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 128 }, "description": "Android package prefixes that count as app code" },
+              "interval_ms": { "type": "integer", "minimum": 1, "maximum": 100 },
+              "t0": { "type": "string", "example": "process_start" },
+              "frames": {
+                "type": "array",
+                "maxItems": 20000,
+                "description": "Unique frames. Android: c, m, l, f. iOS: a, i, sym.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "c": { "type": "string", "description": "Android class" },
+                    "m": { "type": "string", "description": "Android method" },
+                    "l": { "type": "integer", "description": "Android line (omit if unknown)" },
+                    "f": { "type": "string", "description": "Android source file" },
+                    "a": { "type": "string", "example": "0x1045f3a20", "description": "iOS hex address" },
+                    "i": { "type": "integer", "description": "iOS index into images" },
+                    "sym": { "type": "string", "description": "iOS dladdr name for non-app images" }
+                  }
+                }
+              },
+              "images": {
+                "type": "array",
+                "maxItems": 512,
+                "description": "iOS only: images referenced by frames",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "uuid": { "type": "string" },
+                    "name": { "type": "string" },
+                    "load": { "type": "string", "example": "0x104000000" },
+                    "app": { "type": "boolean" }
+                  }
+                }
+              },
+              "stacks": {
+                "type": "array",
+                "maxItems": 1000,
+                "description": "Unique stacks as frame indexes, root first, at most 128 frames each",
+                "items": { "type": "array", "maxItems": 128, "items": { "type": "integer" } }
+              },
+              "samples": {
+                "type": "array",
+                "maxItems": 1000,
+                "description": "Sorted by t",
+                "items": {
+                  "type": "object",
+                  "required": ["t", "s"],
+                  "properties": {
+                    "t": { "type": "integer", "minimum": 0, "maximum": 60000, "description": "ms since the start anchor" },
+                    "s": { "type": "integer", "description": "Index into stacks" }
+                  }
+                }
+              }
+            }
+          }
         }
       },
       "AnalyticsEventEnvelope": {

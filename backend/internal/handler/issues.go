@@ -267,7 +267,8 @@ func (h *Handler) loadIssueDetail(ctx context.Context, projectID, issueID int64,
 }
 
 // traceResolver symbolicates stack traces for one project, loading each
-// release's source maps, ProGuard/R8 mapping and dSYM at most once.
+// release's source maps, ProGuard/R8 mapping and dSYM at most once per resolver
+// (ProGuard and dSYM parses are shared across requests by the symbolication loader).
 type traceResolver struct {
 	h          *Handler
 	projectID  int64
@@ -283,6 +284,34 @@ func (h *Handler) newTraceResolver(projectID int64) *traceResolver {
 		proguard:   map[string]*symbolication.ProguardRetracer{},
 		ios:        map[string]*symbolication.IOSSymbolicator{},
 	}
+}
+
+// loadProguard fetches the version's mapping from the shared loader; a missing
+// or unparsable artifact leaves the trace untouched.
+func (r *traceResolver) loadProguard(ctx context.Context, version string) *symbolication.ProguardRetracer {
+	if r.h.symbolLoader == nil {
+		return nil
+	}
+	pg, err := r.h.symbolLoader.Proguard(ctx, r.projectID, version, "")
+	if err != nil {
+		slog.Warn("skipping proguard mapping", "err", err, "version", version)
+		return nil
+	}
+	return pg
+}
+
+// loadIOS fetches the version's dSYM symbolicator from the shared loader; a
+// missing or unparsable artifact leaves the trace untouched.
+func (r *traceResolver) loadIOS(ctx context.Context, version string) *symbolication.IOSSymbolicator {
+	if r.h.symbolLoader == nil {
+		return nil
+	}
+	sym, err := r.h.symbolLoader.IOSByVersion(ctx, r.projectID, version)
+	if err != nil {
+		slog.Warn("skipping dsym macho binary", "err", err, "version", version)
+		return nil
+	}
+	return sym
 }
 
 // resolve returns trace demangled with every artifact uploaded for version.
@@ -302,7 +331,7 @@ func (r *traceResolver) resolve(ctx context.Context, version, trace string) stri
 	// 2. Android ProGuard / R8 Mapping
 	pg, ok := r.proguard[version]
 	if !ok {
-		pg = r.h.loadProguardRetracer(ctx, r.projectID, version)
+		pg = r.loadProguard(ctx, version)
 		r.proguard[version] = pg
 	}
 	if pg != nil {
@@ -311,7 +340,7 @@ func (r *traceResolver) resolve(ctx context.Context, version, trace string) stri
 	// 3. iOS dSYM / DWARF Symbolicator
 	iosSym, ok := r.ios[version]
 	if !ok {
-		iosSym = r.h.loadIOSSymbolicator(ctx, r.projectID, version)
+		iosSym = r.loadIOS(ctx, version)
 		r.ios[version] = iosSym
 	}
 	if iosSym != nil {
@@ -428,46 +457,6 @@ func (h *Handler) loadIssueSummary(ctx context.Context, issueID int64) (IssueSum
 		return d, r.Scan(&d.Day, &d.Count)
 	})
 	return s, err
-}
-
-func (h *Handler) loadProguardRetracer(ctx context.Context, projectID int64, releaseVersion string) *symbolication.ProguardRetracer {
-	if releaseVersion == "" {
-		return nil
-	}
-	var content []byte
-	err := h.db.QueryRow(ctx, `
-		SELECT content FROM project_release_artifacts
-		WHERE project_id = $1 AND version = $2 AND artifact_type = 'proguard_mapping'
-		ORDER BY created_at DESC LIMIT 1`, projectID, releaseVersion).Scan(&content)
-	if err != nil || len(content) == 0 {
-		return nil
-	}
-	retracer, err := symbolication.ParseProguardMapping(content)
-	if err != nil {
-		slog.Warn("skipping invalid proguard mapping", "err", err, "version", releaseVersion)
-		return nil
-	}
-	return retracer
-}
-
-func (h *Handler) loadIOSSymbolicator(ctx context.Context, projectID int64, releaseVersion string) *symbolication.IOSSymbolicator {
-	if releaseVersion == "" {
-		return nil
-	}
-	var content []byte
-	err := h.db.QueryRow(ctx, `
-		SELECT content FROM project_release_artifacts
-		WHERE project_id = $1 AND version = $2 AND artifact_type = 'dsym'
-		ORDER BY created_at DESC LIMIT 1`, projectID, releaseVersion).Scan(&content)
-	if err != nil || len(content) == 0 {
-		return nil
-	}
-	sym, err := symbolication.NewIOSSymbolicator(content)
-	if err != nil {
-		slog.Warn("skipping invalid dsym macho binary", "err", err, "version", releaseVersion)
-		return nil
-	}
-	return sym
 }
 
 func (h *Handler) loadSourceMaps(ctx context.Context, projectID int64, releaseVersion string) []*issues.SourceMap {

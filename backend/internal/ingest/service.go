@@ -55,6 +55,13 @@ func NewService(cfg Config, pool *pgxpool.Pool, customSink ...StorageSink) *Serv
 		perfSink = NewMemoryPerfSink()
 	}
 
+	var appStartSink AppStartSink
+	if pool != nil {
+		appStartSink = NewPgxAppStartSink(pool)
+	} else {
+		appStartSink = NewMemoryAppStartSink()
+	}
+
 	workerPool := NewWorkerPool(
 		cfg.QueueSize,
 		cfg.Workers,
@@ -64,6 +71,7 @@ func NewService(cfg Config, pool *pgxpool.Pool, customSink ...StorageSink) *Serv
 		perfSink,
 		metrics,
 	)
+	workerPool.SetAppStartSink(appStartSink)
 
 	return &Service{
 		keyCache:    keyCache,
