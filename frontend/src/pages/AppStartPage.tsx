@@ -15,6 +15,7 @@ import CustomSelect from '../components/CustomSelect'
 import DashboardShell from '../components/DashboardShell'
 import PhaseBar from '../components/appstart/PhaseBar'
 import { PreInitHint, ProfilingSetup } from '../components/appstart/ProfilingHints'
+import TypeOverview from '../components/appstart/TypeOverview'
 import TrendChart from '../components/appstart/TrendChart'
 import { Link, navigate } from '../router'
 
@@ -27,11 +28,6 @@ const RANGE_OPTIONS = [
   { value: 7, label: 'Last 7 days' },
   { value: 30, label: 'Last 30 days' },
   { value: 90, label: 'Last 90 days' },
-]
-const TYPE_OPTIONS: { value: AppStartType; label: string }[] = [
-  { value: 'cold', label: 'Cold start' },
-  { value: 'warm', label: 'Warm start' },
-  { value: 'hot', label: 'Hot start' },
 ]
 const TYPE_LABEL: Record<AppStartType, string> = { cold: 'Cold', warm: 'Warm', hot: 'Hot' }
 const SORT_OPTIONS: { value: AppStartSort; label: string }[] = [
@@ -363,7 +359,6 @@ function AppStartView({ projectId, platform }: { projectId: number; platform: Pl
           onChange={setEnvironment}
         />
       )}
-      <CustomSelect size="sm" ariaLabel="Start type" options={TYPE_OPTIONS} value={type} onChange={setType} />
       <CustomSelect size="sm" ariaLabel="App version" options={versionOptions} value={appVersion} onChange={setAppVersion} />
       <CustomSelect size="sm" ariaLabel="RAM tier" options={RAM_OPTIONS} value={ramTier} onChange={setRamTier} />
       <CustomSelect size="sm" ariaLabel="Date range" options={RANGE_OPTIONS} value={days} onChange={setDays} />
@@ -375,6 +370,24 @@ function AppStartView({ projectId, platform }: { projectId: number; platform: Pl
       <>
         {filters}
         <p className="ppl-muted ppl-pad">{error ? `Couldn't load app starts: ${error}` : 'Loading…'}</p>
+      </>
+    )
+  }
+
+  const overview = <TypeOverview stats={s.by_type ?? []} selected={type} onSelect={setType} />
+  const anyStarts = (s.by_type ?? []).some((t) => t.count > 0)
+
+  if (s.count === 0 && fresh && anyStarts) {
+    return (
+      <>
+        {filters}
+        {overview}
+        <section className="dash-card ppl-pad">
+          <h2 className="dash-card__title">No {TYPE_LABEL[type].toLowerCase()} starts</h2>
+          <p className="ppl-muted">
+            No {TYPE_LABEL[type].toLowerCase()} starts match these filters. Pick another start type above to see its details.
+          </p>
+        </section>
       </>
     )
   }
@@ -403,6 +416,8 @@ function AppStartView({ projectId, platform }: { projectId: number; platform: Pl
     <div className={`as-page${fresh ? '' : ' is-loading'}`}>
       {filters}
       {error && <p className="hm-note hm-note--warn">Couldn't load all sections: {error}</p>}
+      {overview}
+      <h2 className="as-type-heading">{TYPE_LABEL[type]} starts</h2>
       <div className="as-kpis">
         <Kpi label="Median (p50)" value={s.count ? formatMs(s.p50) : '—'} />
         <Kpi label="p90" value={s.count ? formatMs(s.p90) : '—'} />

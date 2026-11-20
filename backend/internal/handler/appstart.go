@@ -54,8 +54,17 @@ type appStartByVersion struct {
 	Count   int    `json:"count"`
 }
 
+// appStartTypeStats is one start type's totals, so the page can show all three types side by side.
+type appStartTypeStats struct {
+	Type  string `json:"type"`
+	Count int    `json:"count"`
+	P50   int    `json:"p50"`
+	P90   int    `json:"p90"`
+}
+
 type appStartSummary struct {
 	appStartScope
+	ByType      []appStartTypeStats   `json:"by_type"`
 	Count       int                   `json:"count"`
 	P50         int                   `json:"p50"`
 	P75         int                   `json:"p75"`
@@ -286,6 +295,33 @@ func (h *Handler) AppStartSummary(c *fiber.Ctx) error {
 		Daily:         []appStartDaily{},
 		ByVersion:     []appStartByVersion{},
 	}
+
+	// Every type under the same filters, with the type filter dropped. Percentiles stay per type.
+	all := f
+	all.typ = ""
+	allWhere, allArgs := all.where()
+	trows, err := h.db.Query(ctx, `
+		SELECT t.type, count(s.type)::int, percentile_cont(ARRAY[0.5, 0.9]) WITHIN GROUP (ORDER BY s.duration_ms)
+		  FROM unnest(ARRAY['cold', 'warm', 'hot']) WITH ORDINALITY AS t(type, ord)
+		  LEFT JOIN (SELECT type, duration_ms FROM app_starts WHERE `+allWhere+`) s ON s.type = t.type
+		 GROUP BY t.type, t.ord ORDER BY t.ord`, allArgs...)
+	if err != nil {
+		return err
+	}
+	defer trows.Close()
+	for trows.Next() {
+		var ts appStartTypeStats
+		var q []float64
+		if err := trows.Scan(&ts.Type, &ts.Count, &q); err != nil {
+			return err
+		}
+		ts.P50, ts.P90 = pct(q, 0), pct(q, 1)
+		out.ByType = append(out.ByType, ts)
+	}
+	if err := trows.Err(); err != nil {
+		return err
+	}
+	trows.Close()
 
 	var qs []float64
 	if err := h.db.QueryRow(ctx, `

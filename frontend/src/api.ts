@@ -895,7 +895,10 @@ export type AppStartScope = {
 export type AppStartPhaseMedian = { name: string; median_ms: number }
 export type AppStartDaily = { day: string; p50: number; p90: number; count: number }
 export type AppStartByVersion = { version: string; p50: number; p90: number; count: number }
+export type AppStartTypeStats = { type: AppStartType; count: number; p50: number; p90: number }
 export type AppStartSummary = AppStartScope & {
+  /** Cold, warm and hot under the same filters except type. */
+  by_type: AppStartTypeStats[]
   count: number
   p50: number
   p75: number
