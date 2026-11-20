@@ -351,12 +351,18 @@ func DemangleIOSStackTrace(stackTrace string, symbolicator *IOSSymbolicator, bas
 		if len(matches) >= 5 {
 			// matches[1]: binary name, matches[2]: pc address, matches[3]: load address, matches[4]: offset
 			pcVal, err := strconv.ParseUint(strings.TrimPrefix(matches[2], "0x"), 16, 64)
+			loadAddr, _ := strconv.ParseUint(strings.TrimPrefix(matches[3], "0x"), 16, 64)
 			if err == nil {
-				effectivePC := pcVal
-				if baseAddress > 0 && pcVal > baseAddress {
-					effectivePC = pcVal - baseAddress
+				var resolved ResolvedLocation
+				if loadAddr > 0 {
+					resolved = symbolicator.SymbolicateImageAddress(pcVal, loadAddr)
+				} else {
+					effectivePC := pcVal
+					if baseAddress > 0 && pcVal > baseAddress {
+						effectivePC = pcVal - baseAddress
+					}
+					resolved = symbolicator.SymbolicateAddress(effectivePC)
 				}
-				resolved := symbolicator.SymbolicateAddress(effectivePC)
 				if resolved.Found {
 					var locStr string
 					if resolved.File != "" && resolved.Line > 0 {
