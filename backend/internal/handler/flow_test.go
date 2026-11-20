@@ -422,3 +422,62 @@ func TestFlowTransitions(t *testing.T) {
 		t.Errorf("bad date = %d, want 400", st)
 	}
 }
+
+func TestFlowScreenPreview(t *testing.T) {
+	e := newTestEnv(t)
+	e.h.WithReplayStore(&mockReplayStore{})
+	org := e.addOrg(t, "flow-pv")
+	uid, hdr := e.addUser(t, "flowpv")
+	e.addMember(t, org, uid, "viewer")
+	pid := e.addProject(t, org, "flow-pv-app")
+	e.addReplaySession(t, pid, "s1", "1 hour", false, false, false)
+	ctx := context.Background()
+	if _, err := e.pool.Exec(ctx, `INSERT INTO replay_chunks(project_id, session_id, chunk_seq, object_key) VALUES ($1,'s1',0,'k/0')`, pid); err != nil {
+		t.Fatal(err)
+	}
+	add := func(version string, landscape bool, aspect float64, masked int, ago string, frame int) {
+		t.Helper()
+		if _, err := e.pool.Exec(ctx,
+			`INSERT INTO screen_backgrounds(project_id, screen, platform, app_version, landscape, aspect_bucket, session_id, chunk_seq, frame_index, vw, vh, masked, captured_at)
+			 VALUES ($1,'Home','android',$2,$3,$4,'s1',0,$5,400,880,$6, now() - $7::interval)`,
+			pid, version, landscape, aspect, frame, masked, ago); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("1.0.0", false, 2.2, 0, "10 days", 1)
+	add("2.0.0", false, 2.2, 3, "1 hour", 2)  // newer but masked
+	add("2.0.0", true, 2.2, 0, "1 minute", 3) // landscape
+	add("2.0.0", false, 2.0, 0, "2 hours", 4) // newest unmasked portrait
+
+	type resp struct {
+		Background *struct {
+			URL        string `json:"url"`
+			FrameIndex int    `json:"frame_index"`
+			AppVersion string `json:"app_version"`
+		} `json:"background"`
+	}
+	path := func(q string) string {
+		return fmt.Sprintf("/api/v1/projects/%d/flow/screen-preview?%s", pid, q)
+	}
+	var got resp
+	if st := hmGet(t, e, hdr, path("screen=Home&platform=android"), &got); st != 200 || got.Background == nil || got.Background.FrameIndex != 4 || got.Background.URL == "" {
+		t.Fatalf("status=%d background=%+v, want frame 4 (portrait, unmasked, newest)", st, got.Background)
+	}
+	// an app_version with a screenshot wins; one without falls back to any version
+	got = resp{}
+	if st := hmGet(t, e, hdr, path("screen=Home&platform=android&app_version=1.0.0"), &got); st != 200 || got.Background == nil || got.Background.FrameIndex != 1 {
+		t.Fatalf("status=%d background=%+v, want frame 1 for 1.0.0", st, got.Background)
+	}
+	got = resp{}
+	if st := hmGet(t, e, hdr, path("screen=Home&platform=android&app_version=9.9"), &got); st != 200 || got.Background == nil || got.Background.FrameIndex != 4 {
+		t.Fatalf("status=%d background=%+v, want fallback frame 4", st, got.Background)
+	}
+	// no screenshot → null, missing params → 400
+	got = resp{}
+	if st := hmGet(t, e, hdr, path("screen=Cart&platform=android"), &got); st != 200 || got.Background != nil {
+		t.Fatalf("status=%d background=%+v, want null", st, got.Background)
+	}
+	if st := hmGet(t, e, hdr, path("screen=Home"), nil); st != 400 {
+		t.Fatalf("missing platform: status %d, want 400", st)
+	}
+}

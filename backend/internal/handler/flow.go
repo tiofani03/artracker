@@ -2,12 +2,14 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/tiofani03/artracker/backend/internal/heatmap"
 )
@@ -412,4 +414,45 @@ func (h *Handler) GetFlowTransitions(c *fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(fiber.Map{"sessions": sessions, "edges": edges})
+}
+
+// GetFlowScreenPreview handles GET /api/v1/projects/:projectID/flow/screen-preview: one screenshot of a screen,
+// reused from the heatmap backgrounds, so people who don't know the screen names can see which page it is.
+// It prefers the requested app_version, then portrait, then the fewest masked areas, then the newest capture.
+func (h *Handler) GetFlowScreenPreview(c *fiber.Ctx) error {
+	projectID := c.Locals("projectID").(int64)
+	screen := strings.TrimSpace(c.Query("screen"))
+	platform := strings.TrimSpace(c.Query("platform"))
+	if screen == "" || platform == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "screen and platform are required")
+	}
+	version := strings.TrimSpace(c.Query("app_version"))
+
+	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	defer cancel()
+
+	var (
+		bg        heatmapBackground
+		objectKey string
+		vw, vh    float32
+	)
+	err := h.db.QueryRow(ctx, `
+		SELECT b.frame_index, b.vw, b.vh, b.app_version, r.object_key
+		  FROM screen_backgrounds b
+		  JOIN replay_chunks r ON r.project_id = b.project_id AND r.session_id = b.session_id AND r.chunk_seq = b.chunk_seq
+		 WHERE b.project_id = $1 AND b.screen = $2 AND b.platform = $3
+		 ORDER BY ($4 <> '' AND b.app_version = $4) DESC, b.landscape, b.masked, b.captured_at DESC
+		 LIMIT 1`, projectID, screen, platform, version).
+		Scan(&bg.FrameIndex, &vw, &vh, &bg.AppVersion, &objectKey)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return c.JSON(fiber.Map{"background": nil})
+	}
+	if err != nil {
+		return err
+	}
+	bg.VW, bg.VH = float64(vw), float64(vh)
+	if bg.URL = h.chunkDownloadURL(c, ctx, objectKey); bg.URL == "" {
+		return c.JSON(fiber.Map{"background": nil})
+	}
+	return c.JSON(fiber.Map{"background": bg})
 }

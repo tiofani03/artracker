@@ -674,6 +674,25 @@ var openAPISpecBytes = []byte(`{
         }
       }
     },
+    "/projects/{projectID}/flow/screen-preview": {
+      "get": {
+        "summary": "Get Flow Screen Preview",
+        "description": "One screenshot of a screen, taken from the heatmap backgrounds that screenshot replay captures, so readers can see which page a screen name is. Prefers the given app_version (falls back to any version), then portrait, then the fewest masked areas, then the newest capture.",
+        "operationId": "getFlowScreenPreview",
+        "tags": ["Flow"],
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectID", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "screen", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "platform", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "app_version", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "{background: {url (replay chunk download URL), frame_index, vw, vh, app_version} or null when no screenshot exists}" },
+          "400": { "description": "Missing screen or platform" }
+        }
+      }
+    },
     "/projects/{projectID}/app-starts/summary": {
       "get": {
         "summary": "Get App Start Summary",
