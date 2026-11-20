@@ -10473,6 +10473,29 @@ select {
   font-size: 0.6875rem;
   color: var(--color-muted);
 }
+.as-trend__x--single {
+  justify-content: center;
+}
+.as-trend__dots {
+  position: absolute;
+  inset: 0 0 0 44px;
+  pointer-events: none;
+}
+.as-trend__dot {
+  position: absolute;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  border: 2px solid var(--color-paper-hi);
+}
+.as-trend__dot--p50 {
+  background: var(--color-accent);
+}
+.as-trend__dot--p90 {
+  background: var(--color-warn);
+}
 .as-trend__legend {
   display: flex;
   gap: var(--space-md);

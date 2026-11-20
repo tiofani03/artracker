@@ -26,6 +26,8 @@ export default function TrendChart({ daily }: { daily: AppStartSummary['daily'] 
       p50: seriesPath(pts((d) => d.p50), duration, W, H, max),
       p90: seriesPath(pts((d) => d.p90), duration, W, H, max),
       max,
+      // One day has no line to draw: show it as two dots in the middle instead of a speck on the edge.
+      single: days.length === 1 ? { p50: days[0].p50, p90: days[0].p90 } : null,
       first: days[0].day,
       last: days[days.length - 1].day,
     }
@@ -39,13 +41,23 @@ export default function TrendChart({ daily }: { daily: AppStartSummary['daily'] 
         <span className="as-trend__y as-trend__y--bottom">0</span>
         <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label="Daily p50 and p90 start time">
           <line className="as-trend__grid" x1="0" y1={H / 2} x2={W} y2={H / 2} vectorEffect="non-scaling-stroke" />
-          <path className="as-trend__line as-trend__line--p90" d={chart.p90} vectorEffect="non-scaling-stroke" />
-          <path className="as-trend__line as-trend__line--p50" d={chart.p50} vectorEffect="non-scaling-stroke" />
+          {!chart.single && (
+            <>
+              <path className="as-trend__line as-trend__line--p90" d={chart.p90} vectorEffect="non-scaling-stroke" />
+              <path className="as-trend__line as-trend__line--p50" d={chart.p50} vectorEffect="non-scaling-stroke" />
+            </>
+          )}
         </svg>
+        {chart.single && (
+          <div className="as-trend__dots" aria-hidden="true">
+            <span className="as-trend__dot as-trend__dot--p90" style={{ top: `${(1 - chart.single.p90 / chart.max) * 100}%` }} />
+            <span className="as-trend__dot as-trend__dot--p50" style={{ top: `${(1 - chart.single.p50 / chart.max) * 100}%` }} />
+          </div>
+        )}
       </div>
-      <div className="as-trend__x">
+      <div className={`as-trend__x${chart.single ? ' as-trend__x--single' : ''}`}>
         <span>{dayLabel(chart.first)}</span>
-        <span>{dayLabel(chart.last)}</span>
+        {!chart.single && <span>{dayLabel(chart.last)}</span>}
       </div>
       <figcaption className="as-trend__legend">
         <span className="as-trend__key as-trend__key--p50">p50</span>

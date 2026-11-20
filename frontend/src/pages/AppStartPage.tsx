@@ -90,7 +90,7 @@ function FunctionsTable({
   onAppOnly: (v: boolean) => void
 }) {
   return (
-    <section className="dash-card fb-card">
+    <section className="dash-card">
       <div className="dash-card__head">
         <div>
           <h2 className="dash-card__title">Slowest functions during startup</h2>
@@ -119,15 +119,19 @@ function FunctionsTable({
               {res.functions.map((f) => (
                 <tr key={f.function} className="as-row" onClick={() => navigate(startHref(f.example_start_id))}>
                   <td className="as-fn">
-                    <Link to={startHref(f.example_start_id)} onClick={(e) => e.stopPropagation()} title={f.function}>
-                      {f.function}
-                    </Link>
-                    {!f.is_app && <span className="as-tag">library</span>}
+                    <span>
+                      <Link to={startHref(f.example_start_id)} onClick={(e) => e.stopPropagation()} title={f.function}>
+                        {f.function}
+                      </Link>
+                      {!f.is_app && <span className="as-tag">library</span>}
+                    </span>
                   </td>
-                  <td className="as-num">{Math.round(f.starts_pct)}%</td>
-                  <td className="as-num">{formatMs(appOnly ? f.median_attributed_ms : f.median_self_ms)}</td>
-                  <td className="as-num">{formatMs(f.median_total_ms)}</td>
-                  <td className="as-num">{formatMs(f.p90_total_ms)}</td>
+                  <td className="as-num" data-label="% of starts">{Math.round(f.starts_pct)}%</td>
+                  <td className="as-num" data-label={appOnly ? 'Median attributed' : 'Median self'}>
+                    {formatMs(appOnly ? f.median_attributed_ms : f.median_self_ms)}
+                  </td>
+                  <td className="as-num" data-label="Median total">{formatMs(f.median_total_ms)}</td>
+                  <td className="as-num" data-label="p90 total">{formatMs(f.p90_total_ms)}</td>
                 </tr>
               ))}
             </tbody>
@@ -165,7 +169,7 @@ function StartsTable({
     { value: 'all', label: 'All start types' },
   ]
   return (
-    <section className="dash-card fb-card">
+    <section className="dash-card">
       <div className="dash-card__head">
         <div>
           <h2 className="dash-card__title">{sort === 'slowest' ? 'Slowest starts' : 'Recent starts'}</h2>
@@ -197,23 +201,27 @@ function StartsTable({
             <tbody>
               {rows.map((r) => (
                 <tr key={r.start_id} className="as-row" onClick={() => navigate(startHref(r.start_id))}>
-                  <td className="as-num">
+                  <td className="as-num" data-label="Duration">
                     <Link to={startHref(r.start_id)} onClick={(e) => e.stopPropagation()}>
                       {formatMs(r.duration_ms)}
                     </Link>
                   </td>
                   {allTypes && (
-                    <td>
+                    <td data-label="Type">
                       <span className={`as-type as-type--${r.type}`}>{TYPE_LABEL[r.type] ?? r.type}</span>
                     </td>
                   )}
-                  <td>{r.app_version}</td>
-                  <td>
-                    {r.device_model} <span className="ppl-muted">· {r.os_version}</span>
+                  <td data-label="Version">{r.app_version}</td>
+                  <td data-label="Device">
+                    <span>
+                      {r.device_model} <span className="ppl-muted">· {r.os_version}</span>
+                    </span>
                   </td>
-                  <td>{r.first_screen || '—'}</td>
-                  <td>{r.profiled ? 'Profiled' : <span className="ppl-muted">No</span>}</td>
-                  <td className="ppl-muted">{new Date(r.started_at).toLocaleString()}</td>
+                  <td data-label="First screen">{r.first_screen || '—'}</td>
+                  <td data-label="Profile">{r.profiled ? 'Profiled' : <span className="ppl-muted">No</span>}</td>
+                  <td className="ppl-muted" data-label="When">
+                    {new Date(r.started_at).toLocaleString()}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -392,17 +400,17 @@ function AppStartView({ projectId }: { projectId: number }) {
         <Kpi label="Profiled" value={s.count ? `${Math.round(s.profiled_pct)}%` : '—'} />
       </div>
       <div className="as-split">
-        <section className="dash-card fb-card">
+        <section className="dash-card">
           <h2 className="dash-card__title">Start time trend</h2>
           <TrendChart daily={s.daily} />
         </section>
-        <section className="dash-card fb-card">
+        <section className="dash-card">
           <h2 className="dash-card__title">By version</h2>
           <p className="dash-card__desc">Median start time, p90 shaded behind.</p>
           <ByVersion rows={s.by_version} />
         </section>
       </div>
-      <section className="dash-card fb-card">
+      <section className="dash-card">
         <h2 className="dash-card__title">Where the time goes</h2>
         <p className="dash-card__desc">Median per phase.</p>
         <PhaseBar phases={s.phases.map((p) => ({ name: p.name, ms: p.median_ms }))} total={s.p50} />
