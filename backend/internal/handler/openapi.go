@@ -733,7 +733,7 @@ var openAPISpecBytes = []byte(`{
           { "name": "environment", "in": "query", "schema": { "type": "string" }, "description": "Default: production when present in the range, otherwise all environments. Pass all to include every environment explicitly" },
           { "name": "platform", "in": "query", "schema": { "type": "string" } },
           { "name": "app_version", "in": "query", "schema": { "type": "string" } },
-          { "name": "type", "in": "query", "schema": { "type": "string", "enum": ["cold", "warm", "hot"] }, "description": "Default cold" },
+          { "name": "type", "in": "query", "schema": { "type": "string", "enum": ["cold", "warm", "hot", "all"] }, "description": "Default cold; all lists every start type" },
           { "name": "ram_tier", "in": "query", "schema": { "type": "string", "enum": ["low", "mid", "high"] }, "description": "low < 4096 MB, mid 4096-8192 MB, high > 8192 MB; starts without RAM are excluded when set" },
           { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["slowest", "recent"] }, "description": "Default slowest" },
           { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "Default 50, max 200" },

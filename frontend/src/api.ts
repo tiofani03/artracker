@@ -874,8 +874,11 @@ export type AppStartParams = {
   type?: AppStartType
   ram_tier?: RamTier | ''
 }
-export type AppStartListParams = AppStartParams & {
-  sort?: 'slowest' | 'recent'
+export type AppStartSort = 'slowest' | 'recent'
+// The list alone also accepts 'all'; summary percentiles never mix start types.
+export type AppStartListParams = Omit<AppStartParams, 'type'> & {
+  type?: AppStartType | 'all'
+  sort?: AppStartSort
   limit?: number
   cursor?: string
 }

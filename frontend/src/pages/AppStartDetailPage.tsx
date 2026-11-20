@@ -74,7 +74,7 @@ function DetailView({ projectId, startId }: { projectId: number; startId: string
         </section>
       ) : (
         <div className="as-page">
-          <section className="dash-card fb-card">
+          <section className="dash-card">
             <div className="dash-card__head">
               <div>
                 <h2 className="dash-card__title">
@@ -92,7 +92,7 @@ function DetailView({ projectId, startId }: { projectId: number; startId: string
             <PhaseBar phases={detail.phases} total={detail.duration_ms} />
           </section>
 
-          <section className="dash-card fb-card">
+          <section className="dash-card">
             <h2 className="dash-card__title">Details</h2>
             <dl className="as-facts">
               <Fact label="Type" value={detail.type} />
@@ -106,7 +106,7 @@ function DetailView({ projectId, startId }: { projectId: number; startId: string
             </dl>
           </section>
 
-          <section className="dash-card fb-card">
+          <section className="dash-card">
             <h2 className="dash-card__title">Startup flamegraph</h2>
             <ProfileBanner detail={detail} />
             {detail.profile?.data && <Flamegraph profile={detail.profile.data} />}
