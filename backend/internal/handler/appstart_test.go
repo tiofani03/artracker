@@ -515,3 +515,38 @@ func TestAppStartRequiresProjectRole(t *testing.T) {
 		}
 	}
 }
+
+func TestAppStartSummaryByType(t *testing.T) {
+	s := newStartsEnv(t, "as-bytype")
+	for i := 1; i <= 4; i++ {
+		s.e.addAppStart(t, s.pid, startSeed{startID: fmt.Sprintf("w%d", i), typ: "warm", duration: i * 100, profiled: false})
+	}
+	s.e.addAppStart(t, s.pid, startSeed{startID: "h1", typ: "hot", duration: 50})
+	s.e.addAppStart(t, s.pid, startSeed{startID: "h2", typ: "hot", duration: 70, version: "2.0.0"})
+
+	type byType struct {
+		Type  string `json:"type"`
+		Count int    `json:"count"`
+		P50   int    `json:"p50"`
+		P90   int    `json:"p90"`
+	}
+	var got struct {
+		Count  int      `json:"count"`
+		ByType []byType `json:"by_type"`
+	}
+	// cold (the default) has no starts, yet every type is listed so the page can show the others
+	if st := hmGet(t, s.e, s.hdr, s.path("/summary"), &got); st != 200 {
+		t.Fatalf("status %d", st)
+	}
+	want := []byType{{"cold", 0, 0, 0}, {"warm", 4, 250, 370}, {"hot", 2, 60, 68}}
+	if got.Count != 0 || fmt.Sprint(got.ByType) != fmt.Sprint(want) {
+		t.Fatalf("count=%d by_type=%+v, want 0 and %+v", got.Count, got.ByType, want)
+	}
+	// other filters still apply
+	got.ByType = nil
+	hmGet(t, s.e, s.hdr, s.path("/summary?type=hot&app_version=2.0.0"), &got)
+	want = []byType{{"cold", 0, 0, 0}, {"warm", 0, 0, 0}, {"hot", 1, 70, 70}}
+	if got.Count != 1 || fmt.Sprint(got.ByType) != fmt.Sprint(want) {
+		t.Fatalf("version filter: count=%d by_type=%+v, want 1 and %+v", got.Count, got.ByType, want)
+	}
+}
