@@ -125,8 +125,20 @@ type appStartFilter struct {
 
 func badRequest(msg string) error { return fiber.NewError(fiber.StatusBadRequest, msg) }
 
-// parseAppStartFilter reads the common query parameters. Summary and list also pass withType.
-func parseAppStartFilter(c *fiber.Ctx, projectID int64, withType bool) (appStartFilter, error) {
+// appStartTypeMode says how parseAppStartFilter treats the type and ram_tier parameters.
+type appStartTypeMode int
+
+const (
+	appStartNoType  appStartTypeMode = iota // type and ram_tier are ignored (functions: cold only)
+	appStartOneType                         // one of cold, warm, hot (summary: percentiles never mix types)
+	appStartAnyType                         // as appStartOneType, plus "all" (list)
+)
+
+// appStartAllTypes is the list's type query value for every start type.
+const appStartAllTypes = "all"
+
+// parseAppStartFilter reads the common query parameters. Summary and list also read type and ram_tier.
+func parseAppStartFilter(c *fiber.Ctx, projectID int64, mode appStartTypeMode) (appStartFilter, error) {
 	from, to, err := heatmapRange(c)
 	if err != nil {
 		return appStartFilter{}, err
@@ -139,15 +151,19 @@ func parseAppStartFilter(c *fiber.Ctx, projectID int64, withType bool) (appStart
 		platform:    strings.TrimSpace(c.Query("platform")),
 		version:     strings.TrimSpace(c.Query("app_version")),
 	}
-	if !withType {
+	if mode == appStartNoType {
 		return f, nil
 	}
 	f.typ = strings.TrimSpace(c.Query("type"))
 	if f.typ == "" {
 		f.typ = "cold"
 	}
-	switch f.typ {
-	case "cold", "warm", "hot":
+	switch {
+	case f.typ == "cold" || f.typ == "warm" || f.typ == "hot":
+	case f.typ == appStartAllTypes && mode == appStartAnyType:
+		f.typ = "" // where() matches every type
+	case mode == appStartAnyType:
+		return f, badRequest("type must be cold, warm, hot or all")
 	default:
 		return f, badRequest("type must be cold, warm or hot")
 	}
@@ -164,7 +180,7 @@ func parseAppStartFilter(c *fiber.Ctx, projectID int64, withType bool) (appStart
 func (f appStartFilter) where() (string, []any) {
 	clause := `project_id = $1 AND started_at >= $2 AND started_at < $3
 		AND ($4 = '' OR environment = $4) AND ($5 = '' OR platform = $5) AND ($6 = '' OR app_version = $6)
-		AND type = $7`
+		AND ($7 = '' OR type = $7)`
 	switch f.ramTier { // constants only, never user text
 	case "low":
 		clause += ` AND ram_mb < 4096`
@@ -251,7 +267,7 @@ func pct(vals []float64, i int) int {
 // AppStartSummary handles GET /api/v1/projects/:projectID/app-starts/summary.
 func (h *Handler) AppStartSummary(c *fiber.Ctx) error {
 	projectID := c.Locals("projectID").(int64)
-	f, err := parseAppStartFilter(c, projectID, true)
+	f, err := parseAppStartFilter(c, projectID, appStartOneType)
 	if err != nil {
 		return err
 	}
@@ -356,7 +372,7 @@ func (h *Handler) AppStartSummary(c *fiber.Ctx) error {
 // AppStartFunctions handles GET /api/v1/projects/:projectID/app-starts/functions.
 func (h *Handler) AppStartFunctions(c *fiber.Ctx) error {
 	projectID := c.Locals("projectID").(int64)
-	f, err := parseAppStartFilter(c, projectID, false)
+	f, err := parseAppStartFilter(c, projectID, appStartNoType)
 	if err != nil {
 		return err
 	}
@@ -450,7 +466,7 @@ func decodeAppStartCursor(s string) (string, int64, error) {
 // ListAppStarts handles GET /api/v1/projects/:projectID/app-starts.
 func (h *Handler) ListAppStarts(c *fiber.Ctx) error {
 	projectID := c.Locals("projectID").(int64)
-	f, err := parseAppStartFilter(c, projectID, true)
+	f, err := parseAppStartFilter(c, projectID, appStartAnyType)
 	if err != nil {
 		return err
 	}
