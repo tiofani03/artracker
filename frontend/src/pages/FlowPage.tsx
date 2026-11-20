@@ -9,6 +9,7 @@ import {
 } from '../api'
 import CustomSelect from '../components/CustomSelect'
 import DashboardShell from '../components/DashboardShell'
+import ScreenPreview from '../components/flow/ScreenPreview'
 import {
   exitTone,
   heatmapHref,
@@ -234,11 +235,15 @@ function NeighbourList({
 }
 
 function FocusView({
+  projectId,
+  appVersion,
   stats,
   prev,
   next,
   onPick,
 }: {
+  projectId: number
+  appVersion: string
   stats: FlowScreen | undefined
   prev: PathsState
   next: PathsState
@@ -255,6 +260,13 @@ function FocusView({
             <p className="fl-focus__name" title={displayScreen(stats.screen)}>
               {displayScreen(stats.screen)}
             </p>
+            <ScreenPreview
+              projectId={projectId}
+              screen={stats.screen}
+              platform={stats.platform}
+              appVersion={appVersion}
+              name={displayScreen(stats.screen)}
+            />
             <dl className="fl-stats">
               <div>
                 <dt>Sessions</dt>
@@ -707,7 +719,7 @@ function FlowView({ projectId }: { projectId: number }) {
               />
             ) : mode === 'focus' ? (
               <>
-                <FocusView stats={stats} prev={prev} next={next} onPick={pick} />
+                <FocusView projectId={projectId} appVersion={appVersion} stats={stats} prev={prev} next={next} onPick={pick} />
                 <p className="hm-note">
                   Shares are of the sessions that opened this screen (first visit). Click a screen to focus it. Updated about 10
                   minutes after a session ends.

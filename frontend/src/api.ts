@@ -847,6 +847,8 @@ export type FlowPathsResponse = {
   nodes: FlowNode[]
   links: FlowLink[]
 }
+export type FlowScreenPreviewParams = { screen: string; platform: string; app_version?: string }
+export type FlowScreenPreviewResponse = { background: HeatmapResponse['background'] }
 export type FlowPathsParams = HeatmapParams & {
   screen: string
   platform: string
@@ -861,6 +863,8 @@ export const flowApi = {
     request<FlowPathsResponse>(`/projects/${projectId}/flow/paths${heatmapQuery(params)}`),
   transitions: (projectId: number, params: HeatmapParams = {}) =>
     request<FlowTransitionsResponse>(`/projects/${projectId}/flow/transitions${heatmapQuery(params)}`),
+  screenPreview: (projectId: number, params: FlowScreenPreviewParams) =>
+    request<FlowScreenPreviewResponse>(`/projects/${projectId}/flow/screen-preview${heatmapQuery(params)}`),
 }
 
 export type AppStartType = 'cold' | 'warm' | 'hot'
