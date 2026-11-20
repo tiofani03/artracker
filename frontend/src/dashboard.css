@@ -10631,6 +10631,24 @@ select {
   color: var(--color-muted);
   font-size: 0.6875rem;
 }
+.as-list-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+.as-type {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-paper-3);
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+.as-type--cold {
+  background: var(--color-accent-wash);
+  color: var(--color-accent-deep);
+}
 .as-more {
   display: flex;
   justify-content: center;

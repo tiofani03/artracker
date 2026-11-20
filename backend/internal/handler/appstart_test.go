@@ -379,6 +379,42 @@ func TestListAppStartsCursor(t *testing.T) {
 	}
 }
 
+func TestListAppStartsAllTypes(t *testing.T) {
+	s := newStartsEnv(t, "as-alltypes")
+	s.e.addAppStart(t, s.pid, startSeed{startID: "c1", typ: "cold", duration: 900})
+	s.e.addAppStart(t, s.pid, startSeed{startID: "w1", typ: "warm", duration: 400})
+	s.e.addAppStart(t, s.pid, startSeed{startID: "h1", typ: "hot", duration: 600})
+
+	list := func(query string) []string {
+		t.Helper()
+		var got appStartListResp
+		if st := hmGet(t, s.e, s.hdr, s.path(query), &got); st != 200 {
+			t.Fatalf("%s status %d", query, st)
+		}
+		var out []string
+		for _, r := range got.Starts {
+			out = append(out, r.StartID+":"+r.Type)
+		}
+		return out
+	}
+	if got := fmt.Sprint(list("?type=all")); got != "[c1:cold h1:hot w1:warm]" {
+		t.Errorf("type=all slowest = %s", got)
+	}
+	if got := fmt.Sprint(list("")); got != "[c1:cold]" {
+		t.Errorf("default type = %s, want cold only", got)
+	}
+	if got := fmt.Sprint(list("?type=hot")); got != "[h1:hot]" {
+		t.Errorf("type=hot = %s", got)
+	}
+	if st := hmGet(t, s.e, s.hdr, s.path("?type=bogus"), nil); st != 400 {
+		t.Errorf("list bad type = %d, want 400", st)
+	}
+	// Percentiles never mix start types: the summary rejects "all".
+	if st := hmGet(t, s.e, s.hdr, s.path("/summary?type=all"), nil); st != 400 {
+		t.Errorf("summary type=all = %d, want 400", st)
+	}
+}
+
 func TestGetAppStartDetail(t *testing.T) {
 	s := newStartsEnv(t, "as-detail")
 	s.e.addAppStart(t, s.pid, startSeed{startID: "d1", duration: 700, ramMB: intp(4096), profiled: true,
