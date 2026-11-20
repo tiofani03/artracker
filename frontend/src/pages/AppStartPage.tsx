@@ -6,12 +6,15 @@ import {
   type AppStartSort,
   type AppStartSummary,
   type AppStartType,
+  type Platform,
   type RamTier,
 } from '../api'
 import { formatMs } from '../appstart/format'
+import { slowPreInitPhase } from '../appstart/hints'
 import CustomSelect from '../components/CustomSelect'
 import DashboardShell from '../components/DashboardShell'
 import PhaseBar from '../components/appstart/PhaseBar'
+import { PreInitHint, ProfilingSetup } from '../components/appstart/ProfilingHints'
 import TrendChart from '../components/appstart/TrendChart'
 import { Link, navigate } from '../router'
 
@@ -84,24 +87,28 @@ function FunctionsTable({
   res,
   appOnly,
   onAppOnly,
+  platform,
 }: {
   res: AppStartFunctionsResponse | null
   appOnly: boolean
   onAppOnly: (v: boolean) => void
+  platform: Platform
 }) {
   return (
     <section className="dash-card">
       <div className="dash-card__head">
         <div>
           <h2 className="dash-card__title">Slowest functions during startup</h2>
-          <p className="dash-card__desc">From profiled starts. Click a function to open an example start.</p>
+          <p className="dash-card__desc">From profiled cold starts. Click a function to open an example start.</p>
         </div>
         <label className="hm-toggle">
           <input type="checkbox" checked={!appOnly} onChange={(e) => onAppOnly(!e.target.checked)} />
           Include libraries
         </label>
       </div>
-      {!res || res.functions.length === 0 ? (
+      {res && res.profiles === 0 ? (
+        <ProfilingSetup platform={platform} />
+      ) : !res || res.functions.length === 0 ? (
         <p className="ppl-muted">{res ? 'No profiled starts match these filters.' : 'Loading…'}</p>
       ) : (
         <div className="dash-table-wrap">
@@ -239,7 +246,7 @@ function StartsTable({
   )
 }
 
-function AppStartView({ projectId }: { projectId: number }) {
+function AppStartView({ projectId, platform }: { projectId: number; platform: Platform }) {
   const [days, setDays] = useState(30)
   // '' = the backend's effective environment (production when it has data, else all).
   const [environment, setEnvironment] = useState('')
@@ -389,6 +396,9 @@ function AppStartView({ projectId }: { projectId: number }) {
     )
   }
 
+  // Only cold starts have a phase before SDK init worth acting on.
+  const preInit = type === 'cold' ? slowPreInitPhase(s.phases) : null
+
   return (
     <div className={`as-page${fresh ? '' : ' is-loading'}`}>
       {filters}
@@ -414,8 +424,9 @@ function AppStartView({ projectId }: { projectId: number }) {
         <h2 className="dash-card__title">Where the time goes</h2>
         <p className="dash-card__desc">Median per phase.</p>
         <PhaseBar phases={s.phases.map((p) => ({ name: p.name, ms: p.median_ms }))} total={s.p50} />
+        {preInit && <PreInitHint phase={preInit} platform={platform} />}
       </section>
-      <FunctionsTable res={fns.data} appOnly={appOnly} onAppOnly={setAppOnly} />
+      <FunctionsTable res={fns.data} appOnly={appOnly} onAppOnly={setAppOnly} platform={platform} />
       <StartsTable
         rows={list.data?.rows ?? null}
         loading={loadingMore}
@@ -454,7 +465,7 @@ export default function AppStartPage() {
               <p className="ppl-muted">App Start is available for Android and iOS projects.</p>
             </section>
           ) : (
-            <AppStartView key={project.id} projectId={project.id} />
+            <AppStartView key={project.id} projectId={project.id} platform={project.platform} />
           )}
         </>
       )}
