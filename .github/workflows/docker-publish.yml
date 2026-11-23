@@ -29,6 +29,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # arm64 dibangun lewat QEMU. Tanpa ini manifest-nya cuma amd64 dan server
+      # Coolify (arm64) nolak dengan "no matching manifest for linux/arm64/v8".
+      - uses: docker/setup-qemu-action@v3
+
       - uses: docker/setup-buildx-action@v4
 
       - name: Login to Docker Hub
@@ -42,7 +46,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ${{ env.REGISTRY_USER }}/artracker-${{ matrix.name }}:latest
