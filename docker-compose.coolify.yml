@@ -1,0 +1,128 @@
+# artracker — Coolify "Docker Compose" resource (branch: coolify)
+#
+# Pakai image dari Docker Hub (tayooooo/artracker-api|web). Coolify cuma pull + up,
+# nggak build apa pun.
+#
+# Isi env di tab Environment resource Coolify (bukan .env repo):
+#   APP_URL=https://<domain>          POSTGRES_USER=artracker   POSTGRES_DB=artracker
+#   POSTGRES_PASSWORD=<rand>          JWT_SECRET=<openssl rand -hex 32>
+#   MINIO_ROOT_USER=<user>            MINIO_ROOT_PASSWORD=<min 8 char>
+#   ALERTS_MASTER_KEY=<openssl rand -base64 32>   ALERTS_MASTER_KEY_ID=v1
+#   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET        DOCKER_USER=tayooooo
+#
+# Satu tempat ubah domain: SERVICE_FQDN_WEB_80. `api`, `db`, `minio` internal saja.
+
+services:
+  web:
+    image: ${DOCKER_USER:-tayooooo}/artracker-web:${TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      - api
+    expose:
+      - "80"
+    environment:
+      # magic var Coolify -> Traefik route + TLS untuk satu-satunya pintu masuk
+      SERVICE_FQDN_WEB_80: https://artracker.exlm.my.id
+
+  api:
+    image: ${DOCKER_USER:-tayooooo}/artracker-api:${TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    expose:
+      - "8080"
+    environment:
+      APP_ENV: production
+      PORT: "8080"
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
+      CORS_ORIGINS: ${APP_URL}
+      PUBLIC_URL: ${APP_URL}
+      LOG_LEVEL: info
+      JWT_SECRET: ${JWT_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      ALERTS_MASTER_KEY_ID: ${ALERTS_MASTER_KEY_ID:-v1}
+      ALERTS_MASTER_KEY: ${ALERTS_MASTER_KEY:-}
+      # MinIO internal, ganti R2 Cloudflare.
+      # Sengaja pakai alias `minio.localhost`: r2.go cuma mengaktifkan path-style
+      # addressing kalau endpoint mengandung "localhost"/"127.0.0.1". Tanpa itu
+      # SDK memanggil artracker-replay.minio:9000 (virtual-host) dan gagal resolve.
+      # Kalau nanti patch path-style sudah masuk main, cukup jadi http://minio:9000.
+      R2_ENDPOINT: http://minio.localhost:9000
+      R2_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      R2_ACCESS_KEY_SECRET: ${MINIO_ROOT_PASSWORD}
+      R2_BUCKET_NAME: artracker-replay
+      R2_REGION: us-east-1
+      # true = upload chunk & playback lewat API proxy, jadi MinIO tetap privat
+      REPLAY_PROXY_UPLOAD: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BROWSER: "off"
+    volumes:
+      - miniodata:/data
+    expose:
+      - "9000"
+    networks:
+      default:
+        aliases:
+          - minio.localhost
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # sekali jalan: bikin bucket lalu keluar (nggak ada auto-create di kode)
+  createbuckets:
+    image: minio/mc:latest
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio.localhost:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
+      mc mb --ignore-existing local/artracker-replay &&
+      mc anonymous set none local/artracker-replay &&
+      echo bucket-ready
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+
+volumes:
+  pgdata:
+  miniodata:
