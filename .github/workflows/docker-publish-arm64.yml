@@ -8,14 +8,10 @@ name: Build and push arm64 images
 # Hasilnya image baru (`artracker-api-arm64`, `artracker-web-arm64`), bukan tag di
 # repo image yang sudah dipakai prod. Jadi `tayooooo/artracker-api:latest` tetap
 # amd64 punya jalur prod, nggak ada rebutan manifest.
+# Manual saja, sengaja: build arm64 lewat QEMU makan ~10-20 menit runner.
+# Nggak ada trigger otomatis, jadi image arm64 cuma lahir kalau diminta.
 on:
   workflow_dispatch:
-  push:
-    branches: [coolify]
-    paths:
-      - "backend/**"
-      - "frontend/**"
-      - ".github/workflows/docker-publish-arm64.yml"
 
 env:
   REGISTRY_USER: ${{ secrets.DOCKER_USERNAME }}
