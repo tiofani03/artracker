@@ -5,8 +5,9 @@ name: Build and push arm64 images
 # ke-deploy. Di sini nggak ada job deploy, jadi gagal = cuma gagal, nggak
 # nyentuh apa pun yang sudah jalan.
 #
-# Hasilnya tag sendiri (`:arm64`), bukan `:latest` — `:latest` tetap milik
-# jalur amd64/prod, jadi nggak ada rebutan tag antar workflow.
+# Hasilnya image baru (`artracker-api-arm64`, `artracker-web-arm64`), bukan tag di
+# repo image yang sudah dipakai prod. Jadi `tayooooo/artracker-api:latest` tetap
+# amd64 punya jalur prod, nggak ada rebutan manifest.
 on:
   workflow_dispatch:
   push:
@@ -55,7 +56,7 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: |
-            ${{ env.REGISTRY_USER }}/artracker-${{ matrix.name }}:arm64
-            ${{ env.REGISTRY_USER }}/artracker-${{ matrix.name }}:arm64-${{ github.sha }}
+            ${{ env.REGISTRY_USER }}/artracker-${{ matrix.name }}-arm64:latest
+            ${{ env.REGISTRY_USER }}/artracker-${{ matrix.name }}-arm64:${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.name }}-arm64
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}-arm64
