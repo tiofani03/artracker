@@ -3,20 +3,21 @@
 # Semua image dari Docker Hub. Coolify cuma pull + up, nggak build apa pun.
 #
 # Isi env di tab Environment resource Coolify (bukan .env repo):
-#   APP_URL=https://<domain>          POSTGRES_USER=artracker   POSTGRES_DB=artracker
-#   POSTGRES_PASSWORD=<rand>          JWT_SECRET=<openssl rand -hex 32>
-#   S3_ACCESS_KEY=<user>              S3_SECRET_KEY=<min 8 char>
+#   APP_URL=https://<domain>              POSTGRES_USER=artracker   POSTGRES_DB=artracker
+#   POSTGRES_PASSWORD=<rand>              JWT_SECRET=<openssl rand -hex 32>
 #   ALERTS_MASTER_KEY=<openssl rand -base64 32>   ALERTS_MASTER_KEY_ID=v1
 #   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET        DOCKER_USER=tayooooo
 #   WEB_BIND (opsional, default 127.0.0.1:8088)    TAG (opsional, default latest)
 #
 # Satu tempat ubah domain: env APP_URL (dipakai CORS_ORIGINS + PUBLIC_URL; redirect
-# OAuth dibentuk dari sini). `api`, `db`, `s3` internal saja — yang ke-publish cuma
-# `web` di 127.0.0.1:8088, buat di-proxy Caddy yang sudah ada di server.
+# OAuth dibentuk dari sini). `api`, `db` internal saja — yang ke-publish cuma `web`
+# di 127.0.0.1:8088, buat di-proxy Caddy yang sudah ada di server.
 #
-# Object storage: RustFS (S3-compatible), bukan MinIO — image minio/minio & minio/mc
-# sudah nggak ada di Docker Hub (404, ditarik 2025). Port + health endpoint RustFS
-# kompatibel MinIO, jadi kode backend nggak perlu diubah.
+# Chunk replay: disimpan di disk VM ini (volume `replaydata`), bukan object storage.
+# Nggak ada access key, nggak ada bucket, nggak ada container S3. Kodenya sudah punya
+# dua jalur: R2_BUCKET_NAME kosong + REPLAY_LOCAL_DIR diisi = filesystem lokal dan
+# REPLAY_PROXY_UPLOAD dipaksa true. Kalau nanti mau S3/MinIO/R2 lagi, isi R2_* dan
+# hapus REPLAY_LOCAL_DIR.
 
 services:
   web:
@@ -28,8 +29,8 @@ services:
     # Caddy yang pegang 80/443 + cert. Port di-publish ke loopback saja, lalu Caddy
     # yang jadi gerbang:
     #     artracker.internal.lan { reverse_proxy 127.0.0.1:8088 }
-    # Kalau nanti mau Traefik Coolify yang urus domain, tinggal isi field Domains
-    # untuk service `web` di UI Coolify (port 80) dan hapus blok ports di bawah.
+    # Kalau nanti mau Traefik Coolify yang urus domain, isi field Domains untuk
+    # service `web` (port 80) di UI Coolify, lalu hapus blok ports di bawah.
     ports:
       - "${WEB_BIND:-127.0.0.1:8088}:80"
 
@@ -39,10 +40,13 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      s3:
-        condition: service_healthy
+      replay-init:
+        condition: service_completed_successfully
     expose:
       - "8080"
+    volumes:
+      # chunk replay + symbol upload tinggal di sini. Backup = volume ini.
+      - replaydata:/var/lib/artracker/replay
     environment:
       APP_ENV: production
       PORT: "8080"
@@ -55,25 +59,24 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       ALERTS_MASTER_KEY_ID: ${ALERTS_MASTER_KEY_ID:-v1}
       ALERTS_MASTER_KEY: ${ALERTS_MASTER_KEY:-}
-      # S3 internal (RustFS), ganti R2 Cloudflare.
-      # Sengaja pakai alias `minio.localhost`: r2.go cuma mengaktifkan path-style
-      # addressing kalau endpoint mengandung "localhost"/"127.0.0.1". Tanpa itu
-      # SDK memanggil artracker-replay.s3:9000 (virtual-host) dan gagal resolve.
-      # Kalau nanti patch path-style sudah masuk main, cukup jadi http://s3:9000.
-      R2_ENDPOINT: http://minio.localhost:9000
-      R2_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
-      R2_ACCESS_KEY_SECRET: ${S3_SECRET_KEY}
-      R2_BUCKET_NAME: artracker-replay
-      # jangan "auto": RustFS/MinIO nolak signature dengan region auto
-      R2_REGION: us-east-1
-      # true = upload chunk & playback lewat API proxy, jadi S3 tetap privat
-      REPLAY_PROXY_UPLOAD: "true"
+      # Store lokal. R2_BUCKET_NAME sengaja nggak diisi: begitu key itu ada, backend
+      # pindah ke S3 dan butuh endpoint + kredensial lagi.
+      REPLAY_LOCAL_DIR: /var/lib/artracker/replay
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8080/healthz || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  # Named volume lahir root:root, sementara image api jalan sebagai uid 10001 (user
+  # `app`). Tanpa init ini upload chunk gagal "mkdir ...: permission denied".
+  replay-init:
+    image: busybox:1.36
+    restart: "no"
+    command: ["sh", "-c", "chown -R 10001:10001 /data && echo replay-dir-ready"]
+    volumes:
+      - replaydata:/data
 
   db:
     image: postgres:16-alpine
@@ -92,50 +95,6 @@ services:
       timeout: 5s
       retries: 10
 
-  # S3-compatible object storage (pengganti R2). Nggak di-publish ke host.
-  s3:
-    image: rustfs/rustfs:1.0.6
-    restart: unless-stopped
-    environment:
-      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY}
-      RUSTFS_SECRET_KEY: ${S3_SECRET_KEY}
-      RUSTFS_CONSOLE_ENABLE: "false"
-      RUSTFS_VOLUMES: /data
-    volumes:
-      - s3data:/data
-    expose:
-      - "9000"
-    networks:
-      default:
-        aliases:
-          - minio.localhost
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-
-  # sekali jalan: bikin bucket lalu keluar (nggak ada auto-create di kode).
-  # exited 0 = sukses, bukan error.
-  createbuckets:
-    image: amazon/aws-cli:latest
-    restart: "no"
-    depends_on:
-      s3:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      aws --endpoint-url http://minio.localhost:9000 s3api head-bucket --bucket artracker-replay 2>/dev/null
-      || aws --endpoint-url http://minio.localhost:9000 s3api create-bucket --bucket artracker-replay
-      && echo bucket-ready
-      "
-    environment:
-      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
-      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
-      AWS_DEFAULT_REGION: us-east-1
-      AWS_EC2_METADATA_DISABLED: "true"
-
 volumes:
   pgdata:
-  s3data:
+  replaydata:
