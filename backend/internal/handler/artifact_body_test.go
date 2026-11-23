@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"io"
+	"mime/multipart"
 	"net/http/httptest"
 	"testing"
 
@@ -68,6 +70,67 @@ func TestReadArtifactBody(t *testing.T) {
 		}
 		if c.out != "" && string(out) != c.out {
 			t.Errorf("%s: body = %q, want %q", c.name, out, c.out)
+		}
+	}
+}
+
+func TestReadArtifactUploadMultipartDSYM(t *testing.T) {
+	var zipBuf bytes.Buffer
+	zw := zip.NewWriter(&zipBuf)
+	fw, err := zw.Create("Alfagift.app.dSYM/Contents/Resources/DWARF/Alfagift.debug.dylib")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write([]byte("macho-dwarf-payload")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var mpBuf bytes.Buffer
+	mw := multipart.NewWriter(&mpBuf)
+	_ = mw.WriteField("app_id", "com.alfamart.alfagift.debug")
+	_ = mw.WriteField("bundle_name", "Alfagift.app.dSYM")
+	part, err := mw.CreateFormFile("file", "Alfagift.app.dSYM.zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(zipBuf.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	app := fiber.New(fiber.Config{ErrorHandler: ErrorHandler})
+	app.Post("/u", func(c *fiber.Ctx) error {
+		body, fn, fields, err := readArtifactUpload(c)
+		if err != nil {
+			return err
+		}
+		if fn != "Alfagift.app.dSYM.zip" {
+			t.Errorf("fileName = %q, want Alfagift.app.dSYM.zip", fn)
+		}
+		if fields["bundle_name"] != "Alfagift.app.dSYM" {
+			t.Errorf("bundle_name = %q, want Alfagift.app.dSYM", fields["bundle_name"])
+		}
+		return c.Send(body)
+	})
+
+	// Test both with Content-Type header and without Content-Type (auto-detected envelope)
+	for _, withHeader := range []bool{true, false} {
+		req := httptest.NewRequest("POST", "/u", bytes.NewReader(mpBuf.Bytes()))
+		if withHeader {
+			req.Header.Set("Content-Type", mw.FormDataContentType())
+		}
+		resp, err := app.Test(req, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != 200 || !bytes.Equal(got, zipBuf.Bytes()) {
+			t.Fatalf("withHeader=%v: status=%d len=%d, want 200 len=%d", withHeader, resp.StatusCode, len(got), zipBuf.Len())
 		}
 	}
 }

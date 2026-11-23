@@ -34,16 +34,20 @@ const LIBRARY_PREFIXES = [
   'okhttp3.',
   'retrofit2.',
   'io.reactivex.',
+  'RxSwift.',
+  'RxCocoa.',
 ]
 
 const LIBRARY_PATTERNS = [
   /node_modules\//,
   /^\.\.\. \d+ more$/,
   /^<anonymous>|^native$/,
-  /\b(UIKitCore|UIKit|CoreFoundation|Foundation|libdispatch\.dylib|libsystem_\w+\.dylib|GraphicsServices|libdyld\.dylib)\b/,
+  /\b(UIKitCore|UIKit|CoreFoundation|Foundation|QuartzCore|CoreAutoLayout|GraphicsServices|libdispatch(?:\.dylib)?|libsystem_\w+(?:\.dylib)?|libdyld(?:\.dylib)?|libobjc\.A(?:\.dylib)?|libc\+\+abi(?:\.dylib)?)\b/,
+  /\b(PLCrashReporter|plcrash_|FIRCLS|FIRStackFrame|FBSDK|MoEngage|TerminateHandler::|NativeOrUnregisteredThreadGuard|RxSwift\.)/,
 ]
 
 const CAUSED_BY = /^Caused by:\s*/
+const IOS_FRAME = /^\d+\s+[A-Za-z0-9_.+-]+\s+/
 
 function isLibrary(symbol: string, line: string): boolean {
   return LIBRARY_PREFIXES.some((p) => symbol.startsWith(p)) || LIBRARY_PATTERNS.some((re) => re.test(line))
@@ -66,8 +70,14 @@ export function parseStackTrace(trace: string): StackSection[] {
   for (const line of trace.split('\n')) {
     if (!line.trim()) continue
     const trimmed = line.trim()
-    const isFrame = /^at\s/.test(trimmed) || /^\.\.\. \d+ more$/.test(trimmed)
-    if (sections.length === 0 || (!isFrame && CAUSED_BY.test(trimmed))) {
+    const isFrame = /^at\s/.test(trimmed) || /^\.\.\. \d+ more$/.test(trimmed) || IOS_FRAME.test(trimmed)
+    if (sections.length === 0 && isFrame) {
+      sections.push({
+        title: '',
+        causedBy: false,
+        frames: [parseFrame(line)],
+      })
+    } else if (sections.length === 0 || (!isFrame && CAUSED_BY.test(trimmed))) {
       sections.push({
         title: trimmed.replace(CAUSED_BY, ''),
         causedBy: CAUSED_BY.test(trimmed),

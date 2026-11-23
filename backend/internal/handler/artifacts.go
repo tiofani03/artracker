@@ -48,7 +48,7 @@ func (h *Handler) UploadDSYM(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "release version is required")
 	}
 
-	body, err := readArtifactBody(c)
+	body, partFileName, formFields, err := readArtifactUpload(c)
 	if err != nil {
 		return err
 	}
@@ -57,6 +57,12 @@ func (h *Handler) UploadDSYM(c *fiber.Ctx) error {
 	}
 
 	fileName := strings.TrimSpace(c.Query("file"))
+	if fileName == "" {
+		fileName = strings.TrimSpace(partFileName)
+	}
+	if fileName == "" && formFields["bundle_name"] != "" {
+		fileName = formFields["bundle_name"]
+	}
 	if fileName == "" {
 		fileName = "app.dSYM"
 	}
@@ -152,7 +158,7 @@ func (h *Handler) UploadProguard(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "release version is required")
 	}
 
-	body, err := readArtifactBody(c)
+	body, partFileName, formFields, err := readArtifactUpload(c)
 	if err != nil {
 		return err
 	}
@@ -168,7 +174,14 @@ func (h *Handler) UploadProguard(c *fiber.Ctx) error {
 
 	fileName := strings.TrimSpace(c.Query("file"))
 	if fileName == "" {
+		fileName = strings.TrimSpace(partFileName)
+	}
+	if fileName == "" {
 		fileName = "mapping.txt"
+	}
+	buildNumber := strings.TrimSpace(c.Query("build"))
+	if buildNumber == "" {
+		buildNumber = formFields["build"]
 	}
 
 	checksum := sha256Hex(body)
@@ -204,7 +217,7 @@ func (h *Handler) UploadProguard(c *fiber.Ctx) error {
 		)
 		VALUES ($1, $2, $3, 'proguard_mapping', $4, $5, $6, $7, '', '', $8)
 		RETURNING id`,
-		projectID, version, strings.TrimSpace(c.Query("build")), fileName,
+		projectID, version, buildNumber, fileName,
 		storagePath, body, checksum, int64(len(body)),
 	).Scan(&artifactID)
 	if err != nil {
@@ -296,6 +309,11 @@ func (h *Handler) UploadSymbols(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
 
+	body, partFileName, formFields, err := readArtifactUpload(c)
+	if err != nil {
+		return err
+	}
+
 	rawVersion, _ := url.PathUnescape(c.Params("version"))
 	version := strings.TrimSpace(rawVersion)
 	if version == "" {
@@ -314,13 +332,15 @@ func (h *Handler) UploadSymbols(c *fiber.Ctx) error {
 		version = strings.TrimSpace(c.Get("X-Release-Version"))
 	}
 	if version == "" {
+		version = formFields["version"]
+	}
+	if version == "" {
+		version = formFields["app_version"]
+	}
+	if version == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "release version is required")
 	}
 
-	body, err := readArtifactBody(c)
-	if err != nil {
-		return err
-	}
 	if len(body) == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "symbols body or archive is required")
 	}
@@ -329,15 +349,28 @@ func (h *Handler) UploadSymbols(c *fiber.Ctx) error {
 	if buildNumber == "" {
 		buildNumber = strings.TrimSpace(c.Get("X-App-Build"))
 	}
+	if buildNumber == "" {
+		buildNumber = formFields["build"]
+	}
 
-	fileName := strings.TrimSpace(c.Query("file"))
+	explicitFileName := strings.TrimSpace(c.Query("file"))
+	if explicitFileName == "" {
+		explicitFileName = strings.TrimSpace(c.Get("X-File-Name"))
+	}
+	fileName := explicitFileName
 	if fileName == "" {
-		fileName = strings.TrimSpace(c.Get("X-File-Name"))
+		fileName = strings.TrimSpace(partFileName)
+	}
+	if fileName == "" {
+		fileName = formFields["bundle_name"]
 	}
 
 	artifactType := strings.ToLower(strings.TrimSpace(c.Query("type")))
 	if artifactType == "" {
 		artifactType = strings.ToLower(strings.TrimSpace(c.Get("X-Artifact-Type")))
+	}
+	if artifactType == "" {
+		artifactType = strings.ToLower(formFields["type"])
 	}
 
 	isZip := len(body) >= 4 && body[0] == 'P' && body[1] == 'K' && body[2] == 0x03 && body[3] == 0x04
@@ -345,7 +378,7 @@ func (h *Handler) UploadSymbols(c *fiber.Ctx) error {
 	isMachO := machOErr == nil
 
 	// Route to dSYM if zip archive, Mach-O binary, or explicitly dsym
-	if artifactType == "dsym" || isZip || isMachO || strings.HasSuffix(strings.ToLower(fileName), ".dsym") || strings.HasSuffix(strings.ToLower(fileName), ".zip") {
+	if artifactType == "dsym" || isZip || isMachO || strings.HasSuffix(strings.ToLower(fileName), ".dsym") || strings.HasSuffix(strings.ToLower(fileName), ".zip") || strings.HasSuffix(strings.ToLower(formFields["bundle_name"]), ".dsym") {
 		dwarfBytes := body
 		if isZip {
 			innerBytes, innerName, zipErr := symbolication.ExtractDSYMBinaryFromZip(body)
@@ -353,7 +386,7 @@ func (h *Handler) UploadSymbols(c *fiber.Ctx) error {
 				return fiber.NewError(fiber.StatusBadRequest, "invalid dSYM zip: "+zipErr.Error())
 			}
 			dwarfBytes = innerBytes
-			if innerName != "" && fileName == "" {
+			if innerName != "" && explicitFileName == "" {
 				fileName = innerName
 			}
 		}
