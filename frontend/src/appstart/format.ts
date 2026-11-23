@@ -25,3 +25,10 @@ const PHASE_LABELS: Record<string, string> = {
 export function phaseLabel(name: string): string {
   return PHASE_LABELS[name] ?? name.replaceAll('_', ' ')
 }
+
+/** Share of all starts, rounded; "<1%" keeps a small but non-zero type visible. */
+export function shareLabel(count: number, total: number): string {
+  if (total === 0 || count === 0) return '0%'
+  const pct = (100 * count) / total
+  return pct < 1 ? '<1%' : `${Math.round(pct)}%`
+}

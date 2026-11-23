@@ -711,7 +711,7 @@ var openAPISpecBytes = []byte(`{
           { "name": "ram_tier", "in": "query", "schema": { "type": "string", "enum": ["low", "mid", "high"] }, "description": "low < 4096 MB, mid 4096-8192 MB, high > 8192 MB; starts without RAM are excluded when set" }
         ],
         "responses": {
-          "200": { "description": "{environment, environments, versions, count, p50, p75, p90, p95, profiled_pct (0-100), phases:[{name,median_ms}], daily:[{day,p50,p90,count}], by_version:[{version,p50,p90,count}] (latest 10)}" },
+          "200": { "description": "{environment, environments, versions, by_type:[{type,count,p50,p90}] (cold, warm and hot in that order under the same filters except type), count, p50, p75, p90, p95, profiled_pct (0-100), phases:[{name,median_ms}], daily:[{day,p50,p90,count}], by_version:[{version,p50,p90,count}] (latest 10)}" },
           "400": { "description": "Invalid date range, type or ram_tier" }
         }
       }
