@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/jackc/pgx/v5"
@@ -88,12 +89,26 @@ func (l *Loader) IOSByVersion(ctx context.Context, projectID int64, version stri
 	if version == "" {
 		return nil, nil
 	}
-	return l.ios(ctx, `
+	sym, err := l.ios(ctx, `
 		SELECT id FROM project_release_artifacts
 		WHERE project_id = $1 AND version = $2 AND artifact_type = 'dsym'
 		ORDER BY created_at DESC, id DESC
 		LIMIT 1`,
 		projectID, version)
+	if err == nil && sym != nil {
+		return sym, nil
+	}
+	// Fallback: if version is "1.0.0 (1)" or "1.0.0+1", try base version "1.0.0"
+	if idx := strings.IndexAny(version, " (+"); idx > 0 {
+		cleanVer := strings.TrimSpace(version[:idx])
+		return l.ios(ctx, `
+			SELECT id FROM project_release_artifacts
+			WHERE project_id = $1 AND version = $2 AND artifact_type = 'dsym'
+			ORDER BY created_at DESC, id DESC
+			LIMIT 1`,
+			projectID, cleanVer)
+	}
+	return nil, err
 }
 
 // IOSByUUID returns the symbolicator for the newest dSYM whose Mach-O UUID

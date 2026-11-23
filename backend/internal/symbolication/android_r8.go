@@ -38,6 +38,13 @@ type ProguardRetracer struct {
 
 // ParseProguardMapping decodes a ProGuard / R8 mapping.txt buffer.
 func ParseProguardMapping(data []byte) (*ProguardRetracer, error) {
+	if bytes.IndexByte(data, 0) != -1 {
+		return nil, fmt.Errorf("invalid proguard mapping: binary content detected")
+	}
+	trimmedData := bytes.TrimSpace(data)
+	if bytes.HasPrefix(trimmedData, []byte("--")) && bytes.Contains(trimmedData[:min(len(trimmedData), 512)], []byte("Content-Disposition:")) {
+		return nil, fmt.Errorf("invalid proguard mapping: unparsed multipart form data")
+	}
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	retracer := &ProguardRetracer{
 		classMap: make(map[string]*ProguardClassMapping),

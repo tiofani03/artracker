@@ -87,3 +87,25 @@ func TestGroupFramesCollapsesLibraryRuns(t *testing.T) {
 		t.Fatalf("group 1 should be lib x2: %+v", groups[1])
 	}
 }
+
+func TestParseStackTraceIOSFramesWithoutHeader(t *testing.T) {
+	iosTrace := strings.Join([]string{
+		"0   libsystem_kernel   0x000000010194088c   0x101938000 + 34956",
+		"1   libsystem_c   0x00000001c821ea28   0x1c81a9000 + 481832",
+		"2   Alfagift  -[PLCrashReporter setCrashCallbacks:].cold.1 (PLCrashReporter.m)",
+		"35   Alfagift  Alfagift.BasketViewController.updateCheckoutView() (BasketViewController.swift:1624)",
+	}, "\n")
+	sections := ParseStackTrace(iosTrace)
+	if len(sections) != 1 {
+		t.Fatalf("want 1 section, got %d", len(sections))
+	}
+	if len(sections[0].Frames) != 4 {
+		t.Fatalf("want 4 frames, got %d (title=%q)", len(sections[0].Frames), sections[0].Title)
+	}
+	if got := appFlags(sections[0].Frames); !reflect.DeepEqual(got, []bool{false, false, false, true}) {
+		t.Fatalf("app flags = %v, want [false false false true]", got)
+	}
+	if sections[0].Frames[3].Location != "BasketViewController.swift:1624" {
+		t.Fatalf("frame 3 location = %q", sections[0].Frames[3].Location)
+	}
+}

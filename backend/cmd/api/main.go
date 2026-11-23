@@ -29,7 +29,8 @@ import (
 )
 
 func main() {
-	_ = godotenv.Load("../.env", ".env")
+	_ = godotenv.Load(".env")
+	_ = godotenv.Load("../.env")
 
 	cfg := config.Load()
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
@@ -82,7 +83,7 @@ func main() {
 		BodyLimit:             cfg.ArtifactMaxBytes,
 		StreamRequestBody:     true,
 		ReadTimeout:           60 * time.Second,
-		WriteTimeout:          15 * time.Second,
+		WriteTimeout:          60 * time.Second,
 		IdleTimeout:           60 * time.Second,
 		DisableStartupMessage: true,
 		ErrorHandler:          handler.ErrorHandler,

@@ -241,25 +241,36 @@ function StackTracePanel({ event }: { event: IssueEvent }) {
           </button>
         </div>
       </div>
-      {sections.map((section, si) => (
-        <div key={si} className="issue-stack__section">
-          <p className="issue-stack__title">
-            {section.causedBy && <span className="issue-stack__caused">Caused by</span>}
-            {section.title}
-          </p>
-          {section.frames.length > 0 && (
-            <ol className="issue-stack__frames">
-              {groupFrames(section.frames).map((g, gi) =>
-                g.kind === 'app' ? (
-                  <FrameLine key={gi} frame={g.frame} />
-                ) : (
-                  <LibraryFrames key={gi} frames={g.frames} expanded={allFrames} />
-                ),
-              )}
-            </ol>
-          )}
-        </div>
-      ))}
+      {sections.map((section, si) => {
+        const culprit = section.frames.find((f) => f.app)
+        const displayTitle =
+          section.title ||
+          (culprit
+            ? `${culprit.symbol.replace(/^\d+\s+[A-Za-z0-9_.+-]+\s+/, '')}${culprit.location ? ` (${culprit.location})` : ''}`
+            : event.message)
+        return (
+          <div key={si} className="issue-stack__section">
+            {displayTitle && (
+              <p className="issue-stack__title">
+                {section.causedBy && <span className="issue-stack__caused">Caused by</span>}
+                {!section.title && culprit && <span className="issue-stack__caused">Crashed in </span>}
+                {displayTitle}
+              </p>
+            )}
+            {section.frames.length > 0 && (
+              <ol className="issue-stack__frames">
+                {groupFrames(section.frames).map((g, gi) =>
+                  g.kind === 'app' ? (
+                    <FrameLine key={gi} frame={g.frame} />
+                  ) : (
+                    <LibraryFrames key={gi} frames={g.frames} expanded={allFrames} />
+                  ),
+                )}
+              </ol>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

@@ -32,14 +32,15 @@ type FrameGroup struct {
 var libraryPrefixes = []string{
 	"android.", "androidx.", "com.android.", "com.google.android.", "dalvik.",
 	"java.", "javax.", "jdk.", "kotlin.", "kotlinx.", "sun.", "libcore.",
-	"okhttp3.", "retrofit2.", "io.reactivex.",
+	"okhttp3.", "retrofit2.", "io.reactivex.", "RxSwift.", "RxCocoa.",
 }
 
 var libraryPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`node_modules/`),
 	regexp.MustCompile(`^\.\.\. \d+ more$`),
 	regexp.MustCompile(`^<anonymous>|^native$`),
-	regexp.MustCompile(`\b(UIKitCore|UIKit|CoreFoundation|Foundation|libdispatch\.dylib|libsystem_\w+\.dylib|GraphicsServices|libdyld\.dylib)\b`),
+	regexp.MustCompile(`\b(UIKitCore|UIKit|CoreFoundation|Foundation|QuartzCore|CoreAutoLayout|GraphicsServices|libdispatch(?:\.dylib)?|libsystem_\w+(?:\.dylib)?|libdyld(?:\.dylib)?|libobjc\.A(?:\.dylib)?|libc\+\+abi(?:\.dylib)?)\b`),
+	regexp.MustCompile(`\b(PLCrashReporter|plcrash_|FIRCLS|FIRStackFrame|FBSDK|MoEngage|TerminateHandler::|NativeOrUnregisteredThreadGuard|RxSwift\.)`),
 }
 
 var (
@@ -47,6 +48,7 @@ var (
 	atPrefixRe  = regexp.MustCompile(`^at\s+`)
 	atLineRe    = regexp.MustCompile(`^at\s`)
 	moreLineRe  = regexp.MustCompile(`^\.\.\. \d+ more$`)
+	iosFrameRe  = regexp.MustCompile(`^\d+\s+[A-Za-z0-9_.+-]+\s+`)
 	jvmJSFrameR = regexp.MustCompile(`^(.*?)\s*\(([^()]*)\)$`)
 )
 
@@ -86,9 +88,15 @@ func ParseStackTrace(trace string) []StackSection {
 		if trimmed == "" {
 			continue
 		}
-		isFrame := atLineRe.MatchString(trimmed) || moreLineRe.MatchString(trimmed)
+		isFrame := atLineRe.MatchString(trimmed) || moreLineRe.MatchString(trimmed) || iosFrameRe.MatchString(trimmed)
 		caused := causedByRe.MatchString(trimmed)
 		switch {
+		case len(sections) == 0 && isFrame:
+			sections = append(sections, StackSection{
+				Title:    "",
+				CausedBy: false,
+				Frames:   []StackFrame{parseFrame(line)},
+			})
 		case len(sections) == 0 || (!isFrame && caused):
 			sections = append(sections, StackSection{
 				Title:    causedByRe.ReplaceAllString(trimmed, ""),

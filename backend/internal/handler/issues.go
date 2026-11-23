@@ -199,7 +199,7 @@ func (h *Handler) GetIssue(c *fiber.Ctx) error {
 		return errIssueNotFound
 	}
 
-	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(c.Context(), 30*time.Second)
 	defer cancel()
 
 	detail, err := h.loadIssueDetail(ctx, projectID, issueID, 200)
@@ -230,9 +230,7 @@ func (h *Handler) loadIssueDetail(ctx context.Context, projectID, issueID int64,
 	if err != nil {
 		return IssueDetail{}, err
 	}
-	defer rows.Close()
 
-	resolver := h.newTraceResolver(projectID)
 	events := []IssueEvent{}
 	for rows.Next() {
 		var ev IssueEvent
@@ -241,6 +239,7 @@ func (h *Handler) loadIssueDetail(ctx context.Context, projectID, issueID int64,
 			&ev.ID, &ev.SessionID, &ev.UserID, &ev.Message, &ev.StackTrace,
 			&breadcrumbs, &deviceInfo, &ev.ReleaseVersion, &ev.CreatedAt,
 		); err != nil {
+			rows.Close()
 			return IssueDetail{}, err
 		}
 		if len(breadcrumbs) == 0 {
@@ -251,11 +250,17 @@ func (h *Handler) loadIssueDetail(ctx context.Context, projectID, issueID int64,
 		}
 		ev.Breadcrumbs = breadcrumbs
 		ev.DeviceInfo = deviceInfo
-		ev.StackTraceResolved = resolver.resolve(ctx, ev.ReleaseVersion, ev.StackTrace)
 		events = append(events, ev)
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return IssueDetail{}, err
+	}
+	rows.Close()
+
+	resolver := h.newTraceResolver(projectID)
+	for i := range events {
+		events[i].StackTraceResolved = resolver.resolve(ctx, events[i].ReleaseVersion, events[i].StackTrace)
 	}
 
 	summary, err := h.loadIssueSummary(ctx, issueID)
