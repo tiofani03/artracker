@@ -70,6 +70,9 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      AUTH_LOCAL: '${AUTH_LOCAL:-false}'
+      ADMIN_EMAIL: '${ADMIN_EMAIL:-}'
+      ADMIN_PASSWORD: '${ADMIN_PASSWORD:-}'
       ALERTS_MASTER_KEY_ID: ${ALERTS_MASTER_KEY_ID:-v1}
       ALERTS_MASTER_KEY: ${ALERTS_MASTER_KEY:-}
       # Store lokal. R2_BUCKET_NAME sengaja nggak diisi: begitu key itu ada, backend
