@@ -13,7 +13,7 @@ bin/
 .replay-data/
 /graphify-out/
 
-# Local implementation plans (not pushed)
-docs/superpowers/plans/
+# Local implementation plans and handovers (not pushed)
+docs/superpowers/
 
 !frontend/.env.app

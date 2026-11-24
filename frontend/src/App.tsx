@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react'
 import { BASE } from './api'
 import { useAuth } from './auth/AuthContext'
+import { useAuthConfig } from './auth/useAuthConfig'
 import GoogleIcon from './components/GoogleIcon'
 import ThemeToggle from './components/ThemeToggle'
-import { navigate } from './router'
+import { Link, navigate } from './router'
 
 declare global {
   interface Window {
@@ -320,6 +321,7 @@ function DaylightSessionStage() {
 
 export default function App() {
   const { user } = useAuth()
+  const authConfig = useAuthConfig()
   const scrollBarRef = useRef<HTMLDivElement | null>(null)
   const dialogRef = useRef<HTMLDialogElement | null>(null)
 
@@ -671,21 +673,41 @@ export default function App() {
 
         <div className="sso-dialog__body">
           <div className="sso-providers">
-            <a className="sso-provider-btn" href={`${BASE}/auth/google/login`}>
-              <span className="sso-provider-btn__left">
-                <span className="sso-provider-btn__icon" aria-hidden="true">
-                  <GoogleIcon size={16} />
+            {authConfig.google && (
+              <a className="sso-provider-btn" href={`${BASE}/auth/google/login`}>
+                <span className="sso-provider-btn__left">
+                  <span className="sso-provider-btn__icon" aria-hidden="true">
+                    <GoogleIcon size={16} />
+                  </span>
+                  <span>Continue with Google</span>
                 </span>
-                <span>Continue with Google</span>
-              </span>
-              <span className="sso-provider-btn__right">
-                <svg className="sso-provider-btn__arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M5 12h14m-5-5 5 5-5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </span>
-            </a>
+                <span className="sso-provider-btn__right">
+                  <svg className="sso-provider-btn__arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M5 12h14m-5-5 5 5-5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </span>
+              </a>
+            )}
+            {authConfig.local && (
+              <Link className="sso-provider-btn" to="/login" onClick={closeSsoModal}>
+                <span className="sso-provider-btn__left">
+                  <span>Sign in with email</span>
+                </span>
+                <span className="sso-provider-btn__right">
+                  <svg className="sso-provider-btn__arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M5 12h14m-5-5 5 5-5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </span>
+              </Link>
+            )}
           </div>
-          <p className="sso-note">Google is the only supported sign-in method.</p>
+          <p className="sso-note">
+            {authConfig.local && authConfig.google
+              ? 'Sign in with Google or your invited email account.'
+              : authConfig.local
+                ? 'Sign in with your invited email and password.'
+                : 'Google is the only supported sign-in method.'}
+          </p>
         </div>
       </dialog>
     </>

@@ -87,15 +87,18 @@ binary; each file runs once, tracked in `schema_migrations`.
 
 ## Auth & multi-tenancy
 
-Login is Google SSO only. Users belong to **organizations**, organizations own **projects**, projects own **API keys**.
+Login supports **Google SSO** and optional **local email/password** (`AUTH_LOCAL=true`). Users belong to **organizations**, organizations own **projects**, projects own **API keys**.
 
 ### Setup
 
-1. Create a Google OAuth client (Cloud Console > APIs & Services > Credentials > OAuth client ID, type Web)
+1. **Google SSO** (optional when `AUTH_LOCAL=true`): create a Google OAuth client (Cloud Console > APIs & Services > Credentials > OAuth client ID, type Web)
    and set the authorized redirect URI to `{PUBLIC_URL}/auth/callback/google`
-   (dev: `http://localhost:5173/auth/callback/google`).
-2. Put the credentials in `.env`: `GOOGLE_CLIENT_ID/SECRET`, plus `JWT_SECRET` (long random string, required in production) and `PUBLIC_URL`.
-   Without Google credentials the login route returns 404. `.env.example` ships dummy values.
+   (dev: `http://localhost:5173/auth/callback/google`). Put `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env` (without them the Google route returns 404).
+2. **Local email/password** (web only, invite-only): set `AUTH_LOCAL=true` to enable `POST /api/v1/auth/local/login` and `POST /api/v1/auth/local/register`. There is no public signup:
+   - Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` (10–72 bytes) to bootstrap the first admin on startup (idempotent; never overwrites an existing password; remove `ADMIN_PASSWORD` once the account exists).
+   - Invite teammates from **Team → Invite member**: opening `/invite/<token>` lets them create a password (10–72 bytes) and join immediately. If an existing Google user is invited, registering attaches a password to that same account.
+   - Google SSO keeps working alongside local login whenever `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are set.
+3. Put `JWT_SECRET` (long random string, required in production) and `PUBLIC_URL` in `.env`. `.env.example` ships dummy OAuth values.
 
 Sessions: a 15-minute access token (JWT, kept in memory by the SPA) and a 30-day refresh token (httpOnly cookie, rotated on every use; reusing a rotated token revokes the whole session).
 

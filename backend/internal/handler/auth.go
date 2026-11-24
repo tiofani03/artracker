@@ -135,6 +135,15 @@ func (h *Handler) OAuthCallback(c *fiber.Ctx) error {
 		return appBounce(c, appScheme+"?code="+code)
 	}
 
+	if err := h.startSession(ctx, c, uid); err != nil {
+		return err
+	}
+	return c.Redirect(h.cfg.PublicURL+"/dashboard", fiber.StatusFound)
+}
+
+// startSession stores a new refresh token for uid and sets it as the httpOnly refresh cookie.
+// Shared by every login method; the access JWT is minted later by /auth/refresh.
+func (h *Handler) startSession(ctx context.Context, c *fiber.Ctx, uid int64) error {
 	plain, hash, err := auth.NewRefreshToken()
 	if err != nil {
 		return err
@@ -144,7 +153,7 @@ func (h *Handler) OAuthCallback(c *fiber.Ctx) error {
 		return err
 	}
 	h.setCookie(c, refreshCookie, plain, refreshTTL)
-	return c.Redirect(h.cfg.PublicURL+"/dashboard", fiber.StatusFound)
+	return nil
 }
 
 // appBounce hands control back to the native app. A plain 302 to a custom scheme is
@@ -342,14 +351,15 @@ func (h *Handler) Me(c *fiber.Ctx) error {
 	defer cancel()
 
 	var u struct {
-		ID        int64           `json:"id"`
-		Email     string          `json:"email"`
-		Name      string          `json:"name"`
-		AvatarURL string          `json:"avatar_url"`
-		Orgs      []orgMembership `json:"orgs"`
+		ID          int64           `json:"id"`
+		Email       string          `json:"email"`
+		Name        string          `json:"name"`
+		AvatarURL   string          `json:"avatar_url"`
+		HasPassword bool            `json:"has_password"`
+		Orgs        []orgMembership `json:"orgs"`
 	}
-	err := h.db.QueryRow(ctx, `SELECT id, email, name, avatar_url FROM users WHERE id = $1`, userID(c)).
-		Scan(&u.ID, &u.Email, &u.Name, &u.AvatarURL)
+	err := h.db.QueryRow(ctx, `SELECT id, email, name, avatar_url, password_hash IS NOT NULL FROM users WHERE id = $1`, userID(c)).
+		Scan(&u.ID, &u.Email, &u.Name, &u.AvatarURL, &u.HasPassword)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errUnauthorized
 	}

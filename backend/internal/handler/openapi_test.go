@@ -104,6 +104,7 @@ var openAPIUndocumented = map[string]string{
 	"DELETE /artworks/{id}":                          "legacy starter example",
 	"PUT /replay/upload-chunk":                       "signed URL returned by chunk-url, not called directly",
 	"GET /replay/download-chunk":                     "signed URL returned by the sessions API, not called directly",
+	"GET /auth/config":                               "browser login provider discovery",
 	"GET /auth/{provider}/login":                     "browser login flow",
 	"GET /auth/{provider}/callback":                  "browser login flow",
 	"POST /auth/refresh":                             "browser session cookie flow",

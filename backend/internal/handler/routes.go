@@ -37,8 +37,14 @@ func (h *Handler) Routes(api fiber.Router) {
 	api.Post("/app-start/profiles", h.VerifyIngestKey, h.RateLimitIngest, h.IngestAppStartProfile)
 
 	a := api.Group("/auth")
+	a.Get("/config", h.AuthConfig)
 	a.Get("/:provider/login", h.OAuthLogin)
 	a.Get("/:provider/callback", h.OAuthCallback)
+	if h.cfg.LocalAuth {
+		a.Post("/local/login", localAuthLimiter(loginLimiterKey), statusFromError, h.LocalLogin)
+		a.Post("/local/register", localAuthLimiter(registerLimiterKey), statusFromError, h.LocalRegister)
+		a.Post("/local/password", h.RequireAuth, localAuthLimiter(passwordLimiterKey), statusFromError, h.LocalChangePassword)
+	}
 	a.Post("/refresh", h.Refresh)
 	a.Post("/app/exchange", h.AppExchange)
 	a.Post("/logout", h.Logout)

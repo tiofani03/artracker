@@ -176,3 +176,21 @@ func TestAppStartWorkerFlag(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadLocalAuthEnv(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("AUTH_LOCAL", "true")
+	t.Setenv("ADMIN_EMAIL", "admin@example.com")
+	t.Setenv("ADMIN_PASSWORD", "change-me-please")
+	cfg := Load()
+	if !cfg.LocalAuth || cfg.AdminEmail != "admin@example.com" || cfg.AdminPassword != "change-me-please" {
+		t.Fatalf("local auth env not loaded: %+v", cfg)
+	}
+
+	t.Setenv("AUTH_LOCAL", "")
+	t.Setenv("ADMIN_EMAIL", "")
+	t.Setenv("ADMIN_PASSWORD", "")
+	if cfg := Load(); cfg.LocalAuth || cfg.AdminEmail != "" || cfg.AdminPassword != "" {
+		t.Fatalf("local auth must default to off and empty: %+v", cfg)
+	}
+}

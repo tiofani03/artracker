@@ -26,6 +26,7 @@ export type User = {
   email: string
   name: string
   avatar_url: string
+  has_password?: boolean
   orgs: OrgMembership[]
 }
 
@@ -121,7 +122,7 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
     },
   })
 
-  if (res.status === 401 && retry && !path.startsWith('/auth/')) {
+  if (res.status === 401 && retry && (!path.startsWith('/auth/') || path === '/auth/local/password')) {
     await refreshAccess() // throws UnauthorizedError when the session is gone
     return request<T>(path, init, false)
   }
@@ -148,7 +149,27 @@ export const api = {
   remove: (id: number) => request<void>(`/artworks/${id}`, { method: 'DELETE' }),
 }
 
+export type AuthConfig = { google: boolean; local: boolean }
+
 export const authApi = {
+  config: () => request<AuthConfig>('/auth/config', {}, false),
+  localLogin: async (email: string, password: string): Promise<void> => {
+    await request<void>('/auth/local/login', { method: 'POST', body: JSON.stringify({ email, password }) }, false)
+    await refreshAccess()
+  },
+  localRegister: async (inviteToken: string, name: string, password: string): Promise<void> => {
+    await request<void>(
+      '/auth/local/register',
+      { method: 'POST', body: JSON.stringify({ invite_token: inviteToken, name, password }) },
+      false,
+    )
+    await refreshAccess()
+  },
+  localChangePassword: (currentPassword: string, newPassword: string) =>
+    request<void>('/auth/local/password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    }),
   refresh: () => refreshAccess(),
   me: () => request<User>('/auth/me'),
   logout: async () => {

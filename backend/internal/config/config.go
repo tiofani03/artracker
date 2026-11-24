@@ -45,6 +45,11 @@ type Config struct {
 	PublicURL          string // frontend base URL, post-login redirect target
 	GoogleClientID     string
 	GoogleClientSecret string
+	// Local email/password login. Off unless AUTH_LOCAL=true; registration is invite-only, so the
+	// first admin is created at startup from AdminEmail/AdminPassword.
+	LocalAuth     bool
+	AdminEmail    string
+	AdminPassword string
 
 	// Session Replay & S3 / Cloudflare R2 Object Storage
 	R2AccountID         string
@@ -116,6 +121,9 @@ func Load() Config {
 		PublicURL:          strings.TrimRight(env("PUBLIC_URL", "http://localhost:5173"), "/"),
 		GoogleClientID:     env("GOOGLE_CLIENT_ID", ""),
 		GoogleClientSecret: env("GOOGLE_CLIENT_SECRET", ""),
+		LocalAuth:          parseBool(env("AUTH_LOCAL", "false")),
+		AdminEmail:         strings.TrimSpace(env("ADMIN_EMAIL", "")),
+		AdminPassword:      env("ADMIN_PASSWORD", ""),
 
 		R2AccountID:         env("R2_ACCOUNT_ID", ""),
 		R2AccessKeyID:       env("R2_ACCESS_KEY_ID", ""),

@@ -1,0 +1,120 @@
+# artracker — Coolify "Docker Compose" resource (branch: coolify)
+#
+# Semua image dari Docker Hub. Coolify cuma pull + up, nggak build apa pun.
+# Image arm64 dibangun workflow terpisah (.github/workflows/docker-publish-arm64.yml)
+# jadi repo sendiri: artracker-api-arm64 / artracker-web-arm64. Image amd64 punya prod
+# (artracker-api / artracker-web) nggak disentuh sama sekali.
+#
+# Isi env di tab Environment resource Coolify (bukan .env repo):
+#   APP_URL=https://<domain>              POSTGRES_USER=artracker   POSTGRES_DB=artracker
+#   POSTGRES_PASSWORD=<rand>              JWT_SECRET=<openssl rand -hex 32>
+#   ALERTS_MASTER_KEY=<openssl rand -base64 32>   ALERTS_MASTER_KEY_ID=v1
+#   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET        DOCKER_USER=tayooooo
+#   WEB_BIND (opsional, default 127.0.0.1:31100)   TAG (opsional, untuk pin SHA)
+#
+# Port wajib di range 31000-39999 (kebijakan port server). Alokasi per project,
+# satu blok 10 port biar nggak rebutan:
+#     31100-31109  artracker      (web 31100, api 31101, db 31102)
+#     blok lain    project lain   (31110, 31120, 31130, ...)
+# Yang di-publish ke host cuma web (31100, loopback). api/db internal.
+#
+# Satu tempat ubah domain: env APP_URL (dipakai CORS_ORIGINS + PUBLIC_URL; redirect
+# OAuth dibentuk dari sini). `api`, `db` internal saja — yang ke-publish cuma `web`
+# di 127.0.0.1:31100, buat di-proxy Caddy yang sudah ada di server.
+#
+# Chunk replay: disimpan di disk VM ini (volume `replaydata`), bukan object storage.
+# Nggak ada access key, nggak ada bucket, nggak ada container S3. Kodenya sudah punya
+# dua jalur: R2_BUCKET_NAME kosong + REPLAY_LOCAL_DIR diisi = filesystem lokal dan
+# REPLAY_PROXY_UPLOAD dipaksa true. Kalau nanti mau S3/MinIO/R2 lagi, isi R2_* dan
+# hapus REPLAY_LOCAL_DIR.
+
+services:
+  web:
+    image: ${DOCKER_USER:-tayooooo}/artracker-web-arm64:${TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      # nginx di image web proxy /api, /auth, /healthz ke sini (default image: api:8080).
+      # Harus sama dengan PORT service api di bawah.
+      API_UPSTREAM: api:31101
+    # Sengaja TIDAK pakai magic var SERVICE_FQDN_*: server internal ini sudah punya
+    # Caddy yang pegang 80/443 + cert. Port di-publish ke loopback saja, lalu Caddy
+    # yang jadi gerbang:
+    #     artracker.internal.lan { reverse_proxy 127.0.0.1:31100 }
+    # Kalau nanti mau Traefik Coolify yang urus domain, isi field Domains untuk
+    # service `web` (port 80) di UI Coolify, lalu hapus blok ports di bawah.
+    ports:
+      - "${WEB_BIND:-127.0.0.1:31100}:80"
+
+  api:
+    image: ${DOCKER_USER:-tayooooo}/artracker-api-arm64:${TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      replay-init:
+        condition: service_completed_successfully
+    expose:
+      - "31101"
+    volumes:
+      # chunk replay + symbol upload tinggal di sini. Backup = volume ini.
+      - replaydata:/var/lib/artracker/replay
+    environment:
+      APP_ENV: production
+      PORT: "31101"
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:31102/${POSTGRES_DB}?sslmode=disable
+      CORS_ORIGINS: ${APP_URL}
+      PUBLIC_URL: ${APP_URL}
+      LOG_LEVEL: info
+      JWT_SECRET: ${JWT_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      AUTH_LOCAL: '${AUTH_LOCAL:-false}'
+      ADMIN_EMAIL: '${ADMIN_EMAIL:-}'
+      ADMIN_PASSWORD: '${ADMIN_PASSWORD:-}'
+      ALERTS_MASTER_KEY_ID: ${ALERTS_MASTER_KEY_ID:-v1}
+      ALERTS_MASTER_KEY: ${ALERTS_MASTER_KEY:-}
+      # Store lokal. R2_BUCKET_NAME sengaja nggak diisi: begitu key itu ada, backend
+      # pindah ke S3 dan butuh endpoint + kredensial lagi.
+      REPLAY_LOCAL_DIR: /var/lib/artracker/replay
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:31101/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Named volume lahir root:root, sementara image api jalan sebagai uid 10001 (user
+  # `app`). Tanpa init ini upload chunk gagal "mkdir ...: permission denied".
+  replay-init:
+    image: busybox:1.36
+    restart: "no"
+    command: ["sh", "-c", "chown -R 10001:10001 /data && echo replay-dir-ready"]
+    volumes:
+      - replaydata:/data
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Port internal digeser dari default 5432 biar nggak bentrok sama postgres lain
+    # di host yang sama (mis. artracker-db prod yang publish 5432). Port container,
+    # nggak ke-publish ke host.
+    command: ["postgres", "-p", "31102"]
+    expose:
+      - "31102"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 31102 -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
+  replaydata:
