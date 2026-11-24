@@ -135,6 +135,15 @@ func (h *Handler) OAuthCallback(c *fiber.Ctx) error {
 		return appBounce(c, appScheme+"?code="+code)
 	}
 
+	if err := h.startSession(ctx, c, uid); err != nil {
+		return err
+	}
+	return c.Redirect(h.cfg.PublicURL+"/dashboard", fiber.StatusFound)
+}
+
+// startSession stores a new refresh token for uid and sets it as the httpOnly refresh cookie.
+// Shared by every login method; the access JWT is minted later by /auth/refresh.
+func (h *Handler) startSession(ctx context.Context, c *fiber.Ctx, uid int64) error {
 	plain, hash, err := auth.NewRefreshToken()
 	if err != nil {
 		return err
@@ -144,7 +153,7 @@ func (h *Handler) OAuthCallback(c *fiber.Ctx) error {
 		return err
 	}
 	h.setCookie(c, refreshCookie, plain, refreshTTL)
-	return c.Redirect(h.cfg.PublicURL+"/dashboard", fiber.StatusFound)
+	return nil
 }
 
 // appBounce hands control back to the native app. A plain 302 to a custom scheme is
