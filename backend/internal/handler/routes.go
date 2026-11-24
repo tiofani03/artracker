@@ -39,6 +39,9 @@ func (h *Handler) Routes(api fiber.Router) {
 	a := api.Group("/auth")
 	a.Get("/:provider/login", h.OAuthLogin)
 	a.Get("/:provider/callback", h.OAuthCallback)
+	if h.cfg.LocalAuth {
+		a.Post("/local/login", localAuthLimiter(loginLimiterKey), statusFromError, h.LocalLogin)
+	}
 	a.Post("/refresh", h.Refresh)
 	a.Post("/app/exchange", h.AppExchange)
 	a.Post("/logout", h.Logout)
