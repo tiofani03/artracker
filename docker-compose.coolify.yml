@@ -34,6 +34,10 @@ services:
     restart: unless-stopped
     depends_on:
       - api
+    environment:
+      # nginx di image web proxy /api, /auth, /healthz ke sini (default image: api:8080).
+      # Harus sama dengan PORT service api di bawah.
+      API_UPSTREAM: api:31101
     # Sengaja TIDAK pakai magic var SERVICE_FQDN_*: server internal ini sudah punya
     # Caddy yang pegang 80/443 + cert. Port di-publish ke loopback saja, lalu Caddy
     # yang jadi gerbang:
