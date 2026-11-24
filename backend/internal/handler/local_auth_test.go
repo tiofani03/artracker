@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -158,5 +160,260 @@ func TestLocalAuthDisabledHasNoLoginRoute(t *testing.T) {
 	got := e.localLogin(t, "bob@example.com", localTestPassword).StatusCode
 	if got != http.StatusNotFound && got != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 404/405 (route must not exist)", got)
+	}
+}
+
+func (e *testEnv) seedOrg(t *testing.T, ownerID int64, slug string) int64 {
+	t.Helper()
+	var orgID int64
+	err := e.pool.QueryRow(context.Background(),
+		`INSERT INTO organizations (name, slug) VALUES ($1, $2) RETURNING id`,
+		"Org "+slug, slug).Scan(&orgID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.pool.Exec(context.Background(),
+		`INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`,
+		orgID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	return orgID
+}
+
+func (e *testEnv) seedInvite(t *testing.T, orgID, invitedBy int64, email, role string, expiresAt time.Time, accepted bool) string {
+	t.Helper()
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatal(err)
+	}
+	raw := hex.EncodeToString(b)
+	var acceptedAt *time.Time
+	var acceptedBy *int64
+	if accepted {
+		now := time.Now().Add(-time.Minute)
+		acceptedAt = &now
+		acceptedBy = &invitedBy
+	}
+	_, err := e.pool.Exec(context.Background(), `
+		INSERT INTO organization_invitations (org_id, email, role, token_hash, invited_by, expires_at, accepted_at, accepted_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		orgID, email, role, hashInviteToken(raw), invitedBy, expiresAt, acceptedAt, acceptedBy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func (e *testEnv) localRegister(t *testing.T, token, name, password string) *http.Response {
+	t.Helper()
+	return e.do(t, "POST", "/api/v1/auth/local/register",
+		jsonBody(t, map[string]string{"invite_token": token, "name": name, "password": password}),
+		jsonHeaders)
+}
+
+func TestRegisterWithInviteCreatesUserMembershipAndSession(t *testing.T) {
+	e := newLocalTestEnv(t)
+	owner := e.seedLocalUser(t, "owner@example.com", localTestPassword)
+	orgID := e.seedOrg(t, owner, "acme")
+	tok := e.seedInvite(t, orgID, owner, "newbie@example.com", "member", time.Now().Add(time.Hour), false)
+
+	resp := e.localRegister(t, tok, "Newbie", localTestPassword)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, body %s", resp.StatusCode, readBody(t, resp))
+	}
+	rc := cookieNamed(resp, "refresh_token")
+	if rc == nil || !rc.HttpOnly || rc.Value == "" {
+		t.Fatalf("refresh_token cookie missing: %+v", rc)
+	}
+	if got := e.count(t, `SELECT count(*) FROM users WHERE lower(email)='newbie@example.com' AND sso_provider='local'`); got != 1 {
+		t.Fatalf("users count = %d, want 1", got)
+	}
+	var memberCount int
+	if err := e.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM organization_members m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1 AND u.email='newbie@example.com' AND m.role='member'`,
+		orgID).Scan(&memberCount); err != nil || memberCount != 1 {
+		t.Fatalf("member count = %d (err=%v), want 1", memberCount, err)
+	}
+	var accepted int
+	if err := e.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM organization_invitations WHERE token_hash=$1 AND accepted_at IS NOT NULL`,
+		hashInviteToken(tok)).Scan(&accepted); err != nil || accepted != 1 {
+		t.Fatalf("invite not marked accepted (count=%d, err=%v)", accepted, err)
+	}
+	if got := e.localLogin(t, "newbie@example.com", localTestPassword).StatusCode; got != http.StatusNoContent {
+		t.Fatalf("login after register = %d, want 204", got)
+	}
+}
+
+func TestRegisterRejectsAcceptedInvite(t *testing.T) {
+	e := newLocalTestEnv(t)
+	owner := e.seedLocalUser(t, "owner@example.com", localTestPassword)
+	orgID := e.seedOrg(t, owner, "acme")
+	tok := e.seedInvite(t, orgID, owner, "used@example.com", "member", time.Now().Add(time.Hour), true)
+
+	if got := e.localRegister(t, tok, "Used", localTestPassword).StatusCode; got != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", got)
+	}
+	if got := e.count(t, `SELECT count(*) FROM users WHERE lower(email)='used@example.com'`); got != 0 {
+		t.Fatalf("must not create user, got %d", got)
+	}
+}
+
+func TestRegisterRejectsExpiredInvite(t *testing.T) {
+	e := newLocalTestEnv(t)
+	owner := e.seedLocalUser(t, "owner@example.com", localTestPassword)
+	orgID := e.seedOrg(t, owner, "acme")
+	tok := e.seedInvite(t, orgID, owner, "late@example.com", "member", time.Now().Add(-time.Minute), false)
+
+	if got := e.localRegister(t, tok, "Late", localTestPassword).StatusCode; got != http.StatusGone {
+		t.Fatalf("status = %d, want 410", got)
+	}
+	if got := e.count(t, `SELECT count(*) FROM users WHERE lower(email)='late@example.com'`); got != 0 {
+		t.Fatalf("must not create user, got %d", got)
+	}
+}
+
+func TestRegisterUnknownToken(t *testing.T) {
+	e := newLocalTestEnv(t)
+	if got := e.localRegister(t, "nonexistent-token-123456", "No One", localTestPassword).StatusCode; got != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", got)
+	}
+}
+
+func TestRegisterWeakPassword(t *testing.T) {
+	e := newLocalTestEnv(t)
+	owner := e.seedLocalUser(t, "owner@example.com", localTestPassword)
+	orgID := e.seedOrg(t, owner, "acme")
+	tok := e.seedInvite(t, orgID, owner, "weak@example.com", "member", time.Now().Add(time.Hour), false)
+
+	for _, pw := range []string{"short", strings.Repeat("a", 73)} {
+		if got := e.localRegister(t, tok, "Weak", pw).StatusCode; got != http.StatusBadRequest {
+			t.Fatalf("pw len=%d: status = %d, want 400", len(pw), got)
+		}
+	}
+	if got := e.count(t, `SELECT count(*) FROM users WHERE lower(email)='weak@example.com'`); got != 0 {
+		t.Fatalf("must not create user, got %d", got)
+	}
+	if got := e.count(t, `SELECT count(*) FROM organization_invitations WHERE accepted_at IS NULL`); got != 1 {
+		t.Fatalf("invite must stay unaccepted, got %d", got)
+	}
+}
+
+func TestRegisterDuplicateLocalEmail(t *testing.T) {
+	e := newLocalTestEnv(t)
+	owner := e.seedLocalUser(t, "owner@example.com", localTestPassword)
+	orgID := e.seedOrg(t, owner, "acme")
+	e.seedLocalUser(t, "dup@example.com", localTestPassword)
+	tok := e.seedInvite(t, orgID, owner, "dup@example.com", "member", time.Now().Add(time.Hour), false)
+
+	if got := e.localRegister(t, tok, "Dup", localTestPassword).StatusCode; got != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", got)
+	}
+	var accepted int
+	if err := e.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM organization_invitations WHERE token_hash=$1 AND accepted_at IS NULL`,
+		hashInviteToken(tok)).Scan(&accepted); err != nil || accepted != 1 {
+		t.Fatalf("invite must stay unconsumed (count=%d, err=%v)", accepted, err)
+	}
+}
+
+func TestRegisterMixedCaseEmail(t *testing.T) {
+	e := newLocalTestEnv(t)
+	owner := e.seedLocalUser(t, "owner@example.com", localTestPassword)
+	orgID := e.seedOrg(t, owner, "acme")
+	tok1 := e.seedInvite(t, orgID, owner, "Ada@X.com", "member", time.Now().Add(time.Hour), false)
+	tok2 := e.seedInvite(t, orgID, owner, "ADA@x.com", "member", time.Now().Add(time.Hour), false)
+
+	if got := e.localRegister(t, tok1, "Ada", localTestPassword).StatusCode; got != http.StatusCreated {
+		t.Fatalf("first register = %d, want 201", got)
+	}
+	if got := e.localLogin(t, "ada@x.com", localTestPassword).StatusCode; got != http.StatusNoContent {
+		t.Fatalf("lowercase login = %d, want 204", got)
+	}
+	if got := e.localRegister(t, tok2, "Ada2", localTestPassword).StatusCode; got != http.StatusConflict {
+		t.Fatalf("second register with different case = %d, want 409", got)
+	}
+}
+
+func TestRegisterAdoptsExistingGoogleUser(t *testing.T) {
+	e := newLocalTestEnv(t)
+	owner := e.seedLocalUser(t, "owner@example.com", localTestPassword)
+	orgID := e.seedOrg(t, owner, "acme")
+
+	// Seed the Google user that matches fakeProvider ("ada@example.com", sso_id "1001").
+	var googleUID int64
+	err := e.pool.QueryRow(context.Background(), `
+		INSERT INTO users (email, name, sso_provider, sso_id)
+		VALUES ('ada@example.com', 'Ada Google', 'google', '1001') RETURNING id`).Scan(&googleUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeCount := e.count(t, `SELECT count(*) FROM users`)
+
+	tok := e.seedInvite(t, orgID, owner, "Ada@Example.com", "admin", time.Now().Add(time.Hour), false)
+	resp := e.localRegister(t, tok, "Ignored Name", localTestPassword)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register = %d, body %s", resp.StatusCode, readBody(t, resp))
+	}
+	if after := e.count(t, `SELECT count(*) FROM users`); after != beforeCount {
+		t.Fatalf("users count changed %d -> %d (must adopt existing row)", beforeCount, after)
+	}
+
+	var provider string
+	var hasHash bool
+	if err := e.pool.QueryRow(context.Background(),
+		`SELECT sso_provider, password_hash IS NOT NULL FROM users WHERE id=$1`, googleUID).
+		Scan(&provider, &hasHash); err != nil {
+		t.Fatal(err)
+	}
+	if provider != "google" || !hasHash {
+		t.Fatalf("adopted row = (provider=%q, hasHash=%v), want ('google', true)", provider, hasHash)
+	}
+
+	// Password login resolves to the same user ID.
+	loginResp := e.localLogin(t, "ada@example.com", localTestPassword)
+	if loginResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("password login = %d", loginResp.StatusCode)
+	}
+	acc := e.accessToken(t, cookieNamed(loginResp, "refresh_token"))
+	meResp := e.do(t, "GET", "/api/v1/auth/me", nil, map[string]string{"Authorization": "Bearer " + acc})
+	var me struct {
+		ID int64 `json:"id"`
+	}
+	_ = json.NewDecoder(meResp.Body).Decode(&me)
+	if me.ID != googleUID {
+		t.Fatalf("password /auth/me id = %d, want %d", me.ID, googleUID)
+	}
+
+	// Google OAuth callback still resolves to the exact same user ID.
+	googleRC := e.login(t)
+	googleAcc := e.accessToken(t, googleRC)
+	gMeResp := e.do(t, "GET", "/api/v1/auth/me", nil, map[string]string{"Authorization": "Bearer " + googleAcc})
+	var gMe struct {
+		ID int64 `json:"id"`
+	}
+	_ = json.NewDecoder(gMeResp.Body).Decode(&gMe)
+	if gMe.ID != googleUID {
+		t.Fatalf("google /auth/me id = %d, want %d", gMe.ID, googleUID)
+	}
+}
+
+func TestRegisterRateLimited(t *testing.T) {
+	e := newLocalTestEnv(t)
+	for i := 1; i <= 10; i++ {
+		if got := e.localRegister(t, "same-invite-token-1234", "Bob", localTestPassword).StatusCode; got != http.StatusNotFound {
+			t.Fatalf("attempt %d = %d, want 404", i, got)
+		}
+	}
+	if got := e.localRegister(t, "same-invite-token-1234", "Bob", localTestPassword).StatusCode; got != http.StatusTooManyRequests {
+		t.Fatalf("11th attempt = %d, want 429", got)
+	}
+}
+
+func TestLocalAuthDisabledHasNoRegisterRoute(t *testing.T) {
+	e := newTestEnv(t)
+	got := e.localRegister(t, "any-token-123456", "Bob", localTestPassword).StatusCode
+	if got != http.StatusNotFound && got != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 404/405", got)
 	}
 }
