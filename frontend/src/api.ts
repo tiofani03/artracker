@@ -148,7 +148,22 @@ export const api = {
   remove: (id: number) => request<void>(`/artworks/${id}`, { method: 'DELETE' }),
 }
 
+export type AuthConfig = { google: boolean; local: boolean }
+
 export const authApi = {
+  config: () => request<AuthConfig>('/auth/config', {}, false),
+  localLogin: async (email: string, password: string): Promise<void> => {
+    await request<void>('/auth/local/login', { method: 'POST', body: JSON.stringify({ email, password }) }, false)
+    await refreshAccess()
+  },
+  localRegister: async (inviteToken: string, name: string, password: string): Promise<void> => {
+    await request<void>(
+      '/auth/local/register',
+      { method: 'POST', body: JSON.stringify({ invite_token: inviteToken, name, password }) },
+      false,
+    )
+    await refreshAccess()
+  },
   refresh: () => refreshAccess(),
   me: () => request<User>('/auth/me'),
   logout: async () => {
