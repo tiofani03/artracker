@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
-import { BASE, teamApi, type InvitePreview } from '../api'
+import { useEffect, useState, type FormEvent } from 'react'
+import { authApi, BASE, teamApi, type InvitePreview } from '../api'
+import { IS_APP } from '../appTarget'
 import { useAuth } from '../auth/AuthContext'
+import { useAuthConfig } from '../auth/useAuthConfig'
 import GoogleIcon from '../components/GoogleIcon'
 import { Link, navigate, useLocation } from '../router'
 import '../dashboard.css'
@@ -9,10 +11,14 @@ export default function InviteAcceptPage() {
   const path = useLocation()
   const token = path.replace(/^\/invite\/?/, '').split('/')[0] || ''
 
-  const { user, loading: authLoading } = useAuth()
+  const { user, loading: authLoading, reload } = useAuth()
+  const authConfig = useAuthConfig()
   const [preview, setPreview] = useState<InvitePreview | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [formError, setFormError] = useState('')
+  const [name, setName] = useState('')
+  const [password, setPassword] = useState('')
   const [accepting, setAccepting] = useState(false)
   const [success, setSuccess] = useState(false)
 
@@ -60,6 +66,24 @@ export default function InviteAcceptPage() {
       setAccepting(false)
     }
   }
+
+  const handleRegister = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!token) return
+    setAccepting(true)
+    setFormError('')
+    try {
+      await authApi.localRegister(token, name, password)
+      await reload()
+      navigate('/dashboard')
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Failed to create account')
+      setAccepting(false)
+    }
+  }
+
+  const showLocal = !IS_APP && authConfig.local
+  const showGoogle = IS_APP || authConfig.google
 
   return (
     <main className="login">
@@ -163,23 +187,85 @@ export default function InviteAcceptPage() {
                 {accepting ? 'Joining team…' : `Accept & Join as ${user.email}`}
               </button>
             ) : (
-              <a
-                className="sso-provider-btn login__google"
-                href={`${BASE}/auth/google/login`}
-                style={{ width: '100%' }}
-              >
-                <span className="sso-provider-btn__left">
-                  <span className="sso-provider-btn__icon" aria-hidden="true">
-                    <GoogleIcon size={16} />
-                  </span>
-                  <span>Sign in with Google to Accept</span>
-                </span>
-                <span className="sso-provider-btn__right">
-                  <svg className="sso-provider-btn__arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M5 12h14m-5-5 5 5-5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </span>
-              </a>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+                {showLocal && (
+                  <form className="dash-form" onSubmit={(e) => void handleRegister(e)}>
+                    {formError && (
+                      <p className="dash-error" role="alert">
+                        {formError}
+                      </p>
+                    )}
+                    <label className="dash-label" htmlFor="invite-email">
+                      Email
+                    </label>
+                    <input
+                      id="invite-email"
+                      className="dash-input"
+                      type="email"
+                      value={preview?.email ?? ''}
+                      readOnly
+                      disabled
+                    />
+                    <label className="dash-label" htmlFor="invite-name">
+                      Name
+                    </label>
+                    <input
+                      id="invite-name"
+                      className="dash-input"
+                      type="text"
+                      autoComplete="name"
+                      required
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      disabled={accepting}
+                    />
+                    <label className="dash-label" htmlFor="invite-password">
+                      Password
+                    </label>
+                    <input
+                      id="invite-password"
+                      className="dash-input"
+                      type="password"
+                      autoComplete="new-password"
+                      minLength={10}
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      disabled={accepting}
+                    />
+                    <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-muted)' }}>
+                      min 10 characters
+                    </span>
+                    <button
+                      type="submit"
+                      className="dash-btn dash-btn--primary"
+                      style={{ width: '100%', padding: '0.625rem', fontSize: '0.875rem', marginTop: 'var(--space-xs)' }}
+                      disabled={accepting}
+                    >
+                      {accepting ? 'Creating account…' : 'Create account and join'}
+                    </button>
+                  </form>
+                )}
+                {showGoogle && (
+                  <a
+                    className="sso-provider-btn login__google"
+                    href={`${BASE}/auth/google/login`}
+                    style={{ width: '100%' }}
+                  >
+                    <span className="sso-provider-btn__left">
+                      <span className="sso-provider-btn__icon" aria-hidden="true">
+                        <GoogleIcon size={16} />
+                      </span>
+                      <span>Sign in with Google to Accept</span>
+                    </span>
+                    <span className="sso-provider-btn__right">
+                      <svg className="sso-provider-btn__arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M5 12h14m-5-5 5 5-5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </span>
+                  </a>
+                )}
+              </div>
             )}
 
             <p className="login__foot" style={{ marginTop: '1.25rem' }}>
