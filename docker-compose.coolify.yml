@@ -10,11 +10,14 @@
 #   POSTGRES_PASSWORD=<rand>              JWT_SECRET=<openssl rand -hex 32>
 #   ALERTS_MASTER_KEY=<openssl rand -base64 32>   ALERTS_MASTER_KEY_ID=v1
 #   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET        DOCKER_USER=tayooooo
-#   WEB_BIND (opsional, default 127.0.0.1:8088)    TAG (opsional, untuk pin SHA)
+#   WEB_BIND (opsional, default 127.0.0.1:31088)   TAG (opsional, untuk pin SHA)
+#
+# Port host yang di-publish wajib di range 31000-39999 (kebijakan port server),
+# makanya default-nya 31088, bukan 8088.
 #
 # Satu tempat ubah domain: env APP_URL (dipakai CORS_ORIGINS + PUBLIC_URL; redirect
 # OAuth dibentuk dari sini). `api`, `db` internal saja — yang ke-publish cuma `web`
-# di 127.0.0.1:8088, buat di-proxy Caddy yang sudah ada di server.
+# di 127.0.0.1:31088, buat di-proxy Caddy yang sudah ada di server.
 #
 # Chunk replay: disimpan di disk VM ini (volume `replaydata`), bukan object storage.
 # Nggak ada access key, nggak ada bucket, nggak ada container S3. Kodenya sudah punya
@@ -31,11 +34,11 @@ services:
     # Sengaja TIDAK pakai magic var SERVICE_FQDN_*: server internal ini sudah punya
     # Caddy yang pegang 80/443 + cert. Port di-publish ke loopback saja, lalu Caddy
     # yang jadi gerbang:
-    #     artracker.internal.lan { reverse_proxy 127.0.0.1:8088 }
+    #     artracker.internal.lan { reverse_proxy 127.0.0.1:31088 }
     # Kalau nanti mau Traefik Coolify yang urus domain, isi field Domains untuk
     # service `web` (port 80) di UI Coolify, lalu hapus blok ports di bawah.
     ports:
-      - "${WEB_BIND:-127.0.0.1:8088}:80"
+      - "${WEB_BIND:-127.0.0.1:31088}:80"
 
   api:
     image: ${DOCKER_USER:-tayooooo}/artracker-api-arm64:${TAG:-latest}
