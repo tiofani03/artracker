@@ -26,6 +26,7 @@ export type User = {
   email: string
   name: string
   avatar_url: string
+  has_password?: boolean
   orgs: OrgMembership[]
 }
 
@@ -121,7 +122,7 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
     },
   })
 
-  if (res.status === 401 && retry && !path.startsWith('/auth/')) {
+  if (res.status === 401 && retry && (!path.startsWith('/auth/') || path === '/auth/local/password')) {
     await refreshAccess() // throws UnauthorizedError when the session is gone
     return request<T>(path, init, false)
   }
@@ -164,6 +165,11 @@ export const authApi = {
     )
     await refreshAccess()
   },
+  localChangePassword: (currentPassword: string, newPassword: string) =>
+    request<void>('/auth/local/password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    }),
   refresh: () => refreshAccess(),
   me: () => request<User>('/auth/me'),
   logout: async () => {

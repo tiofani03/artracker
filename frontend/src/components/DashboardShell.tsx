@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { orgApi, projectApi, type NavCounts, type OrgMembership, type Platform, type Project, type User } from '../api'
 import { useAuth } from '../auth/AuthContext'
+import { useAuthConfig } from '../auth/useAuthConfig'
 import { Link, Redirect, useLocation } from '../router'
 import OrgSwitcher from './OrgSwitcher'
 import ProjectSelector from './ProjectSelector'
@@ -36,6 +37,7 @@ const DEMO_USER: User = {
   email: 'demo@artracker.dev',
   name: 'Demo Engineer',
   avatar_url: '',
+  has_password: false,
   orgs: [DEMO_ORG],
 }
 
@@ -191,6 +193,7 @@ type Props = {
 
 export default function DashboardShell({ sectionTitle, toolbar, allowDemo = false, children }: Props) {
   const { user: authUser, loading, logout, reload } = useAuth()
+  const authConfig = useAuthConfig()
   const path = useLocation().replace(/\/+$/, '') || '/'
   const isDemoQuery = !IS_APP && typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1'
   const isDemo = allowDemo && !authUser && isDemoQuery
@@ -504,6 +507,19 @@ export default function DashboardShell({ sectionTitle, toolbar, allowDemo = fals
                 <span className="console-account__email">{effectiveUser.email}</span>
               </div>
               <ThemeToggle showLabel={false} />
+              {!isDemo && !IS_APP && authConfig.local && (
+                <Link
+                  to="/dashboard/settings?tab=account"
+                  className="dash-icon-btn"
+                  title="Change password"
+                  aria-label="Change password"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="3" y="11" width="18" height="11" rx="2" />
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                  </svg>
+                </Link>
+              )}
               {isDemo ? (
                 <Link to="/login" className="dash-btn">
                   Sign in

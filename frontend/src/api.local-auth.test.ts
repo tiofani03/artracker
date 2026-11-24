@@ -89,4 +89,58 @@ describe('local auth API (web)', () => {
     })
     expect(getAccessToken()).toBe('acc-reg')
   })
+
+  it('localChangePassword() posts with bearer token and succeeds on 204', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(json(200, { access_token: 'acc-pw' }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { authApi } = await loadWebApi()
+
+    await authApi.localLogin('ada@example.com', 'correct-horse-battery')
+    await authApi.localChangePassword('correct-horse-battery', 'new-correct-horse-battery')
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    const [pwUrl, pwInit] = fetchMock.mock.calls[2] as unknown as [string, RequestInit]
+    expect(pwUrl).toBe('https://api.example/api/v1/auth/local/password')
+    expect(pwInit.method).toBe('POST')
+    expect(pwInit.credentials).toBe('include')
+    expect((pwInit.headers as Record<string, string>).Authorization).toBe('Bearer acc-pw')
+    expect(JSON.parse(pwInit.body as string)).toEqual({
+      current_password: 'correct-horse-battery',
+      new_password: 'new-correct-horse-battery',
+    })
+  })
+
+  it('localChangePassword() refreshes access token and retries once on 401', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(json(200, { access_token: 'acc-refreshed' }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { authApi } = await loadWebApi()
+
+    await authApi.localChangePassword('old-password-1', 'new-password-1')
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect((fetchMock.mock.calls[1] as unknown as [string])[0]).toBe('https://api.example/api/v1/auth/refresh')
+    const [retryUrl, retryInit] = fetchMock.mock.calls[2] as unknown as [string, RequestInit]
+    expect(retryUrl).toBe('https://api.example/api/v1/auth/local/password')
+    expect((retryInit.headers as Record<string, string>).Authorization).toBe('Bearer acc-refreshed')
+  })
+
+  it('localChangePassword() rejects with ApiError(403) without calling refresh', async () => {
+    const fetchMock = vi.fn(async () => json(403, { error: 'current password is incorrect' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { authApi, ApiError } = await loadWebApi()
+
+    const err = await authApi.localChangePassword('wrong-password', 'new-password-1').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as InstanceType<typeof ApiError>).status).toBe(403)
+    expect((err as Error).message).toBe('current password is incorrect')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
 })

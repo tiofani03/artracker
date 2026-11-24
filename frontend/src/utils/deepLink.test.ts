@@ -39,6 +39,7 @@ describe('initialSettingsTab', () => {
     expect(initialSettingsTab('?tab=replay')).toBe('replay')
     expect(initialSettingsTab('?tab=bot')).toBe('bot')
     expect(initialSettingsTab('?tab=keys')).toBe('keys')
+    expect(initialSettingsTab('?tab=account')).toBe('account')
     expect(initialSettingsTab('?org=3&tab=team')).toBe('team')
   })
   it('falls back to the API keys tab', () => {

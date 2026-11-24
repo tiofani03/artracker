@@ -546,3 +546,199 @@ func TestAuthConfigReportsProviders(t *testing.T) {
 		})
 	}
 }
+
+func (e *testEnv) bearerHeaders(t *testing.T, uid int64) map[string]string {
+	t.Helper()
+	tok, _, err := e.h.issuer.IssueAccess(uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return map[string]string{
+		"Content-Type":  "application/json",
+		"Authorization": "Bearer " + tok,
+	}
+}
+
+func TestMeReportsHasPassword(t *testing.T) {
+	e := newLocalTestEnv(t)
+	gUID := e.seedGoogleUser(t, "goog@example.com")
+	lUID := e.seedLocalUser(t, "loc@example.com", localTestPassword)
+
+	check := func(uid int64, want bool) {
+		t.Helper()
+		resp := e.do(t, "GET", "/api/v1/auth/me", nil, e.bearerHeaders(t, uid))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, body %s", resp.StatusCode, readBody(t, resp))
+		}
+		var body struct {
+			HasPassword bool `json:"has_password"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.HasPassword != want {
+			t.Fatalf("uid=%d has_password = %v, want %v", uid, body.HasPassword, want)
+		}
+	}
+
+	check(gUID, false)
+	check(lUID, true)
+}
+
+func TestLocalChangePasswordOK(t *testing.T) {
+	e := newLocalTestEnv(t)
+	uid := e.seedLocalUser(t, "bob@example.com", localTestPassword)
+
+	loginResp := e.localLogin(t, "bob@example.com", localTestPassword)
+	if loginResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("initial login = %d", loginResp.StatusCode)
+	}
+	oldRefresh := cookieNamed(loginResp, "refresh_token")
+	if oldRefresh == nil {
+		t.Fatal("missing initial refresh cookie")
+	}
+
+	const nextPassword = "new-correct-horse-battery"
+	resp := e.do(t, "POST", "/api/v1/auth/local/password",
+		jsonBody(t, map[string]string{"current_password": localTestPassword, "new_password": nextPassword}),
+		e.bearerHeaders(t, uid))
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("change password = %d, body %s", resp.StatusCode, readBody(t, resp))
+	}
+
+	freshRefresh := cookieNamed(resp, "refresh_token")
+	if freshRefresh == nil || !freshRefresh.HttpOnly || freshRefresh.Value == "" || freshRefresh.Value == oldRefresh.Value {
+		t.Fatalf("expected fresh httpOnly refresh cookie, got %+v", freshRefresh)
+	}
+
+	if got := e.localLogin(t, "bob@example.com", localTestPassword).StatusCode; got != http.StatusUnauthorized {
+		t.Fatalf("old password login = %d, want 401", got)
+	}
+	if got := e.localLogin(t, "bob@example.com", nextPassword).StatusCode; got != http.StatusNoContent {
+		t.Fatalf("new password login = %d, want 204", got)
+	}
+	if got := e.do(t, "POST", "/api/v1/auth/refresh", nil, nil, oldRefresh).StatusCode; got != http.StatusUnauthorized {
+		t.Fatalf("old refresh token = %d, want 401", got)
+	}
+	if got := e.do(t, "POST", "/api/v1/auth/refresh", nil, nil, freshRefresh).StatusCode; got != http.StatusOK {
+		t.Fatalf("fresh refresh token = %d, want 200", got)
+	}
+}
+
+func TestLocalChangePasswordValidationAndErrors(t *testing.T) {
+	e := newLocalTestEnv(t)
+	uid := e.seedLocalUser(t, "bob@example.com", localTestPassword)
+	headers := e.bearerHeaders(t, uid)
+
+	cases := []struct {
+		name string
+		body map[string]string
+		want int
+	}{
+		{"missing current password", map[string]string{"current_password": "", "new_password": "new-valid-password"}, http.StatusBadRequest},
+		{"wrong current password", map[string]string{"current_password": "wrong-password", "new_password": "new-valid-password"}, http.StatusForbidden},
+		{"same password", map[string]string{"current_password": localTestPassword, "new_password": localTestPassword}, http.StatusBadRequest},
+		{"too short", map[string]string{"current_password": localTestPassword, "new_password": "short"}, http.StatusBadRequest},
+		{"nine bytes", map[string]string{"current_password": localTestPassword, "new_password": "123456789"}, http.StatusBadRequest},
+		{"too long", map[string]string{"current_password": localTestPassword, "new_password": strings.Repeat("a", 73)}, http.StatusBadRequest},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := e.do(t, "POST", "/api/v1/auth/local/password", jsonBody(t, tc.body), headers)
+			if resp.StatusCode != tc.want {
+				t.Fatalf("status = %d, want %d (body: %s)", resp.StatusCode, tc.want, readBody(t, resp))
+			}
+		})
+	}
+
+	if got := e.localLogin(t, "bob@example.com", localTestPassword).StatusCode; got != http.StatusNoContent {
+		t.Fatalf("old password login after failed changes = %d, want 204", got)
+	}
+}
+
+func TestLocalSetPasswordForGoogleUser(t *testing.T) {
+	e := newLocalTestEnv(t)
+	uid := e.seedGoogleUser(t, "goog@example.com")
+	headers := e.bearerHeaders(t, uid)
+
+	const setPw = "google-user-new-pass"
+	resp := e.do(t, "POST", "/api/v1/auth/local/password",
+		jsonBody(t, map[string]string{"new_password": setPw}), headers)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("set password = %d, body %s", resp.StatusCode, readBody(t, resp))
+	}
+
+	meResp := e.do(t, "GET", "/api/v1/auth/me", nil, headers)
+	if meResp.StatusCode != http.StatusOK {
+		t.Fatalf("me = %d", meResp.StatusCode)
+	}
+	var me struct {
+		HasPassword bool `json:"has_password"`
+	}
+	if err := json.NewDecoder(meResp.Body).Decode(&me); err != nil {
+		t.Fatal(err)
+	}
+	if !me.HasPassword {
+		t.Fatal("expected has_password=true after setting password")
+	}
+
+	if got := e.localLogin(t, "goog@example.com", setPw).StatusCode; got != http.StatusNoContent {
+		t.Fatalf("login with newly set password = %d, want 204", got)
+	}
+
+	// Second change without current_password must now fail with 400.
+	resp2 := e.do(t, "POST", "/api/v1/auth/local/password",
+		jsonBody(t, map[string]string{"new_password": "another-valid-password"}), headers)
+	if resp2.StatusCode != http.StatusBadRequest {
+		t.Fatalf("second set without current_password = %d, want 400", resp2.StatusCode)
+	}
+}
+
+func TestLocalChangePasswordRequiresAuth(t *testing.T) {
+	e := newLocalTestEnv(t)
+	resp := e.do(t, "POST", "/api/v1/auth/local/password",
+		jsonBody(t, map[string]string{"new_password": localTestPassword}), jsonHeaders)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestLocalChangePasswordDisabledWhenLocalAuthOff(t *testing.T) {
+	pool := testDB(t)
+	h := New(pool, config.Config{Env: "development", JWTSecret: testSecret, LocalAuth: false},
+		auth.NewIssuer(testSecret, 15*time.Minute), map[string]OAuthProvider{})
+	app := fiber.New(fiber.Config{ErrorHandler: ErrorHandler})
+	h.Routes(app.Group("/api/v1"))
+	e := &testEnv{app: app, h: h, pool: pool}
+
+	uid := e.seedLocalUser(t, "bob@example.com", localTestPassword)
+	resp := e.do(t, "POST", "/api/v1/auth/local/password",
+		jsonBody(t, map[string]string{"current_password": localTestPassword, "new_password": "new-valid-password"}),
+		e.bearerHeaders(t, uid))
+	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 404 or 405", resp.StatusCode)
+	}
+}
+
+func TestLocalChangePasswordRateLimited(t *testing.T) {
+	e := newLocalTestEnv(t)
+	uid := e.seedLocalUser(t, "bob@example.com", localTestPassword)
+	headers := e.bearerHeaders(t, uid)
+
+	for i := range localAuthMaxFailures {
+		resp := e.do(t, "POST", "/api/v1/auth/local/password",
+			jsonBody(t, map[string]string{"current_password": "wrong-password", "new_password": "new-valid-password"}),
+			headers)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("attempt %d status = %d, want 403", i+1, resp.StatusCode)
+		}
+	}
+
+	resp := e.do(t, "POST", "/api/v1/auth/local/password",
+		jsonBody(t, map[string]string{"current_password": "wrong-password", "new_password": "new-valid-password"}),
+		headers)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("11th attempt status = %d, want 429", resp.StatusCode)
+	}
+}

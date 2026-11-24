@@ -351,14 +351,15 @@ func (h *Handler) Me(c *fiber.Ctx) error {
 	defer cancel()
 
 	var u struct {
-		ID        int64           `json:"id"`
-		Email     string          `json:"email"`
-		Name      string          `json:"name"`
-		AvatarURL string          `json:"avatar_url"`
-		Orgs      []orgMembership `json:"orgs"`
+		ID          int64           `json:"id"`
+		Email       string          `json:"email"`
+		Name        string          `json:"name"`
+		AvatarURL   string          `json:"avatar_url"`
+		HasPassword bool            `json:"has_password"`
+		Orgs        []orgMembership `json:"orgs"`
 	}
-	err := h.db.QueryRow(ctx, `SELECT id, email, name, avatar_url FROM users WHERE id = $1`, userID(c)).
-		Scan(&u.ID, &u.Email, &u.Name, &u.AvatarURL)
+	err := h.db.QueryRow(ctx, `SELECT id, email, name, avatar_url, password_hash IS NOT NULL FROM users WHERE id = $1`, userID(c)).
+		Scan(&u.ID, &u.Email, &u.Name, &u.AvatarURL, &u.HasPassword)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errUnauthorized
 	}

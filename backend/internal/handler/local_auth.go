@@ -329,3 +329,83 @@ func (h *Handler) AuthConfig(c *fiber.Ctx) error {
 		"local":  h.cfg.LocalAuth,
 	})
 }
+
+// passwordLimiterKey keys the change-password limiter by the authenticated user id.
+func passwordLimiterKey(c *fiber.Ctx) string {
+	return fmt.Sprintf("pw:%d", userID(c))
+}
+
+type localChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+// LocalChangePassword sets or updates the authenticated user's password, revokes other
+// active refresh tokens, and issues a fresh refresh cookie for the current session (204).
+func (h *Handler) LocalChangePassword(c *fiber.Ctx) error {
+	var req localChangePasswordRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid json body")
+	}
+
+	ctx, cancel := context.WithTimeout(c.Context(), 10*time.Second)
+	defer cancel()
+
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	uid := userID(c)
+	var existingHash *string
+	err = tx.QueryRow(ctx, `SELECT password_hash FROM users WHERE id = $1 FOR UPDATE`, uid).Scan(&existingHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errUnauthorized
+	}
+	if err != nil {
+		return err
+	}
+
+	if existingHash != nil {
+		if req.CurrentPassword == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "current password is required")
+		}
+		if !auth.CheckPassword(*existingHash, req.CurrentPassword) {
+			return fiber.NewError(fiber.StatusForbidden, "current password is incorrect")
+		}
+		if req.NewPassword == req.CurrentPassword {
+			return fiber.NewError(fiber.StatusBadRequest, "new password must be different from current password")
+		}
+	}
+
+	if err := auth.ValidatePassword(req.NewPassword); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	hash, err := auth.HashPassword(req.NewPassword)
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx, `UPDATE users SET password_hash = $1 WHERE id = $2`, hash, uid); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, uid); err != nil {
+		return err
+	}
+	plain, tokHash, err := auth.NewRefreshToken()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)`,
+		uid, tokHash, time.Now().Add(refreshTTL)); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	h.setCookie(c, refreshCookie, plain, refreshTTL)
+	c.Set("Cache-Control", "no-store")
+	return c.SendStatus(fiber.StatusNoContent)
+}

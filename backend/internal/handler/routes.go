@@ -43,6 +43,7 @@ func (h *Handler) Routes(api fiber.Router) {
 	if h.cfg.LocalAuth {
 		a.Post("/local/login", localAuthLimiter(loginLimiterKey), statusFromError, h.LocalLogin)
 		a.Post("/local/register", localAuthLimiter(registerLimiterKey), statusFromError, h.LocalRegister)
+		a.Post("/local/password", h.RequireAuth, localAuthLimiter(passwordLimiterKey), statusFromError, h.LocalChangePassword)
 	}
 	a.Post("/refresh", h.Refresh)
 	a.Post("/app/exchange", h.AppExchange)
