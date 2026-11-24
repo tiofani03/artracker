@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -415,5 +416,133 @@ func TestLocalAuthDisabledHasNoRegisterRoute(t *testing.T) {
 	got := e.localRegister(t, "any-token-123456", "Bob", localTestPassword).StatusCode
 	if got != http.StatusNotFound && got != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 404/405", got)
+	}
+}
+
+func TestBootstrapCreatesAdminOnce(t *testing.T) {
+	e := newLocalTestEnv(t)
+	e.h.cfg.AdminEmail = "Admin@Example.com"
+	e.h.cfg.AdminPassword = localTestPassword
+
+	ctx := context.Background()
+	if err := e.h.EnsureBootstrapAdmin(ctx); err != nil {
+		t.Fatalf("first bootstrap: %v", err)
+	}
+	if got := e.localLogin(t, "admin@example.com", localTestPassword).StatusCode; got != http.StatusNoContent {
+		t.Fatalf("login after first bootstrap = %d, want 204", got)
+	}
+
+	// Second call with a different password must not overwrite the existing hash.
+	e.h.cfg.AdminPassword = "another-valid-password"
+	if err := e.h.EnsureBootstrapAdmin(ctx); err != nil {
+		t.Fatalf("second bootstrap: %v", err)
+	}
+	if got := e.localLogin(t, "admin@example.com", localTestPassword).StatusCode; got != http.StatusNoContent {
+		t.Fatalf("original password login after second bootstrap = %d, want 204", got)
+	}
+	if got := e.localLogin(t, "admin@example.com", "another-valid-password").StatusCode; got != http.StatusUnauthorized {
+		t.Fatalf("overwritten password login = %d, want 401", got)
+	}
+
+	// Adopting an existing Google user (NULL password_hash) sets the password on that row.
+	gUID := e.seedGoogleUser(t, "gadmin@example.com")
+	e.h.cfg.AdminEmail = "gadmin@example.com"
+	e.h.cfg.AdminPassword = localTestPassword
+	if err := e.h.EnsureBootstrapAdmin(ctx); err != nil {
+		t.Fatalf("google-adopt bootstrap: %v", err)
+	}
+	var uid int64
+	if err := e.pool.QueryRow(ctx, `SELECT id FROM users WHERE lower(email)='gadmin@example.com' AND password_hash IS NOT NULL`).Scan(&uid); err != nil {
+		t.Fatalf("adopted user query: %v", err)
+	}
+	if uid != gUID {
+		t.Fatalf("adopted uid = %d, want %d", uid, gUID)
+	}
+}
+
+func TestBootstrapNoopWhenDisabledOrUnset(t *testing.T) {
+	ctx := context.Background()
+
+	// Disabled LocalAuth
+	e1 := newTestEnv(t)
+	e1.h.cfg.AdminEmail = "admin@example.com"
+	e1.h.cfg.AdminPassword = localTestPassword
+	if err := e1.h.EnsureBootstrapAdmin(ctx); err != nil {
+		t.Fatalf("disabled: %v", err)
+	}
+	if got := e1.count(t, `SELECT count(*) FROM users`); got != 0 {
+		t.Fatalf("disabled created %d users, want 0", got)
+	}
+
+	// Missing email or password
+	e2 := newLocalTestEnv(t)
+	e2.h.cfg.AdminEmail = "admin@example.com"
+	if err := e2.h.EnsureBootstrapAdmin(ctx); err != nil {
+		t.Fatalf("missing password: %v", err)
+	}
+	e2.h.cfg.AdminEmail = ""
+	e2.h.cfg.AdminPassword = localTestPassword
+	if err := e2.h.EnsureBootstrapAdmin(ctx); err != nil {
+		t.Fatalf("missing email: %v", err)
+	}
+	if got := e2.count(t, `SELECT count(*) FROM users`); got != 0 {
+		t.Fatalf("unset created %d users, want 0", got)
+	}
+}
+
+func TestBootstrapRejectsWeakPassword(t *testing.T) {
+	e := newLocalTestEnv(t)
+	e.h.cfg.AdminEmail = "admin@example.com"
+	e.h.cfg.AdminPassword = "short"
+
+	err := e.h.EnsureBootstrapAdmin(context.Background())
+	if !errors.Is(err, auth.ErrPasswordPolicy) {
+		t.Fatalf("err = %v, want ErrPasswordPolicy", err)
+	}
+	if got := e.count(t, `SELECT count(*) FROM users`); got != 0 {
+		t.Fatalf("created %d users on weak password, want 0", got)
+	}
+}
+
+func TestAuthConfigReportsProviders(t *testing.T) {
+	pool := testDB(t)
+	fp := &fakeProvider{profile: Profile{Provider: "google", SSOID: "1", Email: "a@b.c"}}
+
+	for _, tc := range []struct {
+		name      string
+		hasGoogle bool
+		local     bool
+	}{
+		{"neither", false, false},
+		{"google only", true, false},
+		{"local only", false, true},
+		{"both", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			providers := map[string]OAuthProvider{}
+			if tc.hasGoogle {
+				providers["google"] = fp
+			}
+			h := New(pool, config.Config{Env: "development", JWTSecret: testSecret, LocalAuth: tc.local},
+				auth.NewIssuer(testSecret, 15*time.Minute), providers)
+			app := fiber.New(fiber.Config{ErrorHandler: ErrorHandler})
+			h.Routes(app.Group("/api/v1"))
+			e := &testEnv{app: app, h: h, pool: pool}
+
+			resp := e.do(t, "GET", "/api/v1/auth/config", nil, nil)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d", resp.StatusCode)
+			}
+			var body struct {
+				Google bool `json:"google"`
+				Local  bool `json:"local"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Google != tc.hasGoogle || body.Local != tc.local {
+				t.Fatalf("got %+v, want google=%v local=%v", body, tc.hasGoogle, tc.local)
+			}
+		})
 	}
 }

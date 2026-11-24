@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -251,5 +253,79 @@ func (h *Handler) LocalRegister(c *fiber.Ctx) error {
 		"user_id": uid,
 		"org_id":  orgID,
 		"role":    role,
+	})
+}
+
+// EnsureBootstrapAdmin creates the initial local admin from ADMIN_EMAIL/ADMIN_PASSWORD when LocalAuth is
+// enabled. It is idempotent and never overwrites an existing password hash; if a passwordless account
+// (e.g. Google user) already exists for that email, it sets the password on that row.
+func (h *Handler) EnsureBootstrapAdmin(ctx context.Context) error {
+	if !h.cfg.LocalAuth || h.db == nil {
+		return nil
+	}
+	email := normalizeEmail(h.cfg.AdminEmail)
+	if email == "" || h.cfg.AdminPassword == "" {
+		return nil
+	}
+	if err := auth.ValidatePassword(h.cfg.AdminPassword); err != nil {
+		return fmt.Errorf("ADMIN_PASSWORD: %w", err)
+	}
+
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	var (
+		uid          int64
+		existingHash *string
+	)
+	err = tx.QueryRow(ctx, `
+		SELECT id, password_hash FROM users
+		WHERE lower(email) = $1
+		ORDER BY id ASC LIMIT 1
+		FOR UPDATE`, email).Scan(&uid, &existingHash)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if err == nil && existingHash != nil {
+		return nil
+	}
+
+	hash, err := auth.HashPassword(h.cfg.AdminPassword)
+	if err != nil {
+		return err
+	}
+
+	if errors.Is(err, pgx.ErrNoRows) || uid == 0 {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO users (email, name, sso_provider, sso_id, password_hash)
+			VALUES ($1, 'Admin', 'local', $1, $2)`, email, hash); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		slog.Info("bootstrap admin created", "email", email)
+		return nil
+	}
+
+	if _, err := tx.Exec(ctx, `UPDATE users SET password_hash = $1 WHERE id = $2`, hash, uid); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	slog.Info("bootstrap admin password set on existing user", "email", email)
+	return nil
+}
+
+// AuthConfig reports which sign-in methods are enabled for this deployment.
+func (h *Handler) AuthConfig(c *fiber.Ctx) error {
+	_, hasGoogle := h.providers["google"]
+	return c.JSON(fiber.Map{
+		"google": hasGoogle,
+		"local":  h.cfg.LocalAuth,
 	})
 }

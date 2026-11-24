@@ -165,6 +165,11 @@ func main() {
 		WithAnalytics(analyticsSvc).
 		WithReplayStore(replayStore)
 
+	if err := h.EnsureBootstrapAdmin(ctx); err != nil {
+		log.Error("bootstrap admin failed", "err", err)
+		os.Exit(1)
+	}
+
 	alertsCtx, stopAlerts := context.WithCancel(context.Background())
 	defer stopAlerts()
 	var alertsWG sync.WaitGroup
