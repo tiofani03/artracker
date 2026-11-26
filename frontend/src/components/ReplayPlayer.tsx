@@ -51,6 +51,7 @@ import { chunkSignature } from '../replay/wireframe'
 import { detectSessionPlatform, type DetectedPlatform } from '../utils/platformDetector'
 import { MobileWireframeRenderer } from './MobileWireframeRenderer'
 import { ScreenReplayRenderer } from './ScreenReplayRenderer'
+import DownloadReplayModal from './replay/DownloadReplayModal'
 export type TimelineMarker = {
   id: string
   offsetMs: number
@@ -143,6 +144,7 @@ export default function ReplayPlayer({
   const [isPlaying, setIsPlaying] = useState(false)
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1)
   const [stageWidth, setStageWidth] = useState(720)
+  const [downloadOpen, setDownloadOpen] = useState(false)
 
   const presignedChunkCount = useMemo(
     () => chunks.filter((c) => Boolean(c.url && c.url.trim())).length,
@@ -1031,6 +1033,24 @@ export default function ReplayPlayer({
               {formatDurationMs(durationMs)}
             </span>
 
+            <button
+              type="button"
+              className="or-transport-btn"
+              onClick={() => {
+                setIsPlaying(false)
+                setDownloadOpen(true)
+              }}
+              title="Download session replay"
+              aria-label="Download session replay"
+              style={{ width: 28, height: 28, padding: 0 }}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+            </button>
+
             <div className="or-header-menu" ref={menuRef}>
               <button
                 type="button"
@@ -1094,6 +1114,20 @@ export default function ReplayPlayer({
                               ? '412 × 915'
                               : '1440 × 900'}
                     </span>
+                  </div>
+                  <div className="or-header-menu__row" style={{ paddingTop: 6 }}>
+                    <button
+                      type="button"
+                      className="dash-btn dash-btn--compact"
+                      style={{ width: '100%', justifyContent: 'center' }}
+                      onClick={() => {
+                        setMenuOpen(false)
+                        setIsPlaying(false)
+                        setDownloadOpen(true)
+                      }}
+                    >
+                      Download replay…
+                    </button>
                   </div>
                 </div>
               )}
@@ -1276,6 +1310,22 @@ export default function ReplayPlayer({
           />
         </div>
       </div>
+
+      <DownloadReplayModal
+        open={downloadOpen}
+        onClose={() => setDownloadOpen(false)}
+        session={session}
+        model={model}
+        chunks={chunks}
+        timelineEvents={timelineEvents}
+        perf={perf}
+        currentTimeMs={currentTimeMs}
+        durationMs={durationMs}
+        baseTimestampMs={baseTimestampMs}
+        refreshUrls={(from, to) =>
+          replayApi.listSessionChunks(session.project_id, session.id, from, to).then((r) => r.chunks)
+        }
+      />
     </div>
   )
 }

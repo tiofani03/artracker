@@ -15,5 +15,6 @@ bin/
 
 # Local implementation plans and handovers (not pushed)
 docs/superpowers/
+data/
 
 !frontend/.env.app
